@@ -146,6 +146,7 @@ const RankBadge = ({ mmr, size = 'md', showLabel = true }: { mmr: number, size?:
 
 const getPlayersStorageKey = (uid: string) => `gas_padel_players_${uid}`;
 const getTournamentStorageKey = (uid: string) => `fom_play_active_tournament_${uid}`;
+const getTournamentShareStorageKey = (uid: string, startedAt?: number) => `fom_play_share_id_${uid}_${startedAt || 'none'}`;
 const DEFAULT_PLAYER_SEED_NAMES = new Set(INITIAL_PLAYERS.map((p) => p.name.toLowerCase()));
 
 const isLegacySeedPlayers = (players: Player[] | null | undefined) => {
@@ -4712,7 +4713,7 @@ export default function App() {
     if (isEmptyTournament) return;
     const sharedRef = doc(db, 'sharedMatches', sharedMatchId);
     setDoc(sharedRef, {
-      tournament,
+      tournament: toFirestoreSafe(tournament),
       hostUid: user.uid,
       updatedAt: serverTimestamp()
     }, { merge: true }).catch((err) => {
@@ -4723,6 +4724,18 @@ export default function App() {
       });
     });
   }, [tournament, sharedMatchId, isSharedViewer, user?.uid]);
+
+  useEffect(() => {
+    if (isSharedViewer) return;
+    if (!user?.uid) return;
+    if (sharedMatchId) return;
+    if (!tournament?.startedAt) return;
+
+    const storedShareId = localStorage.getItem(getTournamentShareStorageKey(user.uid, tournament.startedAt));
+    if (storedShareId) {
+      setSharedMatchId(storedShareId);
+    }
+  }, [isSharedViewer, user?.uid, sharedMatchId, tournament?.startedAt]);
 
   useEffect(() => {
     if (!user?.uid || isSharedViewer) return;
@@ -4874,16 +4887,18 @@ export default function App() {
         return;
       }
 
-      // Always use a fresh share id to avoid collisions with legacy/invalid docs.
-      const shareId = Math.random().toString(36).slice(2, 10);
+      const shareId = sharedMatchId || Math.random().toString(36).slice(2, 10);
       const safeTournament = toFirestoreSafe(tournament);
       await setDoc(doc(db, 'sharedMatches', shareId), {
         tournament: safeTournament,
         hostUid: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      }, { merge: false });
+      }, { merge: true });
       setSharedMatchId(shareId);
+      if (tournament?.startedAt) {
+        localStorage.setItem(getTournamentShareStorageKey(user.uid, tournament.startedAt), shareId);
+      }
       const finalUrl = buildShareUrl(shareId, 'active');
 
       const copied = await tryCopyToClipboard(finalUrl);
@@ -4891,9 +4906,8 @@ export default function App() {
         showShareCopiedToast('Link copied');
         addNotification('Link Share Siap', 'Link pertandingan berhasil disalin. Bagikan ke pemain lain.', 'system');
       } else {
-        window.prompt('Copy link pertandingan ini:', finalUrl);
-        showShareCopiedToast('Salin manual dari popup');
-        addNotification('Link Share Siap', 'Clipboard diblokir browser. Link ditampilkan agar bisa disalin manual.', 'system');
+        showShareCopiedToast('Gagal copy link');
+        addNotification('Gagal Copy', 'Izin clipboard ditolak browser. Coba ulangi.', 'system');
       }
     } catch (err) {
       console.error('Share current match error:', err, {
@@ -4911,7 +4925,7 @@ export default function App() {
         const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
         const copied = await tryCopyToClipboard(currentSharedUrl);
         if (copied) showShareCopiedToast('Link copied');
-        else window.prompt('Copy link klasemen ini:', currentSharedUrl);
+        else showShareCopiedToast('Gagal copy link');
         return;
       }
 
@@ -4934,8 +4948,7 @@ export default function App() {
         showShareCopiedToast('Link copied');
         addNotification('Link Share Siap', 'Link klasemen berhasil disalin.', 'system');
       } else {
-        window.prompt('Copy link klasemen ini:', finalUrl);
-        showShareCopiedToast('Salin manual dari popup');
+        showShareCopiedToast('Gagal copy link');
       }
     } catch (err) {
       console.error('Share standings error:', err, {
@@ -5169,6 +5182,7 @@ export default function App() {
       });
     }
 
+    setSharedMatchId(null);
     setTournament({ ...settings, rounds, startedAt: now });
     // Navigate immediately so user never feels "stuck" on settings after tapping Generate.
     setScreen('preview');
