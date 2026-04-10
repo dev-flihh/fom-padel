@@ -2639,121 +2639,124 @@ const MatchActiveScreen = ({
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden"
                   >
-                    <div className="space-y-3 mb-4">
-                      {round.matches.map((match, i) => (
-                        <div key={match.id} className="bg-white p-5 rounded-[20px] shadow-sm border border-ios-gray/10">
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="min-w-0 pr-2 flex items-center gap-2 flex-wrap">
-                              <span className={cn("inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider leading-none", accentTheme.bgSoft, accentTheme.text)}>
-                                Ronde {match.roundId}
-                              </span>
-                              <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-ios-gray/10 text-on-surface/75 text-[10px] font-bold uppercase tracking-wider leading-none">
-                                Lapangan {match.court}
-                              </span>
+                    <section className="bg-white p-5 rounded-[20px] shadow-sm border border-ios-gray/10 mb-4">
+                      <div className="space-y-4">
+                        {round.matches.map((match, i) => (
+                          <div key={match.id}>
+                            <div className="flex justify-between items-start mb-4">
+                              <div className="min-w-0 pr-2 flex items-center gap-2 flex-wrap">
+                                <span className={cn("inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider leading-none", accentTheme.bgSoft, accentTheme.text)}>
+                                  Ronde {match.roundId}
+                                </span>
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-ios-gray/10 text-on-surface/75 text-[10px] font-bold uppercase tracking-wider leading-none">
+                                  Lapangan {match.court}
+                                </span>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-wider">DURASI</span>
+                                <span className={cn("text-sm font-semibold", accentTheme.text)}>{getMatchDuration(match)}</span>
+                              </div>
                             </div>
-                            <div className="text-right shrink-0">
-                              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-wider">DURASI</span>
-                              <span className={cn("text-sm font-semibold", accentTheme.text)}>{getMatchDuration(match)}</span>
-                            </div>
-                          </div>
 
-                          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 mb-5">
-                            <div className="flex flex-col items-center gap-1.5 min-w-0">
-                              <div className="flex -space-x-3">
-                                {match.teamA.players.map((p, idx) => (
-                                  <div
-                                    key={idx}
-                                    onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: idx, currentPlayer: p })}
-                                    className={cn(
-                                      "w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold",
-                                      isActive && "cursor-pointer tap-target"
-                                    )}
-                                  >
-                                    {p.initials}
-                                  </div>
-                                ))}
+                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                              <div className="flex flex-col items-center gap-1.5 min-w-0">
+                                <div className="flex -space-x-3">
+                                  {match.teamA.players.map((p, idx) => (
+                                    <div
+                                      key={idx}
+                                      onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: idx, currentPlayer: p })}
+                                      className={cn(
+                                        "w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold",
+                                        isActive && "cursor-pointer tap-target"
+                                      )}
+                                    >
+                                      {p.initials}
+                                    </div>
+                                  ))}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: 0, currentPlayer: match.teamA.players[0] })}
+                                  className={cn(
+                                    "bg-transparent border-0 p-0 text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none",
+                                    isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
+                                  )}
+                                  disabled={!isActive || isReadOnly || !match.teamA.players[0]}
+                                >
+                                  {match.teamA.players.map(p => p.name.split(' ')[0]).join(' & ')}
+                                </button>
                               </div>
                               <button
                                 type="button"
-                                onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: 0, currentPlayer: match.teamA.players[0] })}
+                                onClick={() => isActive && !isReadOnly && setScoringMatchId(match.id)}
+                                disabled={!isActive || isReadOnly}
                                 className={cn(
-                                  "bg-transparent border-0 p-0 text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none",
-                                  isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
+                                  "flex flex-col items-center min-w-[84px] rounded-xl px-2 py-1 transition-colors",
+                                  isActive && !isReadOnly
+                                    ? cn("cursor-pointer tap-target", accentTheme.bgSoftHover)
+                                    : "cursor-default"
                                 )}
-                                disabled={!isActive || isReadOnly || !match.teamA.players[0]}
                               >
-                                {match.teamA.players.map(p => p.name.split(' ')[0]).join(' & ')}
+                                <div className="text-[30px] leading-none font-display font-black italic tracking-tighter">
+                                  <span className={accentTheme.text}>{match.teamA.score}</span>
+                                  <span className="text-ios-gray/30 mx-1">-</span>
+                                  <span className="text-on-surface">{match.teamB.score}</span>
+                                </div>
+                                <span className="text-[10px] font-bold text-ios-gray tracking-wide">
+                                  SKOR
+                                  {tournament.format === 'Match Play' && (
+                                    <span className="ml-1 normal-case tracking-normal text-[10px]">
+                                      ({match.pointsA || '0'}-{match.pointsB || '0'})
+                                    </span>
+                                  )}
+                                </span>
                               </button>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => isActive && !isReadOnly && setScoringMatchId(match.id)}
-                              disabled={!isActive || isReadOnly}
-                              className={cn(
-                                "flex flex-col items-center min-w-[84px] rounded-xl px-2 py-1 transition-colors",
-                                isActive && !isReadOnly
-                                  ? cn("cursor-pointer tap-target", accentTheme.bgSoftHover)
-                                  : "cursor-default"
-                              )}
-                            >
-                              <div className="text-[30px] leading-none font-display font-black italic tracking-tighter">
-                                <span className={accentTheme.text}>{match.teamA.score}</span>
-                                <span className="text-ios-gray/30 mx-1">-</span>
-                                <span className="text-on-surface">{match.teamB.score}</span>
+                              <div className="flex flex-col items-center gap-1.5 min-w-0">
+                                <div className="flex -space-x-3">
+                                  {match.teamB.players.map((p, idx) => (
+                                    <div
+                                      key={idx}
+                                      onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: idx, currentPlayer: p })}
+                                      className={cn(
+                                        "w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold",
+                                        isActive && "cursor-pointer tap-target"
+                                      )}
+                                    >
+                                      {p.initials}
+                                    </div>
+                                  ))}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: 0, currentPlayer: match.teamB.players[0] })}
+                                  className={cn(
+                                    "bg-transparent border-0 p-0 text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none",
+                                    isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
+                                  )}
+                                  disabled={!isActive || isReadOnly || !match.teamB.players[0]}
+                                >
+                                  {match.teamB.players.map(p => p.name.split(' ')[0]).join(' & ')}
+                                </button>
                               </div>
-                              <span className="text-[10px] font-bold text-ios-gray tracking-wide">
-                                SKOR
-                                {tournament.format === 'Match Play' && (
-                                  <span className="ml-1 normal-case tracking-normal text-[10px]">
-                                    ({match.pointsA || '0'}-{match.pointsB || '0'})
-                                  </span>
-                                )}
-                              </span>
-                            </button>
-                            <div className="flex flex-col items-center gap-1.5 min-w-0">
-                              <div className="flex -space-x-3">
-                                {match.teamB.players.map((p, idx) => (
-                                  <div
-                                    key={idx}
-                                    onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: idx, currentPlayer: p })}
-                                    className={cn(
-                                      "w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold",
-                                      isActive && "cursor-pointer tap-target"
-                                    )}
-                                  >
-                                    {p.initials}
-                                  </div>
-                                ))}
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: 0, currentPlayer: match.teamB.players[0] })}
-                                className={cn(
-                                  "bg-transparent border-0 p-0 text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none",
-                                  isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
-                                )}
-                                disabled={!isActive || isReadOnly || !match.teamB.players[0]}
-                              >
-                                {match.teamB.players.map(p => p.name.split(' ')[0]).join(' & ')}
-                              </button>
                             </div>
+
+                            {i < round.matches.length - 1 && <div className="my-4 h-px bg-ios-gray/10" />}
                           </div>
+                        ))}
+                      </div>
 
+                      {round.playersBye.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-ios-gray/10">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-[10px] font-bold text-ios-gray/70 uppercase tracking-[0.18em]">Pemain Bye</h3>
+                            <span className="text-[11px] font-medium text-ios-gray/45">{round.playersBye.length} Pemain</span>
+                          </div>
+                          <p className="text-[12px] leading-relaxed text-ios-gray/80 font-medium">
+                            {round.playersBye.map(p => p.name).join(', ')}
+                          </p>
                         </div>
-                      ))}
-                    </div>
-
-                    {round.playersBye.length > 0 && (
-                      <section className="bg-white rounded-[20px] p-5 shadow-sm border border-ios-gray/10">
-                        <div className="flex items-center justify-between mb-3">
-                          <h3 className="text-[11px] font-bold text-ios-gray uppercase tracking-widest">PEMAIN BYE</h3>
-                          <span className="text-[12px] font-medium text-ios-gray/40">{round.playersBye.length} Pemain</span>
-                        </div>
-                        <div className="text-[14px] leading-relaxed text-on-surface font-medium">
-                          {round.playersBye.map(p => p.name).join(', ')}
-                        </div>
-                      </section>
-                    )}
+                      )}
+                    </section>
                   </motion.div>
                 )}
               </AnimatePresence>
