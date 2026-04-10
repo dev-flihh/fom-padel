@@ -1099,9 +1099,10 @@ const AddPlayerModal = ({ isOpen, onClose, onAdd }: { isOpen: boolean, onClose: 
   );
 };
 
-const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, allPlayers, setAllPlayers, onAddNotification, currentUser }: {
+const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, setTournament, allPlayers, setAllPlayers, onAddNotification, currentUser }: {
   onBack: () => void,
   onGenerate: (t: Tournament) => void,
+  onOpenFriends: () => void,
   tournament: Tournament,
   setTournament: React.Dispatch<React.SetStateAction<Tournament>>,
   allPlayers: Player[],
@@ -1165,7 +1166,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
       return;
     }
 
-    const q = query(collection(db, 'users', uid, 'friends'), orderBy('displayName', 'asc'));
+    const q = query(collection(db, 'users', uid, 'friends'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetched: Friend[] = [];
       snapshot.forEach((docSnap) => fetched.push(docSnap.data() as Friend));
@@ -1179,6 +1180,25 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
 
     return () => unsubscribe();
   }, [currentUser?.uid, auth.currentUser?.uid]);
+
+  const toMillis = (value: any) => {
+    if (!value) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (typeof value?.seconds === 'number') return value.seconds * 1000;
+    return 0;
+  };
+
+  const sortedFriends = useMemo(() => {
+    return [...friends].sort((a, b) => {
+      const aRecent = Math.max(toMillis((a as any).lastPlayedAt), toMillis((a as any).addedAt));
+      const bRecent = Math.max(toMillis((b as any).lastPlayedAt), toMillis((b as any).addedAt));
+      if (bRecent !== aRecent) return bRecent - aRecent;
+      return (a.displayName || '').localeCompare(b.displayName || '');
+    });
+  }, [friends]);
+
+  const quickFriends = sortedFriends.slice(0, 8);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid || currentUser?.uid;
@@ -1208,6 +1228,15 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
       ];
     });
   }, [allPlayers, currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, currentUser?.mmr, setAllPlayers]);
+
+  useEffect(() => {
+    setTournament((prev) => {
+      const prevIds = prev.players.map((p) => p.id).join('|');
+      const nextIds = selectedPlayers.map((p) => p.id).join('|');
+      if (prevIds === nextIds) return prev;
+      return { ...prev, players: selectedPlayers };
+    });
+  }, [selectedPlayers, setTournament]);
 
   const minPlayersNeeded = courts * 4;
   const isReady = selectedPlayers.length >= minPlayersNeeded;
@@ -1399,6 +1428,22 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
     } else {
       setSelectedPlayers([...selectedPlayers, player]);
     }
+  };
+
+  const friendToPlayer = (friend: Friend): Player => ({
+    id: friend.uid,
+    name: friend.displayName,
+    rating: friend.mmr || 0,
+    avatar: friend.photoURL || '',
+    initials: friend.displayName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase(),
+    stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+  });
+
+  const markFriendUsed = (friendUid: string) => {
+    const uid = auth.currentUser?.uid || currentUser?.uid;
+    if (!uid) return;
+    setDoc(doc(db, 'users', uid, 'friends', friendUid), { lastPlayedAt: serverTimestamp() }, { merge: true })
+      .catch((err) => console.error('Error updating friend recency in settings:', err));
   };
 
   const handleAddPlayer = (newPlayer: Player) => {
@@ -1833,45 +1878,92 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
           )}
         </AnimatePresence>
 
-        {/* Friends List for Quick Add */}
-        {friends.length > 0 && (
-          <div className="space-y-3 mb-6">
-            <h3 className="text-[10px] font-black text-ios-gray uppercase tracking-widest ml-1">Tambah dari Teman</h3>
-            <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
-              {friends.map(friend => {
-                const isSelected = selectedPlayers.some(p => p.id === friend.uid);
-                return (
-                  <button
-                    key={friend.uid}
-                    onClick={() => {
-                      const playerObj: Player = {
-                        id: friend.uid,
-                        name: friend.displayName,
-                        rating: friend.mmr,
-                        avatar: friend.photoURL,
-                        initials: friend.displayName.split(' ').map(n => n[0]).join('').toUpperCase(),
-                        stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
-                      };
-                      togglePlayer(playerObj);
-                    }}
-                    className={cn(
-                      "flex flex-col items-center gap-2 min-w-[70px] transition-all tap-target",
-                      isSelected ? "opacity-100" : "opacity-40"
-                    )}
-                  >
-                    <div className={cn(
-                      "w-14 h-14 rounded-full overflow-hidden border-2 flex items-center justify-center bg-ios-gray/5",
-                      isSelected ? "border-primary shadow-lg shadow-primary/20" : "border-transparent"
-                    )}>
-                      {friend.photoURL ? <img src={friend.photoURL} className="w-full h-full object-cover" /> : <User size={24} className="text-ios-gray/30" />}
-                    </div>
-                    <span className="text-[10px] font-bold truncate w-full text-center">{friend.displayName.split(' ')[0]}</span>
-                  </button>
-                );
-              })}
-            </div>
+        <section className="space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Teman</h2>
+            <button
+              type="button"
+              onClick={onOpenFriends}
+              className="text-[11px] font-bold text-primary tap-target"
+            >
+              Lihat Semua
+            </button>
           </div>
-        )}
+
+          {loadingFriends ? (
+            <div className="bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm flex items-center gap-2 text-ios-gray text-sm">
+              <RefreshCw size={14} className="animate-spin" />
+              <span className="font-medium">Memuat daftar teman...</span>
+            </div>
+          ) : sortedFriends.length === 0 ? (
+            <button
+              type="button"
+              onClick={onOpenFriends}
+              className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm text-left tap-target"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                  <Users size={20} />
+                </div>
+                <div>
+                  <p className="text-[14px] font-bold text-on-surface">Belum ada teman</p>
+                  <p className="text-[12px] font-medium text-ios-gray">Tap untuk tambah teman dan langsung pilih ke match.</p>
+                </div>
+              </div>
+            </button>
+          ) : (
+            <div className="space-y-2.5">
+              <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
+                {quickFriends.map((friend) => {
+                  const isSelected = selectedPlayers.some((p) => p.id === friend.uid);
+                  return (
+                    <button
+                      key={friend.uid}
+                      onClick={() => {
+                        togglePlayer(friendToPlayer(friend));
+                        markFriendUsed(friend.uid);
+                      }}
+                      className={cn(
+                        "min-w-[108px] bg-white border rounded-2xl p-2.5 text-left tap-target transition-all",
+                        isSelected ? "border-primary shadow-sm" : "border-ios-gray/10"
+                      )}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className={cn(
+                          "w-11 h-11 rounded-full overflow-hidden flex items-center justify-center shrink-0 border",
+                          isSelected ? "border-primary/50" : "border-ios-gray/10"
+                        )}>
+                          {friend.photoURL ? (
+                            <img src={friend.photoURL} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-ios-gray/10 flex items-center justify-center text-[12px] font-bold text-ios-gray">
+                              {(friend.displayName || 'T').slice(0, 1).toUpperCase()}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[12px] font-bold text-on-surface truncate">{friend.displayName}</p>
+                          <p className="text-[10px] font-semibold text-ios-gray truncate">
+                            {friend.mmr > 0 ? getRankInfo(friend.mmr).name : 'Belum ada rank'}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {sortedFriends.length > quickFriends.length && (
+                <button
+                  type="button"
+                  onClick={onOpenFriends}
+                  className="w-full h-10 rounded-xl border border-ios-gray/15 bg-white text-[12px] font-bold text-primary tap-target"
+                >
+                  Lihat semua teman ({sortedFriends.length})
+                </button>
+              )}
+            </div>
+          )}
+        </section>
 
         <section className="space-y-4 pb-8">
           <div className="flex justify-between items-end px-1">
@@ -4259,10 +4351,14 @@ const RankDiscoveryScreen = ({ onBack }: { onBack: () => void }) => {
   );
 };
 
-const FriendsScreen = ({ currentUser, onBack, addNotification }: {
+const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = false, selectedPlayerIds = [], onTogglePickForMatch, onDonePick }: {
   currentUser: any,
   onBack: () => void,
-  addNotification: (title: string, message: string, type: AppNotification['type']) => void
+  addNotification: (title: string, message: string, type: AppNotification['type']) => void,
+  pickerMode?: boolean,
+  selectedPlayerIds?: string[],
+  onTogglePickForMatch?: (friend: Friend) => void,
+  onDonePick?: () => void
 }) => {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -4341,7 +4437,8 @@ const FriendsScreen = ({ currentUser, onBack, addNotification }: {
         photoURL: targetUser.photoURL || '',
         username: targetUser.username || '',
         mmr: targetUser.mmr || 0,
-        addedAt: serverTimestamp()
+        addedAt: serverTimestamp(),
+        lastPlayedAt: null
       };
       await setDoc(doc(db, 'users', currentUser.uid, 'friends', targetUser.uid), friendData);
       addNotification('Teman Ditambahkan', `${targetUser.displayName} sekarang menjadi teman Anda.`, 'achievement');
@@ -4358,7 +4455,15 @@ const FriendsScreen = ({ currentUser, onBack, addNotification }: {
         <button onClick={onBack} className="tap-target p-2 -ml-2">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="font-bold text-[17px] tracking-tight ml-2">Teman</h1>
+        <h1 className="font-bold text-[17px] tracking-tight ml-2">{pickerMode ? 'Pilih Teman' : 'Teman'}</h1>
+        {pickerMode && (
+          <button
+            onClick={onDonePick || onBack}
+            className="ml-auto text-[13px] font-bold text-primary tap-target"
+          >
+            Selesai
+          </button>
+        )}
       </header>
 
       <main className="max-w-2xl mx-auto p-5">
@@ -4436,7 +4541,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification }: {
               {friends.map(friend => (
                 <div key={friend.uid} className="bg-white border border-ios-gray/10 rounded-2xl p-4 flex items-center justify-between shadow-sm">
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-xl bg-ios-gray/10 overflow-hidden flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-full bg-ios-gray/10 overflow-hidden flex items-center justify-center">
                       {friend.photoURL ? <img src={friend.photoURL} className="w-full h-full object-cover" /> : <User size={24} className="text-ios-gray/30" />}
                     </div>
                     <div>
@@ -4447,6 +4552,19 @@ const FriendsScreen = ({ currentUser, onBack, addNotification }: {
                       </div>
                     </div>
                   </div>
+                  {pickerMode && onTogglePickForMatch ? (
+                    <button
+                      onClick={() => onTogglePickForMatch(friend)}
+                      className={cn(
+                        "h-9 px-3.5 rounded-xl text-[11px] font-black uppercase tracking-wide tap-target",
+                        selectedPlayerIds.includes(friend.uid)
+                          ? "bg-primary/10 text-primary border border-primary/20"
+                          : "bg-primary text-white"
+                      )}
+                    >
+                      {selectedPlayerIds.includes(friend.uid) ? 'Dipilih' : 'Tambah'}
+                    </button>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -4615,6 +4733,7 @@ export default function App() {
   const [selectedHistory, setSelectedHistory] = useState<TournamentHistory | null>(null);
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
   const [klasemenBackScreen, setKlasemenBackScreen] = useState<'dashboard' | 'active' | 'history-detail'>('dashboard');
+  const [friendsEntrySource, setFriendsEntrySource] = useState<'profile' | 'settings'>('profile');
   const shareToastTimeoutRef = useRef<number | null>(null);
   const isAuthResolvedRef = useRef(false);
   const isHandlingPopStateRef = useRef(false);
@@ -4912,19 +5031,37 @@ export default function App() {
     try {
       const ta = document.createElement('textarea');
       ta.value = text;
-      ta.setAttribute('readonly', '');
       ta.style.position = 'fixed';
-      ta.style.opacity = '0';
+      ta.style.top = '-9999px';
+      ta.style.left = '-9999px';
+      ta.setAttribute('readonly', '');
       ta.style.pointerEvents = 'none';
       document.body.appendChild(ta);
       ta.focus();
       ta.select();
+      ta.setSelectionRange(0, text.length);
       const copied = document.execCommand('copy');
       document.body.removeChild(ta);
-      return copied;
+      if (copied) return true;
     } catch {
-      return false;
+      // fallback below
     }
+
+    try {
+      if ((navigator as any).share) {
+        await (navigator as any).share({ url: text });
+        return true;
+      }
+    } catch {
+      // fallback below
+    }
+
+    try {
+      window.prompt('Salin link ini:', text);
+    } catch {
+      // ignore
+    }
+    return false;
   };
 
   const toFirestoreSafe = <T,>(value: T): T => {
@@ -5324,6 +5461,41 @@ export default function App() {
           }
         }
       });
+    }
+  };
+
+  const upsertPlayerFromFriend = (friend: Friend) => {
+    const initials = friend.displayName
+      .split(' ')
+      .filter(Boolean)
+      .map((n) => n[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'FR';
+    const playerObj: Player = {
+      id: friend.uid,
+      name: friend.displayName,
+      rating: friend.mmr || 0,
+      avatar: friend.photoURL || '',
+      initials,
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+    };
+
+    setAllPlayers((prev) => prev.some((p) => p.id === playerObj.id) ? prev : [playerObj, ...prev]);
+    setTournament((prev) => {
+      const alreadySelected = prev.players.some((p) => p.id === playerObj.id);
+      return {
+        ...prev,
+        players: alreadySelected
+          ? prev.players.filter((p) => p.id !== playerObj.id)
+          : [...prev.players, playerObj]
+      };
+    });
+
+    const uid = auth.currentUser?.uid || user?.uid;
+    if (uid) {
+      setDoc(doc(db, 'users', uid, 'friends', friend.uid), { lastPlayedAt: serverTimestamp() }, { merge: true })
+        .catch((err) => console.error('Update friend lastPlayedAt error:', err));
     }
   };
 
@@ -6044,6 +6216,10 @@ export default function App() {
           <MatchSettingsScreen
             onBack={() => setScreen('dashboard')}
             onGenerate={handleGenerateTournament}
+            onOpenFriends={() => {
+              setFriendsEntrySource('settings');
+              setScreen('friends');
+            }}
             tournament={tournament}
             setTournament={setTournament}
             allPlayers={allPlayers}
@@ -6107,14 +6283,21 @@ export default function App() {
               setScreen('history-detail');
             }}
             addNotification={addNotification}
-            onFriends={() => setScreen('friends')}
+            onFriends={() => {
+              setFriendsEntrySource('profile');
+              setScreen('friends');
+            }}
           />
         )}
         {screen === 'friends' && (
           <FriendsScreen
             currentUser={user}
-            onBack={() => setScreen('profile')}
+            onBack={() => setScreen(friendsEntrySource === 'settings' ? 'settings' : 'profile')}
             addNotification={addNotification}
+            pickerMode={friendsEntrySource === 'settings'}
+            selectedPlayerIds={tournament.players.map((p) => p.id)}
+            onTogglePickForMatch={upsertPlayerFromFriend}
+            onDonePick={() => setScreen('settings')}
           />
         )}
       </div>

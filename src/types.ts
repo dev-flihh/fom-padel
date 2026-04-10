@@ -95,6 +95,8 @@ export interface Friend {
   photoURL?: string;
   username?: string;
   mmr: number;
+  addedAt?: any;
+  lastPlayedAt?: any;
 }
 
 export type Screen = 'login' | 'dashboard' | 'settings' | 'preview' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
