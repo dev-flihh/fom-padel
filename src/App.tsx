@@ -4882,22 +4882,33 @@ export default function App() {
 
   const handleShareCurrentMatch = async () => {
     try {
-      if (!user?.uid) {
+      const currentUid = auth.currentUser?.uid || user?.uid;
+      if (!currentUid) {
         addNotification('Perlu Login', 'Silakan login dulu untuk membagikan pertandingan.', 'system');
         return;
       }
 
-      const shareId = sharedMatchId || Math.random().toString(36).slice(2, 10);
+      let shareId = sharedMatchId || Math.random().toString(36).slice(2, 10);
       const safeTournament = toFirestoreSafe(tournament);
-      await setDoc(doc(db, 'sharedMatches', shareId), {
+      const writePayload = {
         tournament: safeTournament,
-        hostUid: user.uid,
+        hostUid: currentUid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      };
+
+      try {
+        // Update existing share link if available.
+        await setDoc(doc(db, 'sharedMatches', shareId), writePayload, { merge: true });
+      } catch (firstErr) {
+        // Fallback: if existing doc is not writable, mint a fresh share link.
+        shareId = Math.random().toString(36).slice(2, 10);
+        await setDoc(doc(db, 'sharedMatches', shareId), writePayload, { merge: false });
+      }
+
       setSharedMatchId(shareId);
       if (tournament?.startedAt) {
-        localStorage.setItem(getTournamentShareStorageKey(user.uid, tournament.startedAt), shareId);
+        localStorage.setItem(getTournamentShareStorageKey(currentUid, tournament.startedAt), shareId);
       }
       const finalUrl = buildShareUrl(shareId, 'active');
 
@@ -4929,7 +4940,8 @@ export default function App() {
         return;
       }
 
-      if (!user?.uid) {
+      const currentUid = auth.currentUser?.uid || user?.uid;
+      if (!currentUid) {
         addNotification('Perlu Login', 'Silakan login dulu untuk membagikan klasemen.', 'system');
         return;
       }
@@ -4938,7 +4950,7 @@ export default function App() {
       const safeTournament = toFirestoreSafe(targetTournament);
       await setDoc(doc(db, 'sharedMatches', shareId), {
         tournament: safeTournament,
-        hostUid: user.uid,
+        hostUid: currentUid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       }, { merge: false });
