@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "username": { "type": "string", "description": "Unique username" },
+        "photoURL": { "type": "string", "description": "User profile picture URL" },
+        "phoneNumber": { "type": "string", "description": "User phone number" },
+        "mmr": { "type": "number", "description": "Matchmaking Rating" },
+        "region": { "type": "string", "description": "User regional location" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Friend": {
+      "title": "Friend",
+      "description": "Friend relationship info",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Friend's UID" },
+        "displayName": { "type": "string", "description": "Friend's display name" },
+        "photoURL": { "type": "string", "description": "Friend's photo URL" },
+        "username": { "type": "string", "description": "Friend's username" },
+        "mmr": { "type": "number", "description": "Friend's MMR" },
+        "addedAt": { "type": "string", "format": "date-time", "description": "When they were added" }
+      },
+      "required": ["uid", "displayName"]
+    },
+    "TournamentHistory": {
+      "title": "TournamentHistory",
+      "description": "Historical record of a completed tournament",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier for the tournament" },
+        "userId": { "type": "string", "description": "UID of the user who created the tournament" },
+        "name": { "type": "string", "description": "Name of the tournament" },
+        "format": { "type": "string", "enum": ["Americano", "Mexicano", "Match Play"], "description": "Tournament format" },
+        "date": { "type": "string", "format": "date-time", "description": "Date the tournament was completed" },
+        "numRounds": { "type": "number", "description": "Number of rounds in the tournament" },
+        "numPlayers": { "type": "number", "description": "Number of players in the tournament" },
+        "tag": { "type": "string", "description": "Optional tag for the tournament" },
+        "rounds": { "type": "array", "description": "Full round and match data" },
+        "players": { "type": "array", "description": "List of players in the tournament" }
+      },
+      "required": ["id", "userId", "name", "format", "date", "numRounds", "numPlayers"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/users/{uid}/friends/{friendUid}": {
+      "schema": "Friend",
+      "description": "User friends list"
+    },
+    "/tournaments/{tournamentId}": {
+      "schema": "TournamentHistory",
+      "description": "Completed tournament history"
+    }
+  }
+}

@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: system-ui, -apple-system, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-display: system-ui, -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  
+  --color-surface: #F7F7FA;
+  --color-surface-container: #FFFFFF;
+  --color-primary: #E65E14;
+  --color-on-surface: #111827;
+  --color-error: #FF3B30;
+  --color-outline-variant: #ECECF2;
+  --color-ios-blue: #007AFF;
+  --color-ios-gray: #8E8E93;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    color-scheme: light;
+    background-color: #F7F7FA;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-surface text-on-surface antialiased;
+    color-scheme: light;
+    background-color: #F7F7FA;
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+  }
+
+  h1, h2, h3, h4 {
+    @apply tracking-tight text-on-surface;
+  }
+
+  input, select, textarea {
+    @apply text-on-surface;
+    color-scheme: light;
+  }
+}
+
+@layer components {
+  .ios-blur {
+    @apply backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+  }
+  
+  .ios-card {
+    @apply bg-white rounded-3xl shadow-[0_8px_30px_rgba(17,24,39,0.06)] border border-ios-gray/10;
+  }
+
+  .ios-page {
+    @apply min-h-screen bg-surface;
+  }
+
+  .ios-header-title {
+    @apply text-[17px] font-semibold tracking-tight text-on-surface;
+  }
+
+  .ios-topbar {
+    @apply sticky top-0 z-50 w-full h-14 px-4 border-b border-ios-gray/10 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+  }
+
+  .ios-topbar-fixed {
+    @apply sticky top-0 z-50 w-full h-14 px-4 border-b border-ios-gray/10 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+  }
+
+  .ios-topbar-icon-btn {
+    @apply w-9 h-9 rounded-full flex items-center justify-center text-on-surface/80 shrink-0 active:opacity-80 active:scale-[0.985] transition-all;
+  }
+
+  .ios-topbar-icon {
+    @apply w-5 h-5;
+  }
+
+  .ios-list-card {
+    @apply bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm;
+  }
+
+  .ios-meta-label {
+    @apply text-[10px] font-bold uppercase tracking-widest text-ios-gray;
+  }
+
+  .ios-input {
+    @apply w-full h-12 bg-ios-gray/5 border border-ios-gray/15 rounded-xl px-4 text-[14px] font-medium outline-none focus:border-primary/35 focus:ring-2 focus:ring-primary/10 transition-all;
+  }
+
+  .ios-button-primary {
+    @apply h-12 px-5 rounded-xl bg-primary text-white font-bold shadow-md shadow-primary/20 active:scale-[0.98] transition-all;
+  }
+
+  .ios-section {
+    @apply px-5 mb-8;
+  }
+
+  .ios-section-title {
+    @apply text-[11px] font-bold uppercase tracking-widest text-on-surface/55;
+  }
+
+  .tap-target {
+    @apply active:opacity-80 active:scale-[0.985] transition-all;
+  }
+  
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

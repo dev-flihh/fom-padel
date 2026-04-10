@@ -1,0 +1,5 @@
+{
+  "name": "FOM Play",
+  "description": "Premium Padel scoring and tournament management app with a clean iOS-inspired design and PWA support.",
+  "requestFramePermissions": ["camera"]
+}

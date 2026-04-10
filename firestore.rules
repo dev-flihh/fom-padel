@@ -1,0 +1,175 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: {uid} (Firebase Auth UID)
+// Fields:
+//   - uid: string (required) - Firebase Auth UID
+//   - email: string (required) - User email address
+//   - displayName: string (optional) - User display name
+//   - username: string (optional) - Unique username
+//   - photoURL: string (optional) - User profile picture URL
+//   - phoneNumber: string (optional) - User phone number
+//   - createdAt: timestamp (optional) - Account creation timestamp
+//
+// Collection: users/{uid}/friends
+// Document ID: {friendUid}
+// Fields:
+//   - uid: string (required)
+//   - displayName: string (required)
+//   - photoURL: string (optional)
+//   - username: string (optional)
+//   - mmr: number (optional)
+//   - addedAt: timestamp (optional)
+//
+// Collection: tournaments
+// Document ID: {tournamentId}
+// Fields:
+//   - id: string (required)
+//   - userId: string (required)
+//   - name: string (required)
+//   - format: string (required)
+//   - date: timestamp (required)
+//   - numRounds: number (required)
+//   - numPlayers: number (required)
+//   - tag: string (optional)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "falih.hrmn@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 100)) &&
+             (!('photoURL' in data) || (
+               data.photoURL is string &&
+               (
+                 // URL biasa (Storage/CDN)
+                 (data.photoURL.matches("^https?://") && data.photoURL.size() <= 2000) ||
+                 // Fallback base64 data URL saat Storage belum tersedia
+                 (data.photoURL.matches("^data:image/") && data.photoURL.size() <= 900000)
+               )
+             )) &&
+             (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 20)) &&
+             (!('username' in data) || (data.username is string && data.username.size() >= 3 && data.username.size() <= 30)) &&
+             (!('mmr' in data) || (data.mmr is number)) &&
+             (!('region' in data) || (data.region is string && data.region.size() <= 50));
+    }
+
+    function isValidPhotoFieldOnly(data) {
+      return data.keys().hasOnly(['photoURL']) &&
+             data.photoURL is string &&
+             (
+               (data.photoURL.matches("^https?://") && data.photoURL.size() <= 2000) ||
+               (data.photoURL.matches("^data:image/") && data.photoURL.size() <= 900000)
+             );
+    }
+
+    function isValidFriend(data) {
+      return data.keys().hasAll(['uid', 'displayName']) &&
+             data.uid is string && data.displayName is string &&
+             (!('photoURL' in data) || (data.photoURL is string)) &&
+             (!('username' in data) || (data.username is string)) &&
+             (!('mmr' in data) || (data.mmr is number));
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'title', 'message', 'timestamp', 'type', 'read']) &&
+             data.id is string && data.title is string && data.message is string &&
+             data.timestamp is timestamp && data.type is string && data.read is bool;
+    }
+
+    function isValidTournament(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'format', 'date', 'numRounds', 'numPlayers']) &&
+             data.id is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() > 0 &&
+             data.format in ['Americano', 'Mexicano', 'Match Play'] &&
+             data.date is timestamp &&
+             data.numRounds is number && data.numPlayers is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      // Temporary unblock: allow owner to create/update own profile document.
+      // We keep admin-only delete and strict subcollection rules below.
+      allow create, update: if isOwner(userId);
+      allow delete: if isAdmin();
+
+      match /friends/{friendId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidFriend(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+
+      match /notifications/{notifId} {
+        allow read: if isOwner(userId);
+        allow create: if isAuthenticated() && isValidNotification(request.resource.data);
+        allow update: if isOwner(userId) && isValidNotification(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /tournaments/{tournamentId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidTournament(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidTournament(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /sharedMatches/{shareId} {
+      // View-only link can be opened without login
+      allow read: if true;
+
+      // Host must be authenticated and stamp self as owner.
+      allow create: if isAuthenticated() &&
+                    request.resource.data.hostUid is string &&
+                    request.resource.data.hostUid == request.auth.uid;
+
+      // Host can keep updating shared state. Also supports legacy docs
+      // that may not have hostUid yet by allowing current auth user to claim it.
+      allow update: if isAuthenticated() &&
+                    request.resource.data.hostUid is string &&
+                    request.resource.data.hostUid == request.auth.uid &&
+                    (
+                      !(resource.data.hostUid is string) ||
+                      resource.data.hostUid == request.auth.uid
+                    );
+
+      allow delete: if isAuthenticated() &&
+                    resource.data.hostUid is string &&
+                    resource.data.hostUid == request.auth.uid;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
