@@ -5376,8 +5376,9 @@ export default function App() {
     }
 
     if (tournament.format === 'Mexicano') {
-      // Generate next round for Mexicano based on current standings
-      // Calculate current leaderboard
+      // Generate next round for Mexicano:
+      // 1) Balance total match count first (fair play opportunity)
+      // 2) Then apply Mexicano ranking rules (W / Points + Diff)
       const playerStatsMap: Record<string, { id: string, w: number, pointsDiff: number, totalPoints: number, matchCount: number }> = {};
       tournament.players.forEach(p => {
         playerStatsMap[p.id] = { id: p.id, w: 0, pointsDiff: 0, totalPoints: 0, matchCount: 0 };
@@ -5408,7 +5409,7 @@ export default function App() {
         });
       });
 
-      const sortedPlayers = [...tournament.players].sort((a, b) => {
+      const compareByStanding = (a: Player, b: Player) => {
         const statsA = playerStatsMap[a.id];
         const statsB = playerStatsMap[b.id];
         if (tournament.criteria === 'Matches Won') {
@@ -5416,13 +5417,39 @@ export default function App() {
         } else {
           if (statsB.totalPoints !== statsA.totalPoints) return statsB.totalPoints - statsA.totalPoints;
         }
-        return statsB.pointsDiff - statsA.pointsDiff;
+        if (statsB.pointsDiff !== statsA.pointsDiff) return statsB.pointsDiff - statsA.pointsDiff;
+        return 0;
+      };
+
+      const sortedByFairnessThenStanding = [...tournament.players].sort((a, b) => {
+        const statsA = playerStatsMap[a.id];
+        const statsB = playerStatsMap[b.id];
+
+        // Priority #1: players with fewer matches must be selected first
+        if (statsA.matchCount !== statsB.matchCount) return statsA.matchCount - statsB.matchCount;
+
+        // Priority #2: within same match count bucket, follow Mexicano standing
+        const standingDiff = compareByStanding(a, b);
+        if (standingDiff !== 0) return standingDiff;
+
+        // Final tie-break to avoid deterministic lock-ins
+        return Math.random() - 0.5;
       });
 
       const roundMatches: Match[] = [];
-      const playersNeeded = Math.min(Math.floor(sortedPlayers.length / 4) * 4, tournament.courts * 4);
-      const playersInRound = sortedPlayers.slice(0, playersNeeded);
-      const playersBye = sortedPlayers.slice(playersNeeded);
+      const playersNeeded = Math.min(Math.floor(sortedByFairnessThenStanding.length / 4) * 4, tournament.courts * 4);
+      const selectedPlayers = sortedByFairnessThenStanding.slice(0, playersNeeded);
+      const playersBye = sortedByFairnessThenStanding.slice(playersNeeded);
+
+      // Apply Mexicano ranking structure inside selected players
+      const playersInRound = [...selectedPlayers].sort((a, b) => {
+        const standingDiff = compareByStanding(a, b);
+        if (standingDiff !== 0) return standingDiff;
+        const statsA = playerStatsMap[a.id];
+        const statsB = playerStatsMap[b.id];
+        if (statsA.matchCount !== statsB.matchCount) return statsA.matchCount - statsB.matchCount;
+        return Math.random() - 0.5;
+      });
 
       for (let m = 0; m < playersNeeded / 4; m++) {
         // Mexicano pairing: 1&4 vs 2&3 within each group of 4
