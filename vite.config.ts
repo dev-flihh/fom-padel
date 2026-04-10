@@ -15,10 +15,10 @@ export default defineConfig(({mode}) => {
         includeAssets: ['favicon.png', 'apple-touch-icon.png'],
         manifest: {
           name: 'FOM Play',
-          short_name: 'FOM Play',
+          short_name: 'FOM',
           description: 'Padel Tournament & MMR System',
-          theme_color: '#ffffff',
-          background_color: '#ffffff',
+          theme_color: '#F86600',
+          background_color: '#F86600',
           display: 'standalone',
           icons: [
             {

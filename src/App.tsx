@@ -159,6 +159,17 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+const getInitialSharedContext = () => {
+  const params = new URLSearchParams(window.location.search);
+  const sharedId = params.get('shared');
+  const targetView = params.get('view') === 'klasemen' ? 'klasemen' : 'active';
+  return {
+    sharedId,
+    targetView,
+    isShared: Boolean(sharedId)
+  };
+};
+
 const InstallAppButton = ({
   className,
   compact = false
@@ -2244,7 +2255,11 @@ const MatchActiveScreen = ({
   const isLastRound = currentRoundIndex !== -1 && currentRoundIndex >= (tournament.numRounds - 1);
   const isTournamentEnded = tournament.rounds.length > 0 && tournament.rounds.every(r => r.matches.every(m => m.status === 'completed'));
   const totalElapsed = tournament.startedAt ? formatDurationFromMs(nowMs - tournament.startedAt) : '00:00';
-  const fomPlayUrl = 'https://fomplay.com';
+  const fomPlayUrl = useMemo(() => {
+    const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
+    const runtimeBase = `${window.location.protocol}//${window.location.host}`;
+    return (configuredBase || runtimeBase).replace(/\/+$/, '');
+  }, []);
   const pageBgTheme =
     tournament.format === 'Americano'
       ? {
@@ -3003,6 +3018,11 @@ const KlasemenScreen = ({
   onBack: () => void,
   onShare: (t: Tournament | TournamentHistory) => void
 }) => {
+  const fomPlayUrl = useMemo(() => {
+    const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
+    const runtimeBase = `${window.location.protocol}//${window.location.host}`;
+    return (configuredBase || runtimeBase).replace(/\/+$/, '');
+  }, []);
   const tournamentPlayers = tournament.players || [];
   const tournamentRounds = tournament.rounds || [];
   const configuredCourts = 'courts' in tournament ? tournament.courts : undefined;
@@ -3255,6 +3275,19 @@ const KlasemenScreen = ({
           <div className="relative mt-3 pt-2 border-t border-white/30 flex items-center justify-between">
             <p className="text-[11px] text-white/88">Ronde selesai: <span className="font-bold text-white">{completedRounds}/{tournamentRounds.length || 0}</span></p>
             <span className="text-[10px] font-bold uppercase tracking-widest text-white/85">{isTournamentEnded ? 'Klasemen Akhir' : 'Klasemen Sementara'}</span>
+          </div>
+          <div className="relative mt-2 pt-2 flex items-center justify-between gap-2">
+            <div className="absolute inset-x-0 top-0 h-px bg-white/30 pointer-events-none" />
+            <p className="relative z-10 text-[11px] text-white/88 whitespace-nowrap">
+              Hosted with <span className="font-bold text-white">FOM Play</span>
+            </p>
+            <button
+              onClick={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
+              className="relative z-10 shrink-0 h-7 px-2.5 rounded-full border border-white/70 bg-white/12 text-white text-[10px] font-bold inline-flex items-center gap-1 tap-target"
+            >
+              Coba
+              <ArrowRight size={12} />
+            </button>
           </div>
           <div className="relative mt-1 flex items-center justify-between text-[10px] font-semibold text-white/78 tabular-nums">
             <span>Match {completedMatches}/{totalMatches}</span>
@@ -4360,13 +4393,15 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
 // --- Main App ---
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('login');
+  const initialSharedContext = getInitialSharedContext();
+  const [screen, setScreen] = useState<Screen>(initialSharedContext.isShared ? initialSharedContext.targetView : 'login');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [sharedMatchId, setSharedMatchId] = useState<string | null>(null);
-  const [isSharedViewer, setIsSharedViewer] = useState(false);
+  const [sharedMatchId, setSharedMatchId] = useState<string | null>(initialSharedContext.sharedId);
+  const [isSharedViewer, setIsSharedViewer] = useState(initialSharedContext.isShared);
   const [isAuthChecked, setIsAuthChecked] = useState(false);
-  const [sharedTargetScreen, setSharedTargetScreen] = useState<'active' | 'klasemen'>('active');
+  const [sharedTargetScreen, setSharedTargetScreen] = useState<'active' | 'klasemen'>(initialSharedContext.targetView);
+  const [isSharedDataReady, setIsSharedDataReady] = useState(!initialSharedContext.isShared);
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [tournament, setTournament] = useState<Tournament>(INITIAL_TOURNAMENT);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
@@ -4379,18 +4414,6 @@ export default function App() {
   const isAuthResolvedRef = useRef(false);
   const isHandlingPopStateRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; ts: number } | null>(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const shared = params.get('shared');
-    const targetView = params.get('view') === 'klasemen' ? 'klasemen' : 'active';
-    if (shared) {
-      setSharedMatchId(shared);
-      setIsSharedViewer(true);
-      setSharedTargetScreen(targetView);
-      setScreen(targetView);
-    }
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -4565,14 +4588,19 @@ export default function App() {
     if (!sharedMatchId || !isSharedViewer) return;
     const sharedRef = doc(db, 'sharedMatches', sharedMatchId);
     const unsub = onSnapshot(sharedRef, (snap) => {
-      if (!snap.exists()) return;
+      if (!snap.exists()) {
+        setIsSharedDataReady(true);
+        return;
+      }
       const data = snap.data();
       if (data?.tournament) {
         setTournament(data.tournament as Tournament);
         setScreen(sharedTargetScreen);
       }
+      setIsSharedDataReady(true);
     }, (err) => {
       console.error('Shared match subscribe error:', err);
+      setIsSharedDataReady(true);
     });
     return () => unsub();
   }, [sharedMatchId, isSharedViewer, sharedTargetScreen]);
@@ -4580,6 +4608,8 @@ export default function App() {
   useEffect(() => {
     if (!sharedMatchId || isSharedViewer) return;
     if (!user?.uid) return;
+    const isEmptyTournament = (!tournament.rounds || tournament.rounds.length === 0) && (!tournament.players || tournament.players.length === 0);
+    if (isEmptyTournament) return;
     const sharedRef = doc(db, 'sharedMatches', sharedMatchId);
     setDoc(sharedRef, {
       tournament,
@@ -5384,6 +5414,10 @@ export default function App() {
   };
 
   if (!isAuthChecked) {
+    return <AppLoadingScreen />;
+  }
+
+  if (isSharedViewer && !isSharedDataReady) {
     return <AppLoadingScreen />;
   }
 
