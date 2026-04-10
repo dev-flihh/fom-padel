@@ -2179,6 +2179,7 @@ const MatchActiveScreen = ({
   tournament,
   onUpdateScore,
   onNextRound,
+  onUpdateRounds,
   onOpenStandings,
   onSwapPlayer,
   onUpdateMatchPlayScore,
@@ -2190,6 +2191,7 @@ const MatchActiveScreen = ({
   tournament: Tournament,
   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void,
   onNextRound: () => void,
+  onUpdateRounds: (numRounds: number) => boolean,
   onOpenStandings: () => void,
   onSwapPlayer: (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => void,
   onUpdateMatchPlayScore: (matchId: string, team: 'A' | 'B') => void,
@@ -2198,6 +2200,9 @@ const MatchActiveScreen = ({
 }) => {
   const [scoringMatchId, setScoringMatchId] = useState<string | null>(null);
   const [swappingPlayer, setSwappingPlayer] = useState<{ matchId: string, team: 'A' | 'B', playerIndex: number, currentPlayer: Player } | null>(null);
+  const [isRoundEditorOpen, setIsRoundEditorOpen] = useState(false);
+  const [roundEditValue, setRoundEditValue] = useState('');
+  const [roundEditError, setRoundEditError] = useState('');
   const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
   const [nowMs, setNowMs] = useState(Date.now());
   const [modalBottomOffset, setModalBottomOffset] = useState(88);
@@ -2440,6 +2445,26 @@ const MatchActiveScreen = ({
     });
   };
 
+  const handleOpenRoundEditor = () => {
+    setRoundEditValue(String(tournament.numRounds || 1));
+    setRoundEditError('');
+    setIsRoundEditorOpen(true);
+  };
+
+  const handleSubmitRoundEdit = () => {
+    const parsed = Number.parseInt(roundEditValue, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setRoundEditError('Masukkan jumlah ronde minimal 1.');
+      return;
+    }
+    const ok = onUpdateRounds(parsed);
+    if (!ok) {
+      setRoundEditError('Jumlah ronde tidak valid untuk kondisi turnamen saat ini.');
+      return;
+    }
+    setIsRoundEditorOpen(false);
+  };
+
   if (!shouldShowActiveMatchScreen) {
     return (
       <div className="min-h-screen bg-surface flex flex-col pb-24">
@@ -2607,14 +2632,23 @@ const MatchActiveScreen = ({
           </div>
         </section>
 
-        <section className="flex items-center justify-between gap-3">
+        <section className="grid grid-cols-2 gap-2.5">
           <button
             onClick={onOpenStandings}
-            className={cn("tap-target flex-1 h-11 rounded-xl bg-white/78 backdrop-blur-sm inline-flex items-center justify-center gap-2 font-bold text-[13px] border", accentTheme.text, accentTheme.borderSoft)}
+            className={cn("tap-target h-11 rounded-xl bg-white/78 backdrop-blur-sm inline-flex items-center justify-center gap-2 font-bold text-[13px] border", accentTheme.text, accentTheme.borderSoft)}
           >
             <Trophy size={16} />
             <span>{isTournamentEnded ? 'Lihat Klasemen Akhir' : 'Lihat Klasemen Sementara'}</span>
           </button>
+          {!isReadOnly && (
+            <button
+              onClick={handleOpenRoundEditor}
+              className={cn("tap-target h-11 rounded-xl bg-white/78 backdrop-blur-sm inline-flex items-center justify-center gap-2 font-bold text-[13px] border", accentTheme.text, accentTheme.borderSoft)}
+            >
+              <Edit3 size={15} />
+              <span>Ubah Ronde</span>
+            </button>
+          )}
         </section>
 
         {tournament.rounds.map((round) => {
@@ -2797,6 +2831,76 @@ const MatchActiveScreen = ({
       </main>
 
       {/* Score Popup Modal */}
+      <AnimatePresence>
+        {isRoundEditorOpen && (
+          <div
+            className="fixed inset-0 z-[120] flex items-end justify-center px-4 pt-4 sm:items-center"
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + env(safe-area-inset-bottom, 0px))` }}
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsRoundEditorOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-white rounded-[28px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Ubah Jumlah Ronde</h3>
+                  <p className="text-[12px] text-ios-gray font-medium">Total ronde turnamen saat ini: {tournament.numRounds}</p>
+                </div>
+                <button
+                  onClick={() => setIsRoundEditorOpen(false)}
+                  className="p-2 bg-ios-gray/10 rounded-full tap-target"
+                >
+                  <X size={18} className="text-on-surface" />
+                </button>
+              </div>
+              <div className="p-5 space-y-3">
+                <label className="block text-[12px] font-bold uppercase tracking-wide text-ios-gray">
+                  Jumlah Ronde Baru
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={roundEditValue}
+                  onChange={(e) => {
+                    setRoundEditValue(e.target.value);
+                    if (roundEditError) setRoundEditError('');
+                  }}
+                  className="w-full h-12 rounded-xl border border-ios-gray/20 px-4 text-[17px] font-semibold text-on-surface outline-none focus:border-primary"
+                  placeholder="Contoh: 5"
+                />
+                {roundEditError && (
+                  <p className="text-[12px] font-semibold text-red-500">{roundEditError}</p>
+                )}
+              </div>
+              <div className="p-5 pt-0 grid grid-cols-2 gap-2.5">
+                <button
+                  onClick={() => setIsRoundEditorOpen(false)}
+                  className="h-11 rounded-xl border border-ios-gray/20 text-[14px] font-semibold text-ios-gray tap-target"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleSubmitRoundEdit}
+                  className="h-11 rounded-xl bg-primary text-white text-[14px] font-bold shadow-[0_8px_18px_rgba(230,94,20,0.24)] tap-target"
+                >
+                  Simpan
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {swappingPlayer && (
           <div
@@ -5562,6 +5666,187 @@ export default function App() {
     addNotification('Ronde Baru!', `Ronde ${nextRoundId} telah dimulai. Cek jadwal pertandingan Anda.`, 'match');
   };
 
+  const handleUpdateRounds = (requestedRounds: number) => {
+    const safeRequested = Number.isFinite(requestedRounds) ? Math.floor(requestedRounds) : NaN;
+    if (!Number.isFinite(safeRequested) || safeRequested < 1) return false;
+
+    const currentRoundIndex = tournament.rounds.findIndex(r => r.matches.some(m => m.status === 'active'));
+    const minAllowedRounds = Math.max(1, currentRoundIndex + 1);
+    const nextNumRounds = Math.max(minAllowedRounds, Math.min(50, safeRequested));
+
+    setTournament(prev => {
+      let nextRounds = [...prev.rounds];
+
+      if (nextNumRounds < nextRounds.length) {
+        // Only trim future rounds; active/completed rounds are protected by minAllowedRounds.
+        nextRounds = nextRounds.slice(0, nextNumRounds);
+      } else if (nextNumRounds > nextRounds.length && prev.format === 'Americano') {
+        // Americano needs pre-generated rounds so "Ronde Berikutnya" can continue seamlessly.
+        const playerMatchCounts: Record<string, number> = {};
+        const partnerCounts: Record<string, Record<string, number>> = {};
+        const opponentCounts: Record<string, Record<string, number>> = {};
+        const lastPartnerByPlayer: Record<string, string | null> = {};
+        prev.players.forEach((p) => {
+          playerMatchCounts[p.id] = 0;
+          partnerCounts[p.id] = {};
+          opponentCounts[p.id] = {};
+          lastPartnerByPlayer[p.id] = null;
+        });
+
+        const getPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => map[a.id]?.[b.id] || 0;
+        const incrementPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
+          map[a.id] ??= {};
+          map[b.id] ??= {};
+          map[a.id][b.id] = (map[a.id][b.id] || 0) + 1;
+          map[b.id][a.id] = (map[b.id][a.id] || 0) + 1;
+        };
+        const listCombinationsOf3 = (arr: Player[]) => {
+          const combos: Player[][] = [];
+          for (let i = 0; i < arr.length; i++) {
+            for (let j = i + 1; j < arr.length; j++) {
+              for (let k = j + 1; k < arr.length; k++) combos.push([arr[i], arr[j], arr[k]]);
+            }
+          }
+          return combos;
+        };
+        const evaluateSplitPenalty = (group: Player[]) => {
+          const splits: [number, number, number, number][] = [[0, 1, 2, 3], [0, 2, 1, 3], [0, 3, 1, 2]];
+          let best = {
+            penalty: Number.POSITIVE_INFINITY,
+            teamA: [group[0], group[1]] as [Player, Player],
+            teamB: [group[2], group[3]] as [Player, Player]
+          };
+          for (const [a1, a2, b1, b2] of splits) {
+            const teamA: [Player, Player] = [group[a1], group[a2]];
+            const teamB: [Player, Player] = [group[b1], group[b2]];
+            const partnerPenaltyA = getPairCount(partnerCounts, teamA[0], teamA[1]) * 100 + (lastPartnerByPlayer[teamA[0].id] === teamA[1].id ? 180 : 0);
+            const partnerPenaltyB = getPairCount(partnerCounts, teamB[0], teamB[1]) * 100 + (lastPartnerByPlayer[teamB[0].id] === teamB[1].id ? 180 : 0);
+            const opponentPenalty =
+              getPairCount(opponentCounts, teamA[0], teamB[0]) * 12 +
+              getPairCount(opponentCounts, teamA[0], teamB[1]) * 12 +
+              getPairCount(opponentCounts, teamA[1], teamB[0]) * 12 +
+              getPairCount(opponentCounts, teamA[1], teamB[1]) * 12;
+            const penalty = partnerPenaltyA + partnerPenaltyB + opponentPenalty;
+            if (penalty < best.penalty) best = { penalty, teamA, teamB };
+          }
+          return best;
+        };
+
+        nextRounds.forEach((round) => {
+          round.matches.forEach((match) => {
+            const [p1, p2] = match.teamA.players;
+            const [p3, p4] = match.teamB.players;
+            if (!p1 || !p2 || !p3 || !p4) return;
+            [p1, p2, p3, p4].forEach((p) => {
+              if (playerMatchCounts[p.id] === undefined) return;
+              playerMatchCounts[p.id]++;
+            });
+            incrementPairCount(partnerCounts, p1, p2);
+            incrementPairCount(partnerCounts, p3, p4);
+            incrementPairCount(opponentCounts, p1, p3);
+            incrementPairCount(opponentCounts, p1, p4);
+            incrementPairCount(opponentCounts, p2, p3);
+            incrementPairCount(opponentCounts, p2, p4);
+            lastPartnerByPlayer[p1.id] = p2.id;
+            lastPartnerByPlayer[p2.id] = p1.id;
+            lastPartnerByPlayer[p3.id] = p4.id;
+            lastPartnerByPlayer[p4.id] = p3.id;
+          });
+        });
+
+        const playersPerRound = Math.min(Math.floor(prev.players.length / 4) * 4, prev.courts * 4);
+        while (nextRounds.length < nextNumRounds) {
+          const roundId = nextRounds.length + 1;
+          const sortedPlayers = [...prev.players].sort((a, b) => {
+            const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+            return diff !== 0 ? diff : (Math.random() - 0.5);
+          });
+          const playersInRound = sortedPlayers.slice(0, playersPerRound);
+          const playersBye = sortedPlayers.slice(playersPerRound);
+          const remaining = [...playersInRound];
+          const roundMatches: Match[] = [];
+
+          for (let m = 0; m < playersPerRound / 4; m++) {
+            if (remaining.length < 4) break;
+            remaining.sort((a, b) => {
+              const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+              return diff !== 0 ? diff : (Math.random() - 0.5);
+            });
+            const seed = remaining[0];
+            const candidates = remaining.slice(1);
+            const trios = listCombinationsOf3(candidates);
+            let bestGroup: Player[] = [seed, ...candidates.slice(0, 3)];
+            let bestPenalty = Number.POSITIVE_INFINITY;
+            trios.forEach((trio) => {
+              const group = [seed, ...trio];
+              const pairwisePenalty = group.reduce((sum, a, i) => {
+                for (let j = i + 1; j < group.length; j++) {
+                  const b = group[j];
+                  const interactions = getPairCount(partnerCounts, a, b) * 16 + getPairCount(opponentCounts, a, b) * 6;
+                  sum += interactions;
+                  if (lastPartnerByPlayer[a.id] === b.id || lastPartnerByPlayer[b.id] === a.id) sum += 30;
+                }
+                return sum;
+              }, 0);
+              if (pairwisePenalty < bestPenalty) {
+                bestPenalty = pairwisePenalty;
+                bestGroup = group;
+              }
+            });
+
+            const { teamA, teamB } = evaluateSplitPenalty(bestGroup);
+            const [p1, p2] = teamA;
+            const [p3, p4] = teamB;
+            roundMatches.push({
+              id: `r${roundId}-m${m + 1}`,
+              court: m + 1,
+              roundId,
+              status: 'pending',
+              teamA: { players: [p1, p2], score: 0 },
+              teamB: { players: [p3, p4], score: 0 }
+            });
+            [p1, p2, p3, p4].forEach((p) => {
+              playerMatchCounts[p.id] = (playerMatchCounts[p.id] || 0) + 1;
+            });
+            incrementPairCount(partnerCounts, p1, p2);
+            incrementPairCount(partnerCounts, p3, p4);
+            incrementPairCount(opponentCounts, p1, p3);
+            incrementPairCount(opponentCounts, p1, p4);
+            incrementPairCount(opponentCounts, p2, p3);
+            incrementPairCount(opponentCounts, p2, p4);
+            lastPartnerByPlayer[p1.id] = p2.id;
+            lastPartnerByPlayer[p2.id] = p1.id;
+            lastPartnerByPlayer[p3.id] = p4.id;
+            lastPartnerByPlayer[p4.id] = p3.id;
+
+            const groupIds = new Set(bestGroup.map((p) => p.id));
+            const nextRemaining = remaining.filter((p) => !groupIds.has(p.id));
+            remaining.splice(0, remaining.length, ...nextRemaining);
+          }
+
+          nextRounds.push({
+            id: roundId,
+            matches: roundMatches,
+            playersBye
+          });
+        }
+      }
+
+      return {
+        ...prev,
+        numRounds: nextNumRounds,
+        rounds: nextRounds
+      };
+    });
+
+    if (nextNumRounds === safeRequested) {
+      addNotification('Ronde Diperbarui', `Total ronde diubah menjadi ${nextNumRounds}.`, 'system');
+    } else {
+      addNotification('Ronde Disesuaikan', `Total ronde diset ke ${nextNumRounds} agar tetap valid.`, 'system');
+    }
+    return true;
+  };
+
   const handleUpdateMatchPlayScore = (matchId: string, team: 'A' | 'B') => {
     let setWinMessage: string | null = null;
 
@@ -5781,6 +6066,7 @@ export default function App() {
             tournament={tournament}
             onUpdateScore={handleUpdateScore}
             onNextRound={handleNextRound}
+            onUpdateRounds={handleUpdateRounds}
             onOpenStandings={handleOpenLiveStandings}
             onSwapPlayer={handleSwapPlayer}
             onUpdateMatchPlayScore={handleUpdateMatchPlayScore}
