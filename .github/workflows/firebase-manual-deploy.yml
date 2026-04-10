@@ -25,3 +25,10 @@ jobs:
         run: npx firebase-tools deploy --only hosting --project gen-lang-client-0996764238 --token "$FIREBASE_TOKEN"
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+
+      - name: Sync SSOT to Google Docs
+        if: ${{ secrets.APPS_SCRIPT_WEBHOOK_URL != '' && secrets.APPS_SCRIPT_WEBHOOK_SECRET != '' }}
+        run: npm run docs:sync:gdocs
+        env:
+          APPS_SCRIPT_WEBHOOK_URL: ${{ secrets.APPS_SCRIPT_WEBHOOK_URL }}
+          APPS_SCRIPT_WEBHOOK_SECRET: ${{ secrets.APPS_SCRIPT_WEBHOOK_SECRET }}
