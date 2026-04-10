@@ -2117,7 +2117,6 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
                         <Zap size={12} />
                         Lapangan {match.court}
                       </span>
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-ios-gray/55">VS</span>
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
                       <div className="min-w-0 flex flex-col items-center gap-1.5">
@@ -2132,7 +2131,10 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
                           {match.teamA.players.map(p => p.name.split(' ')[0]).join(' / ')}
                         </span>
                       </div>
-                      <div className="text-[12px] font-display font-black text-ios-gray/45 tabular-nums px-1">0-0</div>
+                      <div className="flex flex-col items-center leading-none px-1">
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-ios-gray/55 mb-1">VS</span>
+                        <span className="text-[12px] font-display font-black text-ios-gray/45 tabular-nums">0-0</span>
+                      </div>
                       <div className="min-w-0 flex flex-col items-center gap-1.5">
                         <div className="flex -space-x-2.5">
                           {match.teamB.players.map((p, i) => (
@@ -3622,14 +3624,88 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
       console.error('Save profile error:', err);
     }
   };
-  const stats = {
-    matches: tournaments.length,
-    winRate: tournaments.length > 0 ? Math.round((Math.floor(tournaments.length * 0.7) / tournaments.length) * 100) : 0,
-    points: tournaments.reduce((acc, curr) => acc + (curr.numPlayers * 10), 0),
-    won: Math.floor(tournaments.length * 0.7),
-    lost: Math.floor(tournaments.length * 0.2),
-    draw: Math.floor(tournaments.length * 0.1)
-  };
+  const stats = useMemo(() => {
+    const uid = user?.uid;
+    const displayName = (user?.displayName || '').trim().toLowerCase();
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const prevMonthDate = new Date(currentYear, currentMonth - 1, 1);
+    const prevMonth = prevMonthDate.getMonth();
+    const prevYear = prevMonthDate.getFullYear();
+
+    let matches = 0;
+    let won = 0;
+    let lost = 0;
+    let draw = 0;
+    let points = 0;
+    let currentMonthWins = 0;
+    let previousMonthWins = 0;
+
+    const isCurrentUser = (player?: Player) => {
+      if (!player) return false;
+      if (uid && player.id === uid) return true;
+      if (displayName && player.name?.trim().toLowerCase() === displayName) return true;
+      return false;
+    };
+
+    tournaments.forEach((tournament) => {
+      const tDateRaw = (tournament as any)?.date;
+      const tDate = tDateRaw instanceof Date
+        ? tDateRaw
+        : (tDateRaw?.toDate ? tDateRaw.toDate() : new Date(tDateRaw));
+      const hasValidDate = tDate instanceof Date && !Number.isNaN(tDate.getTime());
+      const rounds = tournament.rounds || [];
+
+      rounds.forEach((round) => {
+        (round.matches || []).forEach((match) => {
+          if (!match) return;
+          const userInA = (match.teamA?.players || []).some((p) => isCurrentUser(p));
+          const userInB = (match.teamB?.players || []).some((p) => isCurrentUser(p));
+          if (!userInA && !userInB) return;
+
+          const scoreA = Number(match.teamA?.score || 0);
+          const scoreB = Number(match.teamB?.score || 0);
+          const userScore = userInA ? scoreA : scoreB;
+          const oppScore = userInA ? scoreB : scoreA;
+
+          matches += 1;
+          points += userScore;
+
+          if (userScore > oppScore) {
+            won += 1;
+            if (hasValidDate) {
+              const m = tDate.getMonth();
+              const y = tDate.getFullYear();
+              if (m === currentMonth && y === currentYear) currentMonthWins += 1;
+              if (m === prevMonth && y === prevYear) previousMonthWins += 1;
+            }
+          } else if (userScore < oppScore) {
+            lost += 1;
+          } else {
+            draw += 1;
+          }
+        });
+      });
+    });
+
+    const winRate = matches > 0 ? Math.round((won / matches) * 100) : 0;
+    const winChangePercent = previousMonthWins > 0
+      ? Math.round(((currentMonthWins - previousMonthWins) / previousMonthWins) * 100)
+      : (currentMonthWins > 0 ? 100 : 0);
+
+    return {
+      matches,
+      winRate,
+      points,
+      won,
+      lost,
+      draw,
+      currentMonthWins,
+      previousMonthWins,
+      winChangePercent
+    };
+  }, [tournaments, user?.uid, user?.displayName]);
 
   const getTier = (matches: number) => {
     if (matches >= 10) return { label: 'Silver Tier', color: 'bg-slate-400/10 text-slate-600' };
@@ -3875,9 +3951,18 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                 </div>
               </div>
               <div className="text-right">
-                <div className="flex items-center gap-1 text-green-500 font-bold text-sm mb-1">
+                <div
+                  className={cn(
+                    "flex items-center gap-1 font-bold text-sm mb-1",
+                    stats.winChangePercent > 0
+                      ? "text-green-500"
+                      : stats.winChangePercent < 0
+                        ? "text-error"
+                        : "text-ios-gray"
+                  )}
+                >
                   <TrendingUp size={16} />
-                  <span>+12%</span>
+                  <span>{stats.winChangePercent > 0 ? `+${stats.winChangePercent}%` : `${stats.winChangePercent}%`}</span>
                 </div>
                 <span className="text-[10px] font-bold text-ios-gray uppercase tracking-widest">vs Bulan Lalu</span>
               </div>
@@ -4729,34 +4814,44 @@ export default function App() {
     return JSON.parse(JSON.stringify(value)) as T;
   };
 
+  const getShareBaseUrl = () => {
+    const envPublicUrl = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
+    if (envPublicUrl) {
+      return envPublicUrl.startsWith('http://') || envPublicUrl.startsWith('https://')
+        ? envPublicUrl
+        : `https://${envPublicUrl}`;
+    }
+    return `${window.location.origin}${window.location.pathname}`;
+  };
+
   const buildShareUrl = (shareId: string, view: 'active' | 'klasemen') => {
-    const shareUrl = new URL(window.location.href);
-    shareUrl.searchParams.set('shared', shareId);
-    if (view === 'klasemen') shareUrl.searchParams.set('view', 'klasemen');
-    else shareUrl.searchParams.delete('view');
+    try {
+      const shareUrl = new URL(getShareBaseUrl());
+      shareUrl.searchParams.set('shared', shareId);
+      if (view === 'klasemen') shareUrl.searchParams.set('view', 'klasemen');
+      else shareUrl.searchParams.delete('view');
 
-    const isLocalHost = ['localhost', '127.0.0.1'].includes(shareUrl.hostname);
-    const envNetworkHost = (import.meta as any).env?.VITE_SHARE_NETWORK_HOST as string | undefined;
-    const savedNetworkHost = localStorage.getItem('fom_share_network_host') || '';
-    let networkHost = (envNetworkHost || savedNetworkHost).trim();
-
-    if (isLocalHost && !networkHost) {
-      const input = window.prompt(
-        'Masukkan IP network agar link bisa dibuka di HP (contoh: 192.168.1.27)',
-        savedNetworkHost || ''
-      );
-      if (input && input.trim()) {
-        networkHost = input.trim();
-        localStorage.setItem('fom_share_network_host', networkHost);
+      const isLocalHost = ['localhost', '127.0.0.1'].includes(shareUrl.hostname);
+      const envNetworkHost = ((import.meta as any).env?.VITE_SHARE_NETWORK_HOST as string | undefined)?.trim() || '';
+      let savedNetworkHost = '';
+      try {
+        savedNetworkHost = localStorage.getItem('fom_share_network_host') || '';
+      } catch {
+        savedNetworkHost = '';
       }
-    }
+      const networkHost = (envNetworkHost || savedNetworkHost).trim();
 
-    if (isLocalHost && networkHost) {
-      shareUrl.hostname = networkHost;
-      shareUrl.protocol = 'http:';
-    }
+      if (isLocalHost && networkHost) {
+        shareUrl.hostname = networkHost;
+        shareUrl.protocol = 'http:';
+      }
 
-    return shareUrl.toString();
+      return shareUrl.toString();
+    } catch {
+      // Last-resort fallback to avoid runtime crash on malformed URL environments.
+      const fallback = `${window.location.origin}/?shared=${encodeURIComponent(shareId)}${view === 'klasemen' ? '&view=klasemen' : ''}`;
+      return fallback;
+    }
   };
 
   const handleOpenLiveStandings = () => {
@@ -4862,36 +4957,129 @@ export default function App() {
     const maxMatchesPerRound = settings.courts;
 
     if (settings.format === 'Americano') {
-      // Pre-generate all rounds for Americano
-      // We'll use a randomized approach that tries to balance matches and partners
+      // Pre-generate all rounds for Americano with partner/opponent diversity balancing
       const playerMatchCounts: Record<string, number> = {};
-      const partnerHistory: Record<string, Set<string>> = {};
+      const partnerCounts: Record<string, Record<string, number>> = {};
+      const opponentCounts: Record<string, Record<string, number>> = {};
+      const lastPartnerByPlayer: Record<string, string | null> = {};
       players.forEach(p => {
         if (p && p.id) {
           playerMatchCounts[p.id] = 0;
-          partnerHistory[p.id] = new Set();
+          partnerCounts[p.id] = {};
+          opponentCounts[p.id] = {};
+          lastPartnerByPlayer[p.id] = null;
         }
       });
 
+      const getPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
+        return map[a.id]?.[b.id] || 0;
+      };
+
+      const incrementPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
+        map[a.id] ??= {};
+        map[b.id] ??= {};
+        map[a.id][b.id] = (map[a.id][b.id] || 0) + 1;
+        map[b.id][a.id] = (map[b.id][a.id] || 0) + 1;
+      };
+
+      const listCombinationsOf3 = (arr: Player[]) => {
+        const combos: Player[][] = [];
+        for (let i = 0; i < arr.length; i++) {
+          for (let j = i + 1; j < arr.length; j++) {
+            for (let k = j + 1; k < arr.length; k++) {
+              combos.push([arr[i], arr[j], arr[k]]);
+            }
+          }
+        }
+        return combos;
+      };
+
+      const evaluateSplitPenalty = (group: Player[]) => {
+        const splits: [number, number, number, number][] = [
+          [0, 1, 2, 3], // (0,1) vs (2,3)
+          [0, 2, 1, 3], // (0,2) vs (1,3)
+          [0, 3, 1, 2], // (0,3) vs (1,2)
+        ];
+        let best = {
+          penalty: Number.POSITIVE_INFINITY,
+          teamA: [group[0], group[1]] as [Player, Player],
+          teamB: [group[2], group[3]] as [Player, Player],
+        };
+
+        for (const [a1, a2, b1, b2] of splits) {
+          const teamA: [Player, Player] = [group[a1], group[a2]];
+          const teamB: [Player, Player] = [group[b1], group[b2]];
+
+          const partnerPenaltyA =
+            getPairCount(partnerCounts, teamA[0], teamA[1]) * 100 +
+            (lastPartnerByPlayer[teamA[0].id] === teamA[1].id ? 180 : 0);
+          const partnerPenaltyB =
+            getPairCount(partnerCounts, teamB[0], teamB[1]) * 100 +
+            (lastPartnerByPlayer[teamB[0].id] === teamB[1].id ? 180 : 0);
+
+          const opponentPairs: [Player, Player][] = [
+            [teamA[0], teamB[0]],
+            [teamA[0], teamB[1]],
+            [teamA[1], teamB[0]],
+            [teamA[1], teamB[1]],
+          ];
+          const opponentPenalty = opponentPairs.reduce((sum, [x, y]) => sum + getPairCount(opponentCounts, x, y) * 12, 0);
+
+          const penalty = partnerPenaltyA + partnerPenaltyB + opponentPenalty;
+          if (penalty < best.penalty) {
+            best = { penalty, teamA, teamB };
+          }
+        }
+        return best;
+      };
+
       for (let r = 1; r <= numRounds; r++) {
-        // Sort players by match count to prioritize those who played less
+        // Prioritize players with fewer matches, randomize tie-break
         const sortedPlayers = [...players].sort((a, b) => {
           if (!a || !b) return 0;
-          return (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+          const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+          return diff !== 0 ? diff : (Math.random() - 0.5);
         });
         const roundMatches: Match[] = [];
         const playersNeeded = Math.min(Math.floor(players.length / 4) * 4, maxMatchesPerRound * 4);
         const playersInRound = sortedPlayers.slice(0, playersNeeded);
         const playersBye = sortedPlayers.slice(playersNeeded);
 
-        // Shuffle players in round to randomize pairings among those with same match count
-        const shuffled = [...playersInRound].sort(() => Math.random() - 0.5);
-
+        const remaining = [...playersInRound];
         for (let m = 0; m < playersNeeded / 4; m++) {
-          const p1 = shuffled[m * 4];
-          const p2 = shuffled[m * 4 + 1];
-          const p3 = shuffled[m * 4 + 2];
-          const p4 = shuffled[m * 4 + 3];
+          // Build one group of 4 with minimum repeated interactions
+          remaining.sort((a, b) => {
+            const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+            return diff !== 0 ? diff : (Math.random() - 0.5);
+          });
+
+          const seed = remaining[0];
+          const candidates = remaining.slice(1);
+          const candidateTrios = listCombinationsOf3(candidates);
+
+          let bestGroup: Player[] = [seed, ...candidates.slice(0, 3)];
+          let bestPenalty = Number.POSITIVE_INFINITY;
+          for (const trio of candidateTrios) {
+            const group = [seed, ...trio];
+            const pairwisePenalty = group.reduce((sum, a, i) => {
+              for (let j = i + 1; j < group.length; j++) {
+                const b = group[j];
+                const interactions = getPairCount(partnerCounts, a, b) * 16 + getPairCount(opponentCounts, a, b) * 6;
+                sum += interactions;
+                if (lastPartnerByPlayer[a.id] === b.id || lastPartnerByPlayer[b.id] === a.id) sum += 30;
+              }
+              return sum;
+            }, 0);
+            if (pairwisePenalty < bestPenalty) {
+              bestPenalty = pairwisePenalty;
+              bestGroup = group;
+            }
+          }
+
+          const { teamA, teamB } = evaluateSplitPenalty(bestGroup);
+          const groupIds = new Set(bestGroup.map(p => p.id));
+          const nextRemaining = remaining.filter(p => !groupIds.has(p.id));
+          remaining.splice(0, remaining.length, ...nextRemaining);
 
           roundMatches.push({
             id: `r${r}-m${m + 1}`,
@@ -4899,18 +5087,25 @@ export default function App() {
             roundId: r,
             status: r === 1 ? 'active' : 'pending',
             startedAt: r === 1 ? now : undefined,
-            teamA: { players: [p1, p2], score: 0 },
-            teamB: { players: [p3, p4], score: 0 }
+            teamA: { players: teamA, score: 0 },
+            teamB: { players: teamB, score: 0 }
           });
 
-          // Update history
+          const [p1, p2] = teamA;
+          const [p3, p4] = teamB;
           [p1, p2, p3, p4].forEach(p => {
-            if (p && p.id) {
-              playerMatchCounts[p.id]++;
-            }
+            playerMatchCounts[p.id] = (playerMatchCounts[p.id] || 0) + 1;
           });
-          if (p1 && p2) { partnerHistory[p1.id].add(p2.id); partnerHistory[p2.id].add(p1.id); }
-          if (p3 && p4) { partnerHistory[p3.id].add(p4.id); partnerHistory[p4.id].add(p3.id); }
+          incrementPairCount(partnerCounts, p1, p2);
+          incrementPairCount(partnerCounts, p3, p4);
+          incrementPairCount(opponentCounts, p1, p3);
+          incrementPairCount(opponentCounts, p1, p4);
+          incrementPairCount(opponentCounts, p2, p3);
+          incrementPairCount(opponentCounts, p2, p4);
+          lastPartnerByPlayer[p1.id] = p2.id;
+          lastPartnerByPlayer[p2.id] = p1.id;
+          lastPartnerByPlayer[p3.id] = p4.id;
+          lastPartnerByPlayer[p4.id] = p3.id;
         }
 
         rounds.push({
