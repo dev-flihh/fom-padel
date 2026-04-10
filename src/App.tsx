@@ -759,7 +759,6 @@ const DashboardScreen = ({
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
             <Logo className="h-8 w-auto" />
-            <span className="font-bold text-primary">FOM Play</span>
           </div>
           <div className="flex items-center gap-1.5">
             <InstallAppButton
@@ -4710,14 +4709,8 @@ export default function App() {
     }
   };
 
-  const tryNativeShare = async (url: string, title: string, text: string) => {
-    if (!navigator.share) return false;
-    try {
-      await navigator.share({ title, text, url });
-      return true;
-    } catch {
-      return false;
-    }
+  const toFirestoreSafe = <T,>(value: T): T => {
+    return JSON.parse(JSON.stringify(value)) as T;
   };
 
   const buildShareUrl = (shareId: string, view: 'active' | 'klasemen') => {
@@ -4772,8 +4765,9 @@ export default function App() {
 
       // Always use a fresh share id to avoid collisions with legacy/invalid docs.
       const shareId = Math.random().toString(36).slice(2, 10);
+      const safeTournament = toFirestoreSafe(tournament);
       await setDoc(doc(db, 'sharedMatches', shareId), {
-        tournament,
+        tournament: safeTournament,
         hostUid: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -4781,22 +4775,13 @@ export default function App() {
       setSharedMatchId(shareId);
       const finalUrl = buildShareUrl(shareId, 'active');
 
-      const sharedViaNativeSheet = await tryNativeShare(
-        finalUrl,
-        `Live Match - ${tournament.name || 'FOM Play'}`,
-        'Pantau pertandingan ini secara live (view only).'
-      );
-      if (sharedViaNativeSheet) {
-        showShareCopiedToast('Link siap dibagikan');
-        return;
-      }
-
       const copied = await tryCopyToClipboard(finalUrl);
       if (copied) {
         showShareCopiedToast('Link copied');
         addNotification('Link Share Siap', 'Link pertandingan berhasil disalin. Bagikan ke pemain lain.', 'system');
       } else {
         window.prompt('Copy link pertandingan ini:', finalUrl);
+        showShareCopiedToast('Salin manual dari popup');
         addNotification('Link Share Siap', 'Clipboard diblokir browser. Link ditampilkan agar bisa disalin manual.', 'system');
       }
     } catch (err) {
@@ -4804,6 +4789,7 @@ export default function App() {
         authUid: auth.currentUser?.uid || null,
         userUid: user?.uid || null
       });
+      showShareCopiedToast('Gagal membagikan link');
       addNotification('Gagal Share', 'Tidak dapat membuat link share saat ini. Coba lagi.', 'system');
     }
   };
@@ -4812,15 +4798,6 @@ export default function App() {
     try {
       if (isSharedViewer && sharedMatchId) {
         const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
-        const sharedViaNativeSheet = await tryNativeShare(
-          currentSharedUrl,
-          `${isSharedViewer ? 'Klasemen' : 'Klasemen Turnamen'} - ${targetTournament.name || 'FOM Play'}`,
-          'Lihat klasemen pertandingan di FOM Play.'
-        );
-        if (sharedViaNativeSheet) {
-          showShareCopiedToast('Link siap dibagikan');
-          return;
-        }
         const copied = await tryCopyToClipboard(currentSharedUrl);
         if (copied) showShareCopiedToast('Link copied');
         else window.prompt('Copy link klasemen ini:', currentSharedUrl);
@@ -4833,34 +4810,28 @@ export default function App() {
       }
 
       const shareId = Math.random().toString(36).slice(2, 10);
+      const safeTournament = toFirestoreSafe(targetTournament);
       await setDoc(doc(db, 'sharedMatches', shareId), {
-        tournament: targetTournament,
+        tournament: safeTournament,
         hostUid: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       }, { merge: false });
       const finalUrl = buildShareUrl(shareId, 'klasemen');
-      const sharedViaNativeSheet = await tryNativeShare(
-        finalUrl,
-        `Klasemen - ${targetTournament.name || 'FOM Play'}`,
-        'Lihat klasemen pertandingan di FOM Play.'
-      );
-      if (sharedViaNativeSheet) {
-        showShareCopiedToast('Link siap dibagikan');
-        return;
-      }
       const copied = await tryCopyToClipboard(finalUrl);
       if (copied) {
         showShareCopiedToast('Link copied');
         addNotification('Link Share Siap', 'Link klasemen berhasil disalin.', 'system');
       } else {
         window.prompt('Copy link klasemen ini:', finalUrl);
+        showShareCopiedToast('Salin manual dari popup');
       }
     } catch (err) {
       console.error('Share standings error:', err, {
         authUid: auth.currentUser?.uid || null,
         userUid: user?.uid || null
       });
+      showShareCopiedToast('Gagal membagikan link');
       addNotification('Gagal Share', 'Tidak dapat membagikan klasemen saat ini. Coba lagi.', 'system');
     }
   };
@@ -5597,7 +5568,7 @@ export default function App() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            className="fixed left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom,0px)+24px)] z-[140] pointer-events-none"
+            className="fixed left-1/2 -translate-x-1/2 top-[calc(env(safe-area-inset-top,0px)+16px)] z-[140] pointer-events-none"
           >
             <div className="px-3.5 py-2 rounded-full bg-black/80 text-white text-[12px] font-semibold shadow-xl backdrop-blur">
               {shareToast}
