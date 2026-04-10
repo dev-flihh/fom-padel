@@ -146,6 +146,7 @@ const RankBadge = ({ mmr, size = 'md', showLabel = true }: { mmr: number, size?:
 
 const getPlayersStorageKey = (uid: string) => `gas_padel_players_${uid}`;
 const getTournamentStorageKey = (uid: string) => `fom_play_active_tournament_${uid}`;
+const getTournamentHistoryStorageKey = (uid: string) => `fom_play_tournament_history_${uid}`;
 const getTournamentShareStorageKey = (uid: string, startedAt?: number) => `fom_play_share_id_${uid}_${startedAt || 'none'}`;
 const DEFAULT_PLAYER_SEED_NAMES = new Set(INITIAL_PLAYERS.map((p) => p.name.toLowerCase()));
 
@@ -4764,6 +4765,24 @@ export default function App() {
           setIsLoggedIn(true);
           if (!isSharedViewer) setScreen('dashboard');
 
+          // Restore cached history instantly so user won't lose data if cloud sync is delayed.
+          try {
+            const rawHistory = localStorage.getItem(getTournamentHistoryStorageKey(firebaseUser.uid));
+            if (rawHistory) {
+              const parsedHistory = JSON.parse(rawHistory) as TournamentHistory[];
+              const normalized = parsedHistory.map((item) => ({
+                ...item,
+                date: item.date ? new Date(item.date) : new Date()
+              }));
+              setTournaments(normalized);
+            } else {
+              setTournaments([]);
+            }
+          } catch (historyErr) {
+            console.error('Read local history cache error:', historyErr);
+            setTournaments([]);
+          }
+
           // Fetch user data from Firestore
           const userDocRef = doc(db, 'users', firebaseUser.uid);
           const userDoc = await getDoc(userDocRef);
@@ -4806,7 +4825,22 @@ export default function App() {
                 date: data.date.toDate()
               } as TournamentHistory);
             });
-            setTournaments(fetchedTournaments);
+            setTournaments(prev => {
+              const merged = new Map<string, TournamentHistory>();
+              [...prev, ...fetchedTournaments].forEach((item) => {
+                const existing = merged.get(item.id);
+                if (!existing) {
+                  merged.set(item.id, item);
+                  return;
+                }
+                const existingTs = new Date(existing.date).getTime();
+                const itemTs = new Date(item.date).getTime();
+                if (itemTs >= existingTs) merged.set(item.id, item);
+              });
+              return Array.from(merged.values()).sort(
+                (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+              );
+            });
           } catch (err) {
             console.error('Error fetching tournaments:', err);
           }
@@ -4969,6 +5003,15 @@ export default function App() {
     if (!user?.uid || isSharedViewer) return;
     localStorage.setItem(getTournamentStorageKey(user.uid), JSON.stringify(tournament));
   }, [tournament, user?.uid, isSharedViewer]);
+
+  useEffect(() => {
+    if (!user?.uid || isSharedViewer) return;
+    try {
+      localStorage.setItem(getTournamentHistoryStorageKey(user.uid), JSON.stringify(tournaments));
+    } catch (err) {
+      console.error('Write local history cache error:', err);
+    }
+  }, [tournaments, user?.uid, isSharedViewer]);
 
   const addNotification = (title: string, message: string, type: AppNotification['type']) => {
     const newNotif: AppNotification = {
