@@ -1183,7 +1183,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
         ...prev
       ];
     });
-  }, [currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, currentUser?.mmr, setAllPlayers]);
+  }, [allPlayers, currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, currentUser?.mmr, setAllPlayers]);
 
   const minPlayersNeeded = courts * 4;
   const isReady = selectedPlayers.length >= minPlayersNeeded;
@@ -1385,6 +1385,11 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
 
   const handleRemovePlayer = (e: React.MouseEvent, playerId: string) => {
     e.stopPropagation();
+    const selfUid = auth.currentUser?.uid || currentUser?.uid;
+    if (selfUid && playerId === selfUid) {
+      onAddNotification('Pemain Utama', 'Akun kamu tidak bisa dihapus dari daftar pemain.', 'system');
+      return;
+    }
     setAllPlayers(prev => prev.filter(p => p.id !== playerId));
     setSelectedPlayers(prev => prev.filter(p => p.id !== playerId));
   };
@@ -1894,6 +1899,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
           <div className="space-y-3">
             {allPlayers.filter(p => !!p).map((player) => {
               const isSelected = selectedPlayers.find(p => p && p.id === player.id);
+              const isSelf = player.id === (auth.currentUser?.uid || currentUser?.uid);
               return (
                 <div key={player.id} className="relative group">
                   <div
@@ -1916,15 +1922,20 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
                       </div>
                       <div className="text-left">
                         <span className="text-[14px] font-semibold block">{player.name}</span>
+                        {isSelf && (
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-primary/80">Anda</span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <button
-                        onClick={(e) => handleRemovePlayer(e, player.id)}
-                        className="p-2 text-ios-gray/40 hover:text-error transition-colors tap-target"
-                      >
-                        <Trash2 size={18} />
-                      </button>
+                      {!isSelf && (
+                        <button
+                          onClick={(e) => handleRemovePlayer(e, player.id)}
+                          className="p-2 text-ios-gray/40 hover:text-error transition-colors tap-target"
+                        >
+                          <Trash2 size={18} />
+                        </button>
+                      )}
                       {isSelected ? (
                         <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center">
                           <Check size={14} className="text-white" />
@@ -2247,12 +2258,13 @@ const MatchActiveScreen = ({
       month: 'long',
       year: 'numeric'
     })
-    : '-';
+    : '';
   const venueLabel = (tournament.venueName || '').trim();
   const cityLabel = (tournament.location || '').trim();
-  const placeLabel = venueLabel && cityLabel
-    ? `${venueLabel} | ${cityLabel}`
-    : (venueLabel || cityLabel || '-');
+  const placeLabel = [venueLabel, cityLabel].filter(Boolean).join(' | ');
+  const locationDateLabel = placeLabel ? `${placeLabel} | ${gameDateLabel}` : gameDateLabel;
+  const completedRounds = tournament.rounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
+  const totalRounds = Math.max(tournament.numRounds || 0, tournament.rounds.length);
   const infoTheme =
     tournament.format === 'Americano'
       ? {
@@ -2438,7 +2450,10 @@ const MatchActiveScreen = ({
         <div className={cn('absolute inset-0 opacity-[0.14]', pageBgTheme.glow)} />
       </div>
 
-      <header className={cn("fixed top-0 inset-x-0 z-50 border-b backdrop-blur-2xl", topNavTheme.bg, topNavTheme.border)}>
+      <header
+        className={cn("fixed top-0 inset-x-0 z-50 border-b backdrop-blur-2xl", topNavTheme.bg, topNavTheme.border)}
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
         <div className="max-w-lg mx-auto h-16 px-4 grid grid-cols-[84px_1fr_auto] items-center gap-2">
           <div className="justify-self-start">
             <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", accentTheme.solid, accentTheme.solidShadow)}>
@@ -2477,7 +2492,12 @@ const MatchActiveScreen = ({
         </div>
       </header>
 
-      <main className="relative z-10 pt-[84px] px-5 space-y-6 max-w-lg mx-auto">
+      <main
+        className="relative z-10 px-5 space-y-6 max-w-lg mx-auto"
+        style={{
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 88px)'
+        }}
+      >
         {isReadOnly && (
           <section className={cn("rounded-xl p-3 border", accentTheme.bgSoft, accentTheme.borderSoft)}>
             <p className={cn("text-[12px] font-semibold", accentTheme.text)}>Mode penonton aktif. Halaman ini hanya untuk melihat skor.</p>
@@ -2501,9 +2521,7 @@ const MatchActiveScreen = ({
           <div className="relative flex items-start justify-between gap-3 mb-3">
             <div className="min-w-0">
               <h2 className="text-[18px] font-black tracking-tight text-white truncate">{tournament.name || '-'}</h2>
-              <p className="mt-1 text-[11px] text-white/85 truncate">
-                {placeLabel + ' | ' + gameDateLabel}
-              </p>
+              <p className="mt-1 text-[11px] text-white/85 truncate">{locationDateLabel}</p>
             </div>
             <div className="shrink-0 rounded-xl border border-white/40 bg-white/20 backdrop-blur-sm px-3 py-1.5 text-right">
               <span className="block text-[9px] font-bold uppercase tracking-wider text-white/85">Durasi</span>
@@ -2511,7 +2529,7 @@ const MatchActiveScreen = ({
             </div>
           </div>
 
-          <div className="relative grid grid-cols-3 gap-2">
+          <div className="relative grid grid-cols-4 gap-2">
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Mode</p>
               <p className="text-[12px] font-semibold text-white truncate">{tournament.format}</p>
@@ -2523,6 +2541,10 @@ const MatchActiveScreen = ({
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lapangan</p>
               <p className="text-[12px] font-semibold text-white">{tournament.courts}</p>
+            </div>
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Ronde</p>
+              <p className="text-[12px] font-semibold text-white">{completedRounds}/{totalRounds || 0}</p>
             </div>
           </div>
 
@@ -2958,8 +2980,15 @@ const MatchActiveScreen = ({
   );
 };
 
-const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | TournamentHistory, onBack: () => void }) => {
-  const [showShareModal, setShowShareModal] = useState(false);
+const KlasemenScreen = ({
+  tournament,
+  onBack,
+  onShare
+}: {
+  tournament: Tournament | TournamentHistory,
+  onBack: () => void,
+  onShare: (t: Tournament | TournamentHistory) => void
+}) => {
   const tournamentPlayers = tournament.players || [];
   const tournamentRounds = tournament.rounds || [];
   const configuredCourts = 'courts' in tournament ? tournament.courts : undefined;
@@ -2977,12 +3006,10 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
     ? tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
     : ('startedAt' in tournament && tournament.startedAt
       ? new Date(tournament.startedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
-      : '-');
+      : '');
   const venueLabel = (tournament.venueName || '').trim();
   const locationLabel = (tournament.location || '').trim();
-  const placeLabel = venueLabel && locationLabel
-    ? `${venueLabel} | ${locationLabel}`
-    : (venueLabel || locationLabel);
+  const placeLabel = [venueLabel, locationLabel].filter(Boolean).join(' | ');
   const locationDateLabel = placeLabel ? `${placeLabel} | ${dateLabel}` : dateLabel;
 
   const infoTheme =
@@ -3133,23 +3160,6 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
     });
   }, [tournamentPlayers, tournamentRounds]);
 
-  const handleShare = async () => {
-    const shareData = {
-      title: `${isTournamentEnded ? 'Klasemen Final' : 'Klasemen Sementara'} - ${tournament.name}`,
-      text: `Pantau klasemen ${tournament.name} di FOM Play`,
-      url: window.location.href
-    };
-    if (navigator.share) {
-      try {
-        await navigator.share(shareData);
-      } catch {
-        setShowShareModal(true);
-      }
-    } else {
-      setShowShareModal(true);
-    }
-  };
-
   return (
     <div className="relative min-h-screen pb-12 overflow-hidden bg-transparent z-0">
       <div className="absolute inset-0 z-0 pointer-events-none">
@@ -3168,7 +3178,7 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
         className={cn('fixed top-0 inset-x-0 z-50 border-b backdrop-blur-2xl', infoTheme.topBg, infoTheme.topBorder)}
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-lg mx-auto h-16 px-4 grid grid-cols-[84px_1fr_88px] items-center">
+        <div className="max-w-lg mx-auto h-16 px-4 grid grid-cols-[84px_1fr_auto] items-center gap-2">
           <button onClick={onBack} className="justify-self-start tap-target h-9 px-3 rounded-full bg-white/16 text-white border border-white/30 inline-flex items-center gap-1.5">
             <ChevronLeft size={16} />
             <span className="text-[12px] font-semibold">Back</span>
@@ -3176,10 +3186,13 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
           <div className="flex justify-center items-center">
             <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className="h-8 w-auto object-contain" />
           </div>
-          <button onClick={handleShare} className="justify-self-end tap-target h-9 px-3 rounded-full bg-white/16 text-white border border-white/30 inline-flex items-center gap-1.5">
-            <Share2 size={16} />
-            <span className="text-[12px] font-semibold">Share</span>
-          </button>
+          <div className="justify-self-end flex items-center gap-1.5">
+            <InstallAppButton compact className="bg-white/18 text-white border-white/35" />
+            <button onClick={() => onShare(tournament)} className="tap-target h-9 px-3 rounded-full bg-white/16 text-white border border-white/30 inline-flex items-center gap-1.5">
+              <Share2 size={16} />
+              <span className="text-[12px] font-semibold">Share</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -3206,7 +3219,7 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
             </div>
           </div>
 
-          <div className="relative grid grid-cols-3 gap-2">
+          <div className="relative grid grid-cols-4 gap-2">
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Mode</p>
               <p className="text-[12px] font-semibold text-white truncate">{tournament.format}</p>
@@ -3218,6 +3231,10 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lapangan</p>
               <p className="text-[12px] font-semibold text-white">{courtsCount}</p>
+            </div>
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Ronde</p>
+              <p className="text-[12px] font-semibold text-white">{completedRounds}/{tournamentRounds.length || 0}</p>
             </div>
           </div>
 
@@ -3291,30 +3308,12 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
         </section>
 
         <section className="pt-1 pb-8">
-          <button onClick={handleShare} className={cn('w-full h-[50px] rounded-xl text-white font-bold text-[14px] tap-target inline-flex items-center justify-center gap-2', infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
+          <button onClick={() => onShare(tournament)} className={cn('w-full h-[50px] rounded-xl text-white font-bold text-[14px] tap-target inline-flex items-center justify-center gap-2', infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
             <Share2 size={16} />
             Bagikan Klasemen
           </button>
         </section>
       </main>
-
-      <AnimatePresence>
-        {showShareModal && (
-          <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowShareModal(false)} className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-            <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }} className="relative w-full max-w-md bg-white rounded-[32px] p-8 shadow-2xl">
-              <h3 className="text-xl font-bold mb-4">Salin Link Klasemen</h3>
-              <div className="bg-ios-gray/5 p-4 rounded-2xl border border-ios-gray/10 flex items-center justify-between gap-4 mb-6">
-                <span className="text-sm font-medium text-ios-gray truncate">{window.location.href}</span>
-                <button onClick={() => { navigator.clipboard.writeText(window.location.href); setShowShareModal(false); }} className={cn('text-white px-4 py-2 rounded-xl text-xs font-bold shrink-0', infoTheme.accentSolid)}>
-                  Salin
-                </button>
-              </div>
-              <button onClick={() => setShowShareModal(false)} className="w-full py-4 bg-ios-gray/10 text-on-surface font-bold rounded-2xl">Tutup</button>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };
@@ -4352,6 +4351,8 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [sharedMatchId, setSharedMatchId] = useState<string | null>(null);
   const [isSharedViewer, setIsSharedViewer] = useState(false);
+  const [sharedTargetScreen, setSharedTargetScreen] = useState<'active' | 'klasemen'>('active');
+  const [shareToast, setShareToast] = useState<string | null>(null);
   const [tournament, setTournament] = useState<Tournament>(INITIAL_TOURNAMENT);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -4359,15 +4360,26 @@ export default function App() {
   const [selectedHistory, setSelectedHistory] = useState<TournamentHistory | null>(null);
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
   const [klasemenBackScreen, setKlasemenBackScreen] = useState<'dashboard' | 'active' | 'history-detail'>('dashboard');
+  const shareToastTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const shared = params.get('shared');
+    const targetView = params.get('view') === 'klasemen' ? 'klasemen' : 'active';
     if (shared) {
       setSharedMatchId(shared);
       setIsSharedViewer(true);
-      setScreen('active');
+      setSharedTargetScreen(targetView);
+      setScreen(targetView);
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (shareToastTimeoutRef.current) {
+        window.clearTimeout(shareToastTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -4384,9 +4396,7 @@ export default function App() {
 
         setUser(firebaseUser);
         setIsLoggedIn(true);
-        if (!isSharedViewer) {
-          setScreen('dashboard');
-        }
+        if (!isSharedViewer) setScreen('dashboard');
 
         // Fetch user data from Firestore
         const userDocRef = doc(db, 'users', firebaseUser.uid);
@@ -4441,17 +4451,14 @@ export default function App() {
         if (!isSharedViewer) {
           setTournament(INITIAL_TOURNAMENT);
         }
-        if (!isSharedViewer) {
-          setScreen('login');
-        } else {
-          setScreen('active');
-        }
+        if (!isSharedViewer) setScreen('login');
+        else setScreen(sharedTargetScreen);
         setTournaments([]);
       }
     });
 
     return () => unsubscribe();
-  }, [isSharedViewer]);
+  }, [isSharedViewer, sharedTargetScreen]);
 
   useEffect(() => {
     if (!sharedMatchId || !isSharedViewer) return;
@@ -4461,13 +4468,13 @@ export default function App() {
       const data = snap.data();
       if (data?.tournament) {
         setTournament(data.tournament as Tournament);
-        setScreen('active');
+        setScreen(sharedTargetScreen);
       }
     }, (err) => {
       console.error('Shared match subscribe error:', err);
     });
     return () => unsub();
-  }, [sharedMatchId, isSharedViewer]);
+  }, [sharedMatchId, isSharedViewer, sharedTargetScreen]);
 
   useEffect(() => {
     if (!sharedMatchId || isSharedViewer) return;
@@ -4535,6 +4542,73 @@ export default function App() {
     setScreen('dashboard');
   };
 
+  const showShareCopiedToast = (message: string) => {
+    setShareToast(message);
+    if (shareToastTimeoutRef.current) window.clearTimeout(shareToastTimeoutRef.current);
+    shareToastTimeoutRef.current = window.setTimeout(() => {
+      setShareToast(null);
+      shareToastTimeoutRef.current = null;
+    }, 1800);
+  };
+
+  const tryCopyToClipboard = async (text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fallback below
+    }
+
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      ta.style.pointerEvents = 'none';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return copied;
+    } catch {
+      return false;
+    }
+  };
+
+  const buildShareUrl = (shareId: string, view: 'active' | 'klasemen') => {
+    const shareUrl = new URL(window.location.href);
+    shareUrl.searchParams.set('shared', shareId);
+    if (view === 'klasemen') shareUrl.searchParams.set('view', 'klasemen');
+    else shareUrl.searchParams.delete('view');
+
+    const isLocalHost = ['localhost', '127.0.0.1'].includes(shareUrl.hostname);
+    const envNetworkHost = (import.meta as any).env?.VITE_SHARE_NETWORK_HOST as string | undefined;
+    const savedNetworkHost = localStorage.getItem('fom_share_network_host') || '';
+    let networkHost = (envNetworkHost || savedNetworkHost).trim();
+
+    if (isLocalHost && !networkHost) {
+      const input = window.prompt(
+        'Masukkan IP network agar link bisa dibuka di HP (contoh: 192.168.1.27)',
+        savedNetworkHost || ''
+      );
+      if (input && input.trim()) {
+        networkHost = input.trim();
+        localStorage.setItem('fom_share_network_host', networkHost);
+      }
+    }
+
+    if (isLocalHost && networkHost) {
+      shareUrl.hostname = networkHost;
+      shareUrl.protocol = 'http:';
+    }
+
+    return shareUrl.toString();
+  };
+
   const handleOpenLiveStandings = () => {
     setSelectedKlasemenTournament(tournament);
     setKlasemenBackScreen('active');
@@ -4564,74 +4638,11 @@ export default function App() {
         updatedAt: serverTimestamp()
       }, { merge: false });
       setSharedMatchId(shareId);
-
-      const shareUrl = new URL(window.location.href);
-      shareUrl.searchParams.set('shared', shareId);
-      const isLocalHost = ['localhost', '127.0.0.1'].includes(shareUrl.hostname);
-      const envNetworkHost = (import.meta as any).env?.VITE_SHARE_NETWORK_HOST as string | undefined;
-      const savedNetworkHost = localStorage.getItem('fom_share_network_host') || '';
-      let networkHost = (envNetworkHost || savedNetworkHost).trim();
-
-      if (isLocalHost && !networkHost) {
-        const input = window.prompt(
-          'Masukkan IP network agar link bisa dibuka di HP (contoh: 192.168.1.27)',
-          savedNetworkHost || ''
-        );
-        if (input && input.trim()) {
-          networkHost = input.trim();
-          localStorage.setItem('fom_share_network_host', networkHost);
-        }
-      }
-
-      if (isLocalHost && networkHost) {
-        shareUrl.hostname = networkHost;
-        shareUrl.protocol = 'http:';
-      }
-
-      const finalUrl = shareUrl.toString();
-
-      const tryCopyToClipboard = async (text: string) => {
-        try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(text);
-            return true;
-          }
-        } catch {
-          // fallback below
-        }
-
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.setAttribute('readonly', '');
-          ta.style.position = 'fixed';
-          ta.style.opacity = '0';
-          ta.style.pointerEvents = 'none';
-          document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          const copied = document.execCommand('copy');
-          document.body.removeChild(ta);
-          return copied;
-        } catch {
-          return false;
-        }
-      };
-
-      if (navigator.share) {
-        try {
-          await navigator.share({
-            title: `Live Match - ${tournament.name || 'FOM Play'}`,
-            text: 'Pantau pertandingan ini secara live (view only).',
-            url: finalUrl
-          });
-        } catch {
-          // fallback clipboard
-        }
-      }
+      const finalUrl = buildShareUrl(shareId, 'active');
 
       const copied = await tryCopyToClipboard(finalUrl);
       if (copied) {
+        showShareCopiedToast('Link copied');
         addNotification('Link Share Siap', 'Link pertandingan berhasil disalin. Bagikan ke pemain lain.', 'system');
       } else {
         window.prompt('Copy link pertandingan ini:', finalUrl);
@@ -4643,6 +4654,45 @@ export default function App() {
         userUid: user?.uid || null
       });
       addNotification('Gagal Share', 'Tidak dapat membuat link share saat ini. Coba lagi.', 'system');
+    }
+  };
+
+  const handleShareStandings = async (targetTournament: Tournament | TournamentHistory) => {
+    try {
+      if (isSharedViewer && sharedMatchId) {
+        const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
+        const copied = await tryCopyToClipboard(currentSharedUrl);
+        if (copied) showShareCopiedToast('Link copied');
+        else window.prompt('Copy link klasemen ini:', currentSharedUrl);
+        return;
+      }
+
+      if (!user?.uid) {
+        addNotification('Perlu Login', 'Silakan login dulu untuk membagikan klasemen.', 'system');
+        return;
+      }
+
+      const shareId = Math.random().toString(36).slice(2, 10);
+      await setDoc(doc(db, 'sharedMatches', shareId), {
+        tournament: targetTournament,
+        hostUid: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      }, { merge: false });
+      const finalUrl = buildShareUrl(shareId, 'klasemen');
+      const copied = await tryCopyToClipboard(finalUrl);
+      if (copied) {
+        showShareCopiedToast('Link copied');
+        addNotification('Link Share Siap', 'Link klasemen berhasil disalin.', 'system');
+      } else {
+        window.prompt('Copy link klasemen ini:', finalUrl);
+      }
+    } catch (err) {
+      console.error('Share standings error:', err, {
+        authUid: auth.currentUser?.uid || null,
+        userUid: user?.uid || null
+      });
+      addNotification('Gagal Share', 'Tidak dapat membagikan klasemen saat ini. Coba lagi.', 'system');
     }
   };
 
@@ -5311,7 +5361,8 @@ export default function App() {
         {screen === 'klasemen' && (
           <KlasemenScreen
             tournament={klasemenBackScreen === 'active' ? tournament : (selectedKlasemenTournament || tournament)}
-            onBack={() => setScreen(klasemenBackScreen)}
+            onBack={() => setScreen(isSharedViewer ? 'active' : klasemenBackScreen)}
+            onShare={handleShareStandings}
           />
         )}
         {screen === 'notifications' && (
@@ -5361,6 +5412,21 @@ export default function App() {
           hasActiveGame={Boolean(tournament.rounds?.some(r => r.matches?.some(m => m.status === 'active')))}
         />
       )}
+
+      <AnimatePresence>
+        {shareToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            className="fixed left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom,0px)+24px)] z-[140] pointer-events-none"
+          >
+            <div className="px-3.5 py-2 rounded-full bg-black/80 text-white text-[12px] font-semibold shadow-xl backdrop-blur">
+              {shareToast}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
