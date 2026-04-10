@@ -287,8 +287,8 @@ const BottomNav = ({
             idle: "bg-ios-gray/8 text-ios-gray"
           }
           : {
-          active: "bg-[#2F6FE4]/12 text-[#2F6FE4] border border-[#2F6FE4]/25",
-          idle: "bg-ios-gray/8 text-ios-gray"
+            active: "bg-[#2F6FE4]/12 text-[#2F6FE4] border border-[#2F6FE4]/25",
+            idle: "bg-ios-gray/8 text-ios-gray"
           };
 
   const mainActiveClass = hasActiveGame
@@ -1010,10 +1010,11 @@ const AddPlayerModal = ({ isOpen, onClose, onAdd }: { isOpen: boolean, onClose: 
       stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
     };
 
+    // Close first so UX feels instant on mobile, even if parent state updates right after.
+    onClose();
     onAdd(newPlayer);
     setName('');
     setPhoto(null);
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -1402,6 +1403,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
   const handleAddPlayer = (newPlayer: Player) => {
     setAllPlayers(prev => [newPlayer, ...prev]);
     setSelectedPlayers(prev => [newPlayer, ...prev]);
+    setIsAddModalOpen(false);
     onAddNotification('Pemain Baru!', `${newPlayer.name} telah ditambahkan ke daftar pemain.`, 'system');
   };
 
@@ -1488,20 +1490,25 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
 
   return (
     <div className="pb-32 bg-white min-h-screen">
-      <nav className="ios-blur sticky top-0 z-50 flex justify-between items-center w-full px-4 h-14 border-b border-ios-gray/10">
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} className="tap-target p-2 -ml-2">
-            <ChevronLeft size={24} className="text-primary" />
+      <nav
+        className="ios-blur sticky top-0 z-50 w-full"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
+        <div className="flex justify-between items-center w-full px-4 h-14">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="tap-target p-2 -ml-2">
+              <ChevronLeft size={24} className="text-primary" />
+            </button>
+            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Pengaturan Pertandingan</h1>
+          </div>
+          <button
+            onClick={handleGenerate}
+            disabled={!isReady}
+            className={cn("font-bold tap-target px-2 transition-colors", !isReady ? "text-ios-gray/40" : "text-primary")}
+          >
+            Generate
           </button>
-          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Pengaturan Pertandingan</h1>
         </div>
-        <button
-          onClick={handleGenerate}
-          disabled={!isReady}
-          className={cn("font-bold tap-target px-2 transition-colors", !isReady ? "text-ios-gray/40" : "text-primary")}
-        >
-          Generate
-        </button>
       </nav>
 
       <main className="max-w-md mx-auto px-4 py-6 space-y-8">
@@ -2039,7 +2046,10 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
         <div className={cn('absolute -right-28 bottom-6 w-[560px] h-[250px] rounded-[999px] border-[14px] -rotate-[8deg]', previewTheme.lineB)} />
       </div>
 
-      <header className="ios-blur sticky top-0 w-full z-50 border-b border-ios-gray/10 bg-white/85">
+      <header
+        className="ios-blur fixed top-0 inset-x-0 z-50 bg-white/85"
+        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      >
         <div className="flex justify-between items-center px-4 h-14 w-full max-w-lg mx-auto">
           <div className="flex items-center gap-2">
             <button onClick={onBack} className="p-2 -ml-2 tap-target">
@@ -2056,7 +2066,10 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
         </div>
       </header>
 
-      <main className="relative z-10 pt-5 pb-10 max-w-lg mx-auto px-4 space-y-4">
+      <main
+        className="relative z-10 pb-10 max-w-lg mx-auto px-4 space-y-4"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 74px)' }}
+      >
         <section className="bg-white/92 backdrop-blur-sm rounded-2xl border border-white/70 shadow-[0_8px_24px_rgba(17,24,39,0.06)] p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">

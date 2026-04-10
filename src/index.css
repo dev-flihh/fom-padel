@@ -64,11 +64,11 @@
   }
 
   .ios-topbar {
-    @apply sticky top-0 z-50 w-full h-14 px-4 border-b border-ios-gray/10 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+    @apply sticky top-0 z-50 w-full h-14 px-4 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
   }
 
   .ios-topbar-fixed {
-    @apply sticky top-0 z-50 w-full h-14 px-4 border-b border-ios-gray/10 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+    @apply sticky top-0 z-50 w-full h-14 px-4 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
   }
 
   .ios-topbar-icon-btn {
