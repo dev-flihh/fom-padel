@@ -4710,6 +4710,16 @@ export default function App() {
     }
   };
 
+  const tryNativeShare = async (url: string, title: string, text: string) => {
+    if (!navigator.share) return false;
+    try {
+      await navigator.share({ title, text, url });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const buildShareUrl = (shareId: string, view: 'active' | 'klasemen') => {
     const shareUrl = new URL(window.location.href);
     shareUrl.searchParams.set('shared', shareId);
@@ -4771,6 +4781,16 @@ export default function App() {
       setSharedMatchId(shareId);
       const finalUrl = buildShareUrl(shareId, 'active');
 
+      const sharedViaNativeSheet = await tryNativeShare(
+        finalUrl,
+        `Live Match - ${tournament.name || 'FOM Play'}`,
+        'Pantau pertandingan ini secara live (view only).'
+      );
+      if (sharedViaNativeSheet) {
+        showShareCopiedToast('Link siap dibagikan');
+        return;
+      }
+
       const copied = await tryCopyToClipboard(finalUrl);
       if (copied) {
         showShareCopiedToast('Link copied');
@@ -4792,6 +4812,15 @@ export default function App() {
     try {
       if (isSharedViewer && sharedMatchId) {
         const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
+        const sharedViaNativeSheet = await tryNativeShare(
+          currentSharedUrl,
+          `${isSharedViewer ? 'Klasemen' : 'Klasemen Turnamen'} - ${targetTournament.name || 'FOM Play'}`,
+          'Lihat klasemen pertandingan di FOM Play.'
+        );
+        if (sharedViaNativeSheet) {
+          showShareCopiedToast('Link siap dibagikan');
+          return;
+        }
         const copied = await tryCopyToClipboard(currentSharedUrl);
         if (copied) showShareCopiedToast('Link copied');
         else window.prompt('Copy link klasemen ini:', currentSharedUrl);
@@ -4811,6 +4840,15 @@ export default function App() {
         updatedAt: serverTimestamp()
       }, { merge: false });
       const finalUrl = buildShareUrl(shareId, 'klasemen');
+      const sharedViaNativeSheet = await tryNativeShare(
+        finalUrl,
+        `Klasemen - ${targetTournament.name || 'FOM Play'}`,
+        'Lihat klasemen pertandingan di FOM Play.'
+      );
+      if (sharedViaNativeSheet) {
+        showShareCopiedToast('Link siap dibagikan');
+        return;
+      }
       const copied = await tryCopyToClipboard(finalUrl);
       if (copied) {
         showShareCopiedToast('Link copied');
@@ -4826,6 +4864,7 @@ export default function App() {
       addNotification('Gagal Share', 'Tidak dapat membagikan klasemen saat ini. Coba lagi.', 'system');
     }
   };
+
 
   const handleGenerateTournament = (settings: Tournament) => {
     const now = Date.now();
