@@ -67,6 +67,18 @@ const Logo = ({ className }: { className?: string }) => (
   />
 );
 
+const AppLoadingScreen = () => (
+  <div className="fixed inset-0 z-[220] bg-[#F86600]">
+    <img
+      src="/loading-screen.png"
+      alt="FOM Play loading"
+      className="w-full h-full object-cover"
+      loading="eager"
+      decoding="async"
+    />
+  </div>
+);
+
 // --- Constants & Helpers ---
 
 const RANK_TIERS: { name: RankTier, min: number, max: number, color: string, icon: any }[] = [
@@ -2225,6 +2237,8 @@ const MatchActiveScreen = ({
 
   const currentRoundIndex = tournament.rounds.findIndex(r => r.matches.some(m => m.status === 'active'));
   const hasActiveTournament = currentRoundIndex !== -1;
+  const hasTournamentData = tournament.rounds.length > 0;
+  const shouldShowActiveMatchScreen = hasActiveTournament || (isReadOnly && hasTournamentData);
   const activeRound = currentRoundIndex !== -1 ? (tournament.rounds[currentRoundIndex] ?? null) : null;
   const activeRoundId = activeRound?.id ?? null;
   const isLastRound = currentRoundIndex !== -1 && currentRoundIndex >= (tournament.numRounds - 1);
@@ -2396,7 +2410,7 @@ const MatchActiveScreen = ({
     });
   };
 
-  if (!hasActiveTournament) {
+  if (!shouldShowActiveMatchScreen) {
     return (
       <div className="min-h-screen bg-surface flex flex-col pb-24">
         <header className="ios-blur sticky top-0 w-full z-50 flex items-center px-4 h-14 border-b border-ios-gray/10">
@@ -4351,6 +4365,7 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [sharedMatchId, setSharedMatchId] = useState<string | null>(null);
   const [isSharedViewer, setIsSharedViewer] = useState(false);
+  const [isAuthChecked, setIsAuthChecked] = useState(false);
   const [sharedTargetScreen, setSharedTargetScreen] = useState<'active' | 'klasemen'>('active');
   const [shareToast, setShareToast] = useState<string | null>(null);
   const [tournament, setTournament] = useState<Tournament>(INITIAL_TOURNAMENT);
@@ -4361,6 +4376,9 @@ export default function App() {
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
   const [klasemenBackScreen, setKlasemenBackScreen] = useState<'dashboard' | 'active' | 'history-detail'>('dashboard');
   const shareToastTimeoutRef = useRef<number | null>(null);
+  const isAuthResolvedRef = useRef(false);
+  const isHandlingPopStateRef = useRef(false);
+  const touchStartRef = useRef<{ x: number; y: number; ts: number } | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -4384,81 +4402,164 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const savedPlayers = localStorage.getItem(getPlayersStorageKey(firebaseUser.uid));
-        const parsedPlayers: Player[] = savedPlayers ? JSON.parse(savedPlayers) : [];
-        setAllPlayers(isLegacySeedPlayers(parsedPlayers) ? [] : parsedPlayers);
+      try {
+        if (firebaseUser) {
+          const savedPlayers = localStorage.getItem(getPlayersStorageKey(firebaseUser.uid));
+          const parsedPlayers: Player[] = savedPlayers ? JSON.parse(savedPlayers) : [];
+          setAllPlayers(isLegacySeedPlayers(parsedPlayers) ? [] : parsedPlayers);
 
-        if (!isSharedViewer) {
-          const savedTournament = localStorage.getItem(getTournamentStorageKey(firebaseUser.uid));
-          setTournament(savedTournament ? JSON.parse(savedTournament) : INITIAL_TOURNAMENT);
-        }
+          if (!isSharedViewer) {
+            const savedTournament = localStorage.getItem(getTournamentStorageKey(firebaseUser.uid));
+            setTournament(savedTournament ? JSON.parse(savedTournament) : INITIAL_TOURNAMENT);
+          }
 
-        setUser(firebaseUser);
-        setIsLoggedIn(true);
-        if (!isSharedViewer) setScreen('dashboard');
+          setUser(firebaseUser);
+          setIsLoggedIn(true);
+          if (!isSharedViewer) setScreen('dashboard');
 
-        // Fetch user data from Firestore
-        const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          const userData = userDoc.data();
-          setUser({ ...firebaseUser, ...userData });
+          // Fetch user data from Firestore
+          const userDocRef = doc(db, 'users', firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setUser({ ...firebaseUser, ...userData });
+          } else {
+            // Initialize user if not exists
+            const initialData = {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName || 'Pemain Padel',
+              username: firebaseUser.email?.split('@')[0].replace(/[^a-zA-Z0-9]/g, '') || 'user' + Math.floor(Math.random() * 1000),
+              photoURL: firebaseUser.photoURL,
+              phoneNumber: '',
+              mmr: 500, // Starting MMR
+              region: 'Jakarta Selatan, DKI Jakarta',
+              homeBase: 'Jakarta Selatan, DKI Jakarta',
+              locationActivity: { 'Jakarta Selatan, DKI Jakarta': 0 },
+              createdAt: serverTimestamp(),
+            };
+            await setDoc(userDocRef, initialData);
+            setUser({ ...firebaseUser, ...initialData });
+          }
+
+          // Fetch tournaments
+          try {
+            const q = query(
+              collection(db, 'tournaments'),
+              where('userId', '==', firebaseUser.uid),
+              orderBy('date', 'desc')
+            );
+            const querySnapshot = await getDocs(q);
+            const fetchedTournaments: TournamentHistory[] = [];
+            querySnapshot.forEach((doc) => {
+              const data = doc.data();
+              fetchedTournaments.push({
+                ...data,
+                id: doc.id,
+                date: data.date.toDate()
+              } as TournamentHistory);
+            });
+            setTournaments(fetchedTournaments);
+          } catch (err) {
+            console.error('Error fetching tournaments:', err);
+          }
         } else {
-          // Initialize user if not exists
-          const initialData = {
-            uid: firebaseUser.uid,
-            email: firebaseUser.email,
-            displayName: firebaseUser.displayName || 'Pemain Padel',
-            username: firebaseUser.email?.split('@')[0].replace(/[^a-zA-Z0-9]/g, '') || 'user' + Math.floor(Math.random() * 1000),
-            photoURL: firebaseUser.photoURL,
-            phoneNumber: '',
-            mmr: 500, // Starting MMR
-            region: 'Jakarta Selatan, DKI Jakarta',
-            homeBase: 'Jakarta Selatan, DKI Jakarta',
-            locationActivity: { 'Jakarta Selatan, DKI Jakarta': 0 },
-            createdAt: serverTimestamp(),
-          };
-          await setDoc(userDocRef, initialData);
-          setUser({ ...firebaseUser, ...initialData });
+          setUser(null);
+          setIsLoggedIn(false);
+          setAllPlayers([]);
+          if (!isSharedViewer) {
+            setTournament(INITIAL_TOURNAMENT);
+          }
+          if (!isSharedViewer) setScreen('login');
+          else setScreen(sharedTargetScreen);
+          setTournaments([]);
         }
-
-        // Fetch tournaments
-        try {
-          const q = query(
-            collection(db, 'tournaments'),
-            where('userId', '==', firebaseUser.uid),
-            orderBy('date', 'desc')
-          );
-          const querySnapshot = await getDocs(q);
-          const fetchedTournaments: TournamentHistory[] = [];
-          querySnapshot.forEach((doc) => {
-            const data = doc.data();
-            fetchedTournaments.push({
-              ...data,
-              id: doc.id,
-              date: data.date.toDate()
-            } as TournamentHistory);
-          });
-          setTournaments(fetchedTournaments);
-        } catch (err) {
-          console.error('Error fetching tournaments:', err);
-        }
-      } else {
-        setUser(null);
-        setIsLoggedIn(false);
-        setAllPlayers([]);
-        if (!isSharedViewer) {
-          setTournament(INITIAL_TOURNAMENT);
-        }
-        if (!isSharedViewer) setScreen('login');
-        else setScreen(sharedTargetScreen);
-        setTournaments([]);
+      } catch (err) {
+        console.error('Auth bootstrap error:', err);
+      } finally {
+        setIsAuthChecked(true);
+        isAuthResolvedRef.current = true;
       }
     });
 
     return () => unsubscribe();
   }, [isSharedViewer, sharedTargetScreen]);
+
+  useEffect(() => {
+    if (!isAuthResolvedRef.current) return;
+    if (isHandlingPopStateRef.current) {
+      isHandlingPopStateRef.current = false;
+      return;
+    }
+
+    const currentState = window.history.state;
+    const nextState = { __fomPlay: true, screen };
+
+    if (currentState?.__fomPlay && currentState.screen === screen) return;
+
+    if (!currentState?.__fomPlay) {
+      window.history.replaceState(nextState, '');
+      return;
+    }
+
+    window.history.pushState(nextState, '');
+  }, [screen]);
+
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const targetScreen = event.state?.__fomPlay?.screen || event.state?.screen;
+      if (targetScreen) {
+        isHandlingPopStateRef.current = true;
+        setScreen(targetScreen as Screen);
+        return;
+      }
+
+      // Fallback so back gesture still navigates inside app when possible.
+      if (isLoggedIn) {
+        isHandlingPopStateRef.current = true;
+        setScreen('dashboard');
+        window.history.pushState({ __fomPlay: true, screen: 'dashboard' }, '');
+      } else {
+        isHandlingPopStateRef.current = true;
+        setScreen(isSharedViewer ? sharedTargetScreen : 'login');
+        window.history.pushState({ __fomPlay: true, screen: isSharedViewer ? sharedTargetScreen : 'login' }, '');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [isLoggedIn, isSharedViewer, sharedTargetScreen]);
+
+  useEffect(() => {
+    const handleTouchStart = (event: TouchEvent) => {
+      if (!event.touches?.length) return;
+      const touch = event.touches[0];
+      touchStartRef.current = { x: touch.clientX, y: touch.clientY, ts: Date.now() };
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      if (!touchStartRef.current || !event.changedTouches?.length) return;
+      const start = touchStartRef.current;
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - start.x;
+      const dy = Math.abs(touch.clientY - start.y);
+      const dt = Date.now() - start.ts;
+      touchStartRef.current = null;
+
+      // iOS-like edge swipe from left to go back.
+      const isEdgeSwipeBack = start.x <= 28 && dx > 90 && dy < 70 && dt < 900;
+      if (isEdgeSwipeBack) {
+        window.history.back();
+      }
+    };
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: true });
+    window.addEventListener('touchend', handleTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart);
+      window.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, []);
 
   useEffect(() => {
     if (!sharedMatchId || !isSharedViewer) return;
@@ -4818,6 +4919,8 @@ export default function App() {
     }
 
     setTournament({ ...settings, rounds, startedAt: now });
+    // Navigate immediately so user never feels "stuck" on settings after tapping Generate.
+    setScreen('preview');
     addNotification('Turnamen Dimulai!', `Turnamen ${settings.name} telah dibuat dengan ${settings.players.length} pemain.`, 'tournament');
 
     // Send notifications to friends/players
@@ -4841,8 +4944,6 @@ export default function App() {
         }
       });
     }
-
-    setScreen('preview');
   };
 
   const handleUpdateScore = (matchId: string, team: 'A' | 'B', score: number) => {
@@ -5281,6 +5382,10 @@ export default function App() {
     });
     addNotification('Pemain Diganti', `Pemain telah diganti di lapangan pertandingan.`, 'system');
   };
+
+  if (!isAuthChecked) {
+    return <AppLoadingScreen />;
+  }
 
   return (
     <div className="min-h-screen bg-white">
