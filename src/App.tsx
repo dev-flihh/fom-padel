@@ -41,7 +41,7 @@ import {
   Building2
 } from 'lucide-react';
 import { cn } from './lib/utils';
-import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend } from './types';
+import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus } from './types';
 import { INITIAL_PLAYERS, INITIAL_TOURNAMENT } from './constants';
 import { auth, db, googleProvider } from './firebase';
 import { RegionSelector } from './components/RegionSelector';
@@ -2277,7 +2277,8 @@ const MatchActiveScreen = ({
   onSwapPlayer,
   onUpdateMatchPlayScore,
   onShareMatch,
-  isReadOnly
+  isReadOnly,
+  saveState
 }: {
   onBack: () => void,
   onStartNewMatch: () => void,
@@ -2289,7 +2290,8 @@ const MatchActiveScreen = ({
   onSwapPlayer: (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => void,
   onUpdateMatchPlayScore: (matchId: string, team: 'A' | 'B') => void,
   onShareMatch: () => void,
-  isReadOnly: boolean
+  isReadOnly: boolean,
+  saveState: 'saved' | 'saving' | 'error'
 }) => {
   const [scoringMatchId, setScoringMatchId] = useState<string | null>(null);
   const [swappingPlayer, setSwappingPlayer] = useState<{ matchId: string, team: 'A' | 'B', playerIndex: number, currentPlayer: Player } | null>(null);
@@ -2634,6 +2636,18 @@ const MatchActiveScreen = ({
             />
           </div>
           <div className="justify-self-end flex items-center gap-1.5">
+            {!isReadOnly && (
+              <span
+                className={cn(
+                  "text-[10px] font-bold px-2 py-1 rounded-full border",
+                  saveState === 'saved' && "text-white/95 border-white/35 bg-white/18",
+                  saveState === 'saving' && "text-white/95 border-white/35 bg-white/14",
+                  saveState === 'error' && "text-red-100 border-red-200/55 bg-red-500/35"
+                )}
+              >
+                {saveState === 'saved' ? 'Tersimpan' : saveState === 'saving' ? 'Menyimpan...' : 'Gagal Simpan'}
+              </span>
+            )}
             <InstallAppButton
               compact
               className={cn(topNavTheme.shareBg, topNavTheme.shareText, topNavTheme.shareBorder)}
@@ -2725,23 +2739,42 @@ const MatchActiveScreen = ({
           </div>
         </section>
 
-        <section className="grid grid-cols-2 gap-2.5">
+        <section className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-ios-gray/70">Aksi Turnamen</span>
+            {!isReadOnly && (
+              <button
+                onClick={handleOpenRoundEditor}
+                className={cn(
+                  "tap-target h-8 px-3 rounded-full bg-white/76 backdrop-blur-sm border inline-flex items-center gap-1.5 text-[11px] font-bold",
+                  accentTheme.text,
+                  accentTheme.borderSoft
+                )}
+              >
+                <Edit3 size={13} />
+                <span>Ubah ronde</span>
+              </button>
+            )}
+          </div>
+
           <button
             onClick={onOpenStandings}
-            className={cn("tap-target h-11 rounded-xl bg-white/78 backdrop-blur-sm inline-flex items-center justify-center gap-2 font-bold text-[13px] border", accentTheme.text, accentTheme.borderSoft)}
+            className={cn(
+              "tap-target w-full h-12 rounded-2xl bg-white/80 backdrop-blur-sm border px-4 flex items-center justify-between",
+              accentTheme.text,
+              accentTheme.borderSoft
+            )}
           >
-            <Trophy size={16} />
-            <span>{isTournamentEnded ? 'Lihat Klasemen Akhir' : 'Lihat Klasemen Sementara'}</span>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className={cn("w-7 h-7 rounded-full flex items-center justify-center", accentTheme.bgSoft)}>
+                <Trophy size={15} />
+              </span>
+              <span className="text-[13px] font-bold truncate">
+                {isTournamentEnded ? 'Lihat Klasemen Akhir' : 'Lihat Klasemen Sementara'}
+              </span>
+            </div>
+            <ChevronRight size={16} className="opacity-70 shrink-0" />
           </button>
-          {!isReadOnly && (
-            <button
-              onClick={handleOpenRoundEditor}
-              className={cn("tap-target h-11 rounded-xl bg-white/78 backdrop-blur-sm inline-flex items-center justify-center gap-2 font-bold text-[13px] border", accentTheme.text, accentTheme.borderSoft)}
-            >
-              <Edit3 size={15} />
-              <span>Ubah Ronde</span>
-            </button>
-          )}
         </section>
 
         {tournament.rounds.map((round) => {
@@ -4362,10 +4395,20 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
   onDonePick?: () => void
 }) => {
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
+  const [outgoingRequestStatuses, setOutgoingRequestStatuses] = useState<Record<string, FriendRequestStatus>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Prevent inherited scroll position from previous screen so search is visible on first open.
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, []);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid || currentUser?.uid;
@@ -4389,6 +4432,80 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       console.error('Friends snapshot error:', error);
       setFriends([]);
       setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [currentUser?.uid, auth.currentUser?.uid]);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid || currentUser?.uid;
+    setIncomingRequests([]);
+    if (!uid) return;
+
+    const q = query(collection(db, 'users', uid, 'friendRequests'), orderBy('createdAt', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const fetched: FriendRequest[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as FriendRequest;
+        if (data.status === 'pending') fetched.push(data);
+      });
+      setIncomingRequests(fetched);
+    }, (error) => {
+      console.error('Incoming friend requests snapshot error:', error);
+      setIncomingRequests([]);
+    });
+    return () => unsubscribe();
+  }, [currentUser?.uid, auth.currentUser?.uid]);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid || currentUser?.uid;
+    setOutgoingRequestStatuses({});
+    if (!uid) return;
+
+    const q = query(collection(db, 'users', uid, 'sentFriendRequests'));
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const statusMap: Record<string, FriendRequestStatus> = {};
+      const acceptedToSync: Array<{ targetUid: string; payload: Friend }> = [];
+
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as FriendRequest & { senderSyncedAt?: any };
+        const targetUid = data.targetUid || docSnap.id;
+        const status = (data.status || 'pending') as FriendRequestStatus;
+        statusMap[targetUid] = status;
+
+        if (status === 'accepted' && !data.senderSyncedAt) {
+          acceptedToSync.push({
+            targetUid,
+            payload: {
+              uid: targetUid,
+              displayName: data.targetDisplayName || 'Teman',
+              photoURL: data.targetPhotoURL || '',
+              username: data.targetUsername || '',
+              mmr: data.targetMmr || 0,
+              addedAt: serverTimestamp(),
+              lastPlayedAt: null
+            }
+          });
+        }
+      });
+
+      setOutgoingRequestStatuses(statusMap);
+
+      if (acceptedToSync.length === 0) return;
+
+      try {
+        await Promise.all(acceptedToSync.map(async ({ targetUid, payload }) => {
+          await setDoc(doc(db, 'users', uid, 'friends', targetUid), payload, { merge: true });
+          await setDoc(doc(db, 'users', uid, 'sentFriendRequests', targetUid), {
+            senderSyncedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        }));
+      } catch (err) {
+        console.error('Sync accepted outgoing friend requests error:', err);
+      }
+    }, (error) => {
+      console.error('Outgoing friend requests snapshot error:', error);
+      setOutgoingRequestStatuses({});
     });
     return () => unsubscribe();
   }, [currentUser?.uid, auth.currentUser?.uid]);
@@ -4430,23 +4547,126 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
     }
   };
 
-  const addFriend = async (targetUser: UserProfile) => {
+  const sendFriendRequest = async (targetUser: UserProfile) => {
+    const uid = auth.currentUser?.uid || currentUser?.uid;
+    if (!uid) return;
+    if (uid === targetUser.uid) {
+      addNotification('Tidak bisa kirim request', 'Anda tidak bisa menambahkan diri sendiri sebagai teman.', 'system');
+      return;
+    }
+    if (friends.some((f) => f.uid === targetUser.uid)) {
+      addNotification('Sudah berteman', `${targetUser.displayName} sudah ada di daftar teman Anda.`, 'system');
+      return;
+    }
+    if (outgoingRequestStatuses[targetUser.uid] === 'pending') {
+      addNotification('Request masih pending', `Permintaan pertemanan ke ${targetUser.displayName} masih menunggu respons.`, 'system');
+      return;
+    }
+
     try {
-      const friendData = {
-        uid: targetUser.uid,
-        displayName: targetUser.displayName,
-        photoURL: targetUser.photoURL || '',
-        username: targetUser.username || '',
-        mmr: targetUser.mmr || 0,
-        addedAt: serverTimestamp(),
-        lastPlayedAt: null
+      const payload: FriendRequest = {
+        requesterUid: uid,
+        targetUid: targetUser.uid,
+        status: 'pending',
+        requesterDisplayName: currentUser.displayName || auth.currentUser?.displayName || 'Pemain',
+        requesterPhotoURL: currentUser.photoURL || auth.currentUser?.photoURL || '',
+        requesterUsername: currentUser.username || '',
+        requesterMmr: currentUser.mmr || 0,
+        targetDisplayName: targetUser.displayName || '',
+        targetPhotoURL: targetUser.photoURL || '',
+        targetUsername: targetUser.username || '',
+        targetMmr: targetUser.mmr || 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       };
-      await setDoc(doc(db, 'users', currentUser.uid, 'friends', targetUser.uid), friendData);
-      addNotification('Teman Ditambahkan', `${targetUser.displayName} sekarang menjadi teman Anda.`, 'achievement');
+
+      await Promise.all([
+        setDoc(doc(db, 'users', targetUser.uid, 'friendRequests', uid), payload, { merge: true }),
+        setDoc(doc(db, 'users', uid, 'sentFriendRequests', targetUser.uid), payload, { merge: true })
+      ]);
+
+      const notifId = Math.random().toString(36).slice(2, 11);
+      await setDoc(doc(db, 'users', targetUser.uid, 'notifications', notifId), {
+        id: notifId,
+        title: 'Permintaan Pertemanan',
+        message: `${currentUser.displayName || 'Seseorang'} ingin berteman dengan Anda.`,
+        timestamp: serverTimestamp(),
+        type: 'system',
+        read: false
+      });
+
+      setOutgoingRequestStatuses((prev) => ({ ...prev, [targetUser.uid]: 'pending' }));
+      addNotification('Request terkirim', `Permintaan pertemanan terkirim ke ${targetUser.displayName}.`, 'system');
       setSearchQuery('');
       setSearchResults([]);
     } catch (err) {
-      console.error('Add friend error:', err);
+      console.error('Send friend request error:', err);
+      addNotification('Gagal kirim request', 'Terjadi kendala saat mengirim permintaan pertemanan.', 'system');
+    }
+  };
+
+  const handleFriendRequestDecision = async (request: FriendRequest, decision: 'accepted' | 'declined') => {
+    const uid = auth.currentUser?.uid || currentUser?.uid;
+    if (!uid) return;
+    setProcessingRequestId(request.requesterUid);
+
+    try {
+      const nowPayload = {
+        status: decision,
+        updatedAt: serverTimestamp(),
+        resolvedAt: serverTimestamp()
+      };
+
+      if (decision === 'accepted') {
+        const requesterFriendData: Friend = {
+          uid: request.requesterUid,
+          displayName: request.requesterDisplayName || 'Teman',
+          photoURL: request.requesterPhotoURL || '',
+          username: request.requesterUsername || '',
+          mmr: request.requesterMmr || 0,
+          addedAt: serverTimestamp(),
+          lastPlayedAt: null
+        };
+
+        const currentUserFriendData: Friend = {
+          uid,
+          displayName: currentUser.displayName || auth.currentUser?.displayName || 'Pemain',
+          photoURL: currentUser.photoURL || auth.currentUser?.photoURL || '',
+          username: currentUser.username || '',
+          mmr: currentUser.mmr || 0,
+          addedAt: serverTimestamp(),
+          lastPlayedAt: null
+        };
+
+        const acceptedNotifId = Math.random().toString(36).slice(2, 11);
+        await Promise.all([
+          setDoc(doc(db, 'users', uid, 'friends', request.requesterUid), requesterFriendData, { merge: true }),
+          setDoc(doc(db, 'users', request.requesterUid, 'friends', uid), currentUserFriendData, { merge: true }),
+          setDoc(doc(db, 'users', uid, 'friendRequests', request.requesterUid), nowPayload, { merge: true }),
+          setDoc(doc(db, 'users', request.requesterUid, 'sentFriendRequests', uid), nowPayload, { merge: true }),
+          setDoc(doc(db, 'users', request.requesterUid, 'notifications', acceptedNotifId), {
+            id: acceptedNotifId,
+            title: 'Request diterima',
+            message: `${currentUser.displayName || 'Teman Anda'} menerima permintaan pertemanan Anda.`,
+            timestamp: serverTimestamp(),
+            type: 'achievement',
+            read: false
+          })
+        ]);
+
+        addNotification('Teman baru ditambahkan', `${request.requesterDisplayName} sekarang ada di daftar teman Anda.`, 'achievement');
+      } else {
+        await Promise.all([
+          setDoc(doc(db, 'users', uid, 'friendRequests', request.requesterUid), nowPayload, { merge: true }),
+          setDoc(doc(db, 'users', request.requesterUid, 'sentFriendRequests', uid), nowPayload, { merge: true })
+        ]);
+        addNotification('Request ditolak', `Permintaan dari ${request.requesterDisplayName} telah ditolak.`, 'system');
+      }
+    } catch (err) {
+      console.error('Handle friend request decision error:', err);
+      addNotification('Gagal memproses request', 'Coba lagi beberapa saat lagi.', 'system');
+    } finally {
+      setProcessingRequestId(null);
     }
   };
 
@@ -4468,6 +4688,58 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       </header>
 
       <main className="max-w-2xl mx-auto p-5">
+        {!pickerMode && incomingRequests.length > 0 && (
+          <section className="mb-6">
+            <div className="flex justify-between items-center mb-3 px-1">
+              <h2 className="text-lg font-bold tracking-tight">Permintaan Pertemanan</h2>
+              <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-lg">{incomingRequests.length} Baru</span>
+            </div>
+            <div className="space-y-3">
+              {incomingRequests.map((request) => {
+                const isProcessing = processingRequestId === request.requesterUid;
+                return (
+                  <div key={request.requesterUid} className="bg-white border border-primary/20 rounded-2xl p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-11 h-11 rounded-full bg-ios-gray/10 overflow-hidden flex items-center justify-center shrink-0">
+                          {request.requesterPhotoURL ? (
+                            <img src={request.requesterPhotoURL} className="w-full h-full object-cover" />
+                          ) : (
+                            <User size={22} className="text-ios-gray/35" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-on-surface truncate">{request.requesterDisplayName}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <RankBadge mmr={request.requesterMmr || 0} size="sm" />
+                            <span className="text-[10px] text-ios-gray font-bold truncate">@{request.requesterUsername || 'user'}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handleFriendRequestDecision(request, 'declined')}
+                          disabled={isProcessing}
+                          className="h-8 px-3 rounded-lg border border-ios-gray/20 text-ios-gray text-[10px] font-black uppercase tracking-wide tap-target disabled:opacity-50"
+                        >
+                          Tolak
+                        </button>
+                        <button
+                          onClick={() => handleFriendRequestDecision(request, 'accepted')}
+                          disabled={isProcessing}
+                          className="h-8 px-3 rounded-lg bg-primary text-white text-[10px] font-black uppercase tracking-wide tap-target disabled:opacity-50"
+                        >
+                          {isProcessing ? '...' : 'Terima'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <section className="mb-8">
           <form onSubmit={handleSearch} className="relative">
             <input
@@ -4501,16 +4773,34 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
                       <p className="text-[10px] text-ios-gray font-medium">@{res.username || 'user'}</p>
                     </div>
                   </div>
+                  {(() => {
+                    const isAlreadyFriend = friends.some(f => f.uid === res.uid);
+                    const requestStatus = outgoingRequestStatuses[res.uid];
+                    const isPending = requestStatus === 'pending';
+                    const isAccepted = requestStatus === 'accepted';
+                    const disabled = isAlreadyFriend || isPending || isAccepted;
+
+                    const label = isAlreadyFriend
+                      ? 'Berteman'
+                      : isPending
+                        ? 'Menunggu'
+                        : isAccepted
+                          ? 'Diterima'
+                          : 'Tambah';
+
+                    return (
                   <button
-                    onClick={() => addFriend(res)}
-                    disabled={friends.some(f => f.uid === res.uid)}
+                    onClick={() => sendFriendRequest(res)}
+                    disabled={disabled}
                     className={cn(
                       "px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest tap-target",
-                      friends.some(f => f.uid === res.uid) ? "bg-ios-gray/10 text-ios-gray" : "bg-primary text-white"
+                          disabled ? "bg-ios-gray/10 text-ios-gray" : "bg-primary text-white"
                     )}
                   >
-                    {friends.some(f => f.uid === res.uid) ? 'Berteman' : 'Tambah'}
+                        {label}
                   </button>
+                    );
+                  })()}
                 </div>
               ))}
             </div>
@@ -4735,7 +5025,9 @@ export default function App() {
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
   const [klasemenBackScreen, setKlasemenBackScreen] = useState<'dashboard' | 'active' | 'history-detail'>('dashboard');
   const [friendsEntrySource, setFriendsEntrySource] = useState<'profile' | 'settings'>('profile');
+  const [activeSaveState, setActiveSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const shareToastTimeoutRef = useRef<number | null>(null);
+  const activeSaveTimeoutRef = useRef<number | null>(null);
   const isAuthResolvedRef = useRef(false);
   const isHandlingPopStateRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; ts: number } | null>(null);
@@ -4744,6 +5036,9 @@ export default function App() {
     return () => {
       if (shareToastTimeoutRef.current) {
         window.clearTimeout(shareToastTimeoutRef.current);
+      }
+      if (activeSaveTimeoutRef.current) {
+        window.clearTimeout(activeSaveTimeoutRef.current);
       }
     };
   }, []);
@@ -4755,6 +5050,7 @@ export default function App() {
           const savedPlayers = localStorage.getItem(getPlayersStorageKey(firebaseUser.uid));
           const parsedPlayers: Player[] = savedPlayers ? JSON.parse(savedPlayers) : [];
           setAllPlayers(isLegacySeedPlayers(parsedPlayers) ? [] : parsedPlayers);
+          const hasLocalTournament = Boolean(localStorage.getItem(getTournamentStorageKey(firebaseUser.uid)));
 
           if (!isSharedViewer) {
             const savedTournament = localStorage.getItem(getTournamentStorageKey(firebaseUser.uid));
@@ -4789,6 +5085,15 @@ export default function App() {
           if (userDoc.exists()) {
             const userData = userDoc.data();
             setUser({ ...firebaseUser, ...userData });
+            if (
+              !isSharedViewer &&
+              !hasLocalTournament &&
+              userData?.activeTournament &&
+              Array.isArray(userData.activeTournament.rounds) &&
+              userData.activeTournament.rounds.length > 0
+            ) {
+              setTournament(userData.activeTournament as Tournament);
+            }
           } else {
             // Initialize user if not exists
             const initialData = {
@@ -5002,6 +5307,44 @@ export default function App() {
   useEffect(() => {
     if (!user?.uid || isSharedViewer) return;
     localStorage.setItem(getTournamentStorageKey(user.uid), JSON.stringify(tournament));
+  }, [tournament, user?.uid, isSharedViewer]);
+
+  useEffect(() => {
+    if (isSharedViewer) return;
+    const uid = user?.uid || auth.currentUser?.uid;
+    if (!uid) return;
+
+    const hasActivity =
+      (tournament.rounds && tournament.rounds.length > 0) ||
+      (tournament.players && tournament.players.length > 0);
+    if (!hasActivity) {
+      setActiveSaveState('saved');
+      return;
+    }
+
+    setActiveSaveState('saving');
+    if (activeSaveTimeoutRef.current) {
+      window.clearTimeout(activeSaveTimeoutRef.current);
+    }
+
+    activeSaveTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        await setDoc(doc(db, 'users', uid), {
+          activeTournament: toFirestoreSafe(tournament),
+          activeTournamentUpdatedAt: serverTimestamp()
+        }, { merge: true });
+        setActiveSaveState('saved');
+      } catch (err) {
+        console.error('Active tournament autosave error:', err);
+        setActiveSaveState('error');
+      }
+    }, 450);
+
+    return () => {
+      if (activeSaveTimeoutRef.current) {
+        window.clearTimeout(activeSaveTimeoutRef.current);
+      }
+    };
   }, [tournament, user?.uid, isSharedViewer]);
 
   useEffect(() => {
@@ -6291,6 +6634,7 @@ export default function App() {
             onUpdateMatchPlayScore={handleUpdateMatchPlayScore}
             onShareMatch={handleShareCurrentMatch}
             isReadOnly={isSharedViewer}
+            saveState={activeSaveState}
           />
         )}
         {screen === 'klasemen' && (

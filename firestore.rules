@@ -96,6 +96,22 @@ service cloud.firestore {
              (!('mmr' in data) || (data.mmr is number));
     }
 
+    function isValidFriendRequest(data) {
+      return data.keys().hasAll(['requesterUid', 'targetUid', 'status', 'requesterDisplayName']) &&
+             data.requesterUid is string &&
+             data.targetUid is string &&
+             data.status is string &&
+             data.status in ['pending', 'accepted', 'declined'] &&
+             data.requesterDisplayName is string &&
+             (!('requesterPhotoURL' in data) || (data.requesterPhotoURL is string)) &&
+             (!('requesterUsername' in data) || (data.requesterUsername is string)) &&
+             (!('requesterMmr' in data) || (data.requesterMmr is number)) &&
+             (!('targetDisplayName' in data) || (data.targetDisplayName is string)) &&
+             (!('targetPhotoURL' in data) || (data.targetPhotoURL is string)) &&
+             (!('targetUsername' in data) || (data.targetUsername is string)) &&
+             (!('targetMmr' in data) || (data.targetMmr is number));
+    }
+
     function isValidNotification(data) {
       return data.keys().hasAll(['id', 'title', 'message', 'timestamp', 'type', 'read']) &&
              data.id is string && data.title is string && data.message is string &&
@@ -124,7 +140,43 @@ service cloud.firestore {
 
       match /friends/{friendId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidFriend(request.resource.data);
+        allow create, update: if isValidFriend(request.resource.data) &&
+          (
+            isOwner(userId) ||
+            (isAuthenticated() && request.auth.uid == friendId && request.resource.data.uid == request.auth.uid)
+          );
+        allow delete: if isOwner(userId);
+      }
+
+      match /friendRequests/{requesterId} {
+        allow read: if isOwner(userId) || (isAuthenticated() && request.auth.uid == requesterId);
+        allow create: if isAuthenticated() &&
+          request.auth.uid == requesterId &&
+          isValidFriendRequest(request.resource.data) &&
+          request.resource.data.requesterUid == request.auth.uid &&
+          request.resource.data.targetUid == userId &&
+          request.resource.data.status == 'pending';
+        allow update: if isOwner(userId) && isValidFriendRequest(request.resource.data);
+        allow delete: if isOwner(userId) || (isAuthenticated() && request.auth.uid == requesterId);
+      }
+
+      match /sentFriendRequests/{targetId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+          isValidFriendRequest(request.resource.data) &&
+          request.resource.data.requesterUid == userId &&
+          request.resource.data.targetUid == targetId &&
+          request.resource.data.status == 'pending';
+        allow update: if isValidFriendRequest(request.resource.data) &&
+          (
+            isOwner(userId) ||
+            (
+              isAuthenticated() &&
+              request.auth.uid == targetId &&
+              resource.data.requesterUid == userId &&
+              resource.data.targetUid == targetId
+            )
+          );
         allow delete: if isOwner(userId);
       }
 

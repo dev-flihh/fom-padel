@@ -99,6 +99,25 @@ export interface Friend {
   lastPlayedAt?: any;
 }
 
+export type FriendRequestStatus = 'pending' | 'accepted' | 'declined';
+
+export interface FriendRequest {
+  requesterUid: string;
+  targetUid: string;
+  status: FriendRequestStatus;
+  requesterDisplayName: string;
+  requesterPhotoURL?: string;
+  requesterUsername?: string;
+  requesterMmr?: number;
+  targetDisplayName?: string;
+  targetPhotoURL?: string;
+  targetUsername?: string;
+  targetMmr?: number;
+  createdAt?: any;
+  updatedAt?: any;
+  resolvedAt?: any;
+}
+
 export type Screen = 'login' | 'dashboard' | 'settings' | 'preview' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
 
 export interface AppNotification {
