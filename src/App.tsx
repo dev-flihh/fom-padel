@@ -2867,53 +2867,53 @@ const MatchActiveScreen = ({
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}
-              className="relative w-full max-w-md bg-white rounded-[32px] shadow-2xl overflow-hidden"
+              className="relative w-full max-w-sm bg-white rounded-[24px] shadow-2xl overflow-hidden"
               style={{ maxHeight: `calc(100dvh - ${modalBottomOffset + 28}px)`, overflowY: 'auto' }}
             >
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-8">
-                  <h3 className="text-lg font-bold tracking-tight">Update Skor Lapangan {scoringMatch.court}</h3>
+              <div className="p-4">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-[17px] font-bold tracking-tight">Update Skor Lapangan {scoringMatch.court}</h3>
                   <button onClick={() => setScoringMatchId(null)} className="p-2 bg-ios-gray/10 rounded-full tap-target">
-                    <X size={20} className="text-on-surface" />
+                    <X size={18} className="text-on-surface" />
                   </button>
                 </div>
 
-                <div className="space-y-10">
+                <div className="space-y-5">
                   {/* Team A Scoring */}
-                  <div className="space-y-4">
+                  <div className="space-y-2.5">
                     <div className="flex justify-between items-center">
-                      <span className={cn("text-sm font-bold uppercase tracking-widest", accentTheme.text)}>Team A</span>
+                      <span className={cn("text-xs font-bold uppercase tracking-widest", accentTheme.text)}>Team A</span>
                       <span className="text-xs font-medium text-ios-gray truncate max-w-[200px]">
                         {scoringMatch.teamA.players.map(p => p.name.split(' ')[0]).join(' & ')}
                       </span>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <div className={cn("flex-1 flex items-center justify-between rounded-2xl p-2 border", accentTheme.bgSoft, accentTheme.borderSoft)}>
+                    <div className="flex items-center gap-2.5">
+                      <div className={cn("flex-1 flex items-center justify-between rounded-xl p-2 border", accentTheme.bgSoft, accentTheme.borderSoft)}>
                         {tournament.format !== 'Match Play' ? (
                           <>
-                            <button onClick={() => handleScoreUpdate('A', -1)} className="w-12 h-12 flex items-center justify-center bg-white rounded-xl shadow-sm tap-target active:scale-90 transition-transform">
-                              <Minus size={20} className={accentTheme.text} />
+                            <button onClick={() => handleScoreUpdate('A', -1)} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm tap-target active:scale-90 transition-transform">
+                              <Minus size={18} className={accentTheme.text} />
                             </button>
-                            <span className={cn("text-4xl font-display font-black", accentTheme.text)}>{scoringMatch.teamA.score}</span>
-                            <button onClick={() => handleScoreUpdate('A', 1)} className={cn("w-12 h-12 flex items-center justify-center rounded-xl shadow-lg tap-target active:scale-90 transition-transform", accentTheme.solid, accentTheme.solidShadow)}>
-                              <Plus size={20} className="text-white" />
+                            <span className={cn("text-3xl font-display font-black", accentTheme.text)}>{scoringMatch.teamA.score}</span>
+                            <button onClick={() => handleScoreUpdate('A', 1)} className={cn("w-10 h-10 flex items-center justify-center rounded-lg shadow-lg tap-target active:scale-90 transition-transform", accentTheme.solid, accentTheme.solidShadow)}>
+                              <Plus size={18} className="text-white" />
                             </button>
                           </>
                         ) : (
-                          <div className="w-full flex items-center justify-between px-4">
+                          <div className="w-full flex items-center justify-between px-2">
                             <div className="flex flex-col items-center">
                               <span className={cn("text-[10px] font-bold uppercase", accentTheme.textSoft)}>Games</span>
-                              <span className={cn("text-3xl font-display font-black", accentTheme.text)}>{scoringMatch.teamA.score}</span>
+                              <span className={cn("text-2xl font-display font-black", accentTheme.text)}>{scoringMatch.teamA.score}</span>
                             </div>
                             <div className="flex flex-col items-center">
                               <span className={cn("text-[10px] font-bold uppercase", accentTheme.textSoft)}>Points</span>
-                              <span className={cn("text-3xl font-black", accentTheme.text)}>{scoringMatch.pointsA || '0'}</span>
+                              <span className={cn("text-2xl font-black", accentTheme.text)}>{scoringMatch.pointsA || '0'}</span>
                             </div>
                             <button
                               onClick={() => handleMatchPlayScoreUpdate('A')}
-                              className={cn("w-12 h-12 flex items-center justify-center rounded-xl shadow-lg tap-target active:scale-90 transition-transform", accentTheme.solid, accentTheme.solidShadow)}
+                              className={cn("w-10 h-10 flex items-center justify-center rounded-lg shadow-lg tap-target active:scale-90 transition-transform", accentTheme.solid, accentTheme.solidShadow)}
                             >
-                              <Plus size={20} className="text-white" />
+                              <Plus size={18} className="text-white" />
                             </button>
                           </div>
                         )}
@@ -2930,44 +2930,44 @@ const MatchActiveScreen = ({
                   {/* VS Divider */}
                   <div className="relative flex items-center justify-center">
                     <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-ios-gray/10"></div></div>
-                    <span className="relative px-4 bg-white text-[10px] font-black text-ios-gray/30 tracking-[0.2em] uppercase">Versus</span>
+                    <span className="relative px-3 bg-white text-[9px] font-black text-ios-gray/30 tracking-[0.2em] uppercase">Versus</span>
                   </div>
 
                   {/* Team B Scoring */}
-                  <div className="space-y-4">
+                  <div className="space-y-2.5">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-bold text-ios-gray uppercase tracking-widest">Team B</span>
+                      <span className="text-xs font-bold text-ios-gray uppercase tracking-widest">Team B</span>
                       <span className="text-xs font-medium text-ios-gray truncate max-w-[200px]">
                         {scoringMatch.teamB.players.map(p => p.name.split(' ')[0]).join(' & ')}
                       </span>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <div className="flex-1 flex items-center justify-between bg-ios-gray/5 rounded-2xl p-2 border border-ios-gray/10">
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex-1 flex items-center justify-between bg-ios-gray/5 rounded-xl p-2 border border-ios-gray/10">
                         {tournament.format !== 'Match Play' ? (
                           <>
-                            <button onClick={() => handleScoreUpdate('B', -1)} className="w-12 h-12 flex items-center justify-center bg-white rounded-xl shadow-sm tap-target active:scale-90 transition-transform">
-                              <Minus size={20} className="text-on-surface" />
+                            <button onClick={() => handleScoreUpdate('B', -1)} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm tap-target active:scale-90 transition-transform">
+                              <Minus size={18} className="text-on-surface" />
                             </button>
-                            <span className="text-4xl font-display font-black text-on-surface">{scoringMatch.teamB.score}</span>
-                            <button onClick={() => handleScoreUpdate('B', 1)} className="w-12 h-12 flex items-center justify-center bg-on-surface rounded-xl shadow-lg shadow-on-surface/10 tap-target active:scale-90 transition-transform">
-                              <Plus size={20} className="text-white" />
+                            <span className="text-3xl font-display font-black text-on-surface">{scoringMatch.teamB.score}</span>
+                            <button onClick={() => handleScoreUpdate('B', 1)} className="w-10 h-10 flex items-center justify-center bg-on-surface rounded-lg shadow-lg shadow-on-surface/10 tap-target active:scale-90 transition-transform">
+                              <Plus size={18} className="text-white" />
                             </button>
                           </>
                         ) : (
-                          <div className="w-full flex items-center justify-between px-4">
+                          <div className="w-full flex items-center justify-between px-2">
                             <div className="flex flex-col items-center">
                               <span className="text-[10px] font-bold text-ios-gray/40 uppercase">Games</span>
-                              <span className="text-3xl font-display font-black text-on-surface">{scoringMatch.teamB.score}</span>
+                              <span className="text-2xl font-display font-black text-on-surface">{scoringMatch.teamB.score}</span>
                             </div>
                             <div className="flex flex-col items-center">
                               <span className="text-[10px] font-bold text-ios-gray/40 uppercase">Points</span>
-                              <span className="text-3xl font-black text-on-surface">{scoringMatch.pointsB || '0'}</span>
+                              <span className="text-2xl font-black text-on-surface">{scoringMatch.pointsB || '0'}</span>
                             </div>
                             <button
                               onClick={() => handleMatchPlayScoreUpdate('B')}
-                              className="w-12 h-12 flex items-center justify-center bg-on-surface rounded-xl shadow-lg shadow-on-surface/10 tap-target active:scale-90 transition-transform"
+                              className="w-10 h-10 flex items-center justify-center bg-on-surface rounded-lg shadow-lg shadow-on-surface/10 tap-target active:scale-90 transition-transform"
                             >
-                              <Plus size={20} className="text-white" />
+                              <Plus size={18} className="text-white" />
                             </button>
                           </div>
                         )}
@@ -2982,19 +2982,19 @@ const MatchActiveScreen = ({
                   </div>
                 </div>
 
-                <div className="mt-10 grid grid-cols-2 gap-3">
+                <div className="mt-5 grid grid-cols-2 gap-2.5">
                   <button
                     onClick={() => {
                       setExactScore('A', 0);
                       setExactScore('B', 0);
                     }}
-                    className="py-4 bg-ios-gray/5 text-ios-gray font-bold text-sm rounded-2xl tap-target active:bg-ios-gray/10 transition-colors"
+                    className="py-3 bg-ios-gray/5 text-ios-gray font-bold text-sm rounded-xl tap-target active:bg-ios-gray/10 transition-colors"
                   >
                     Reset Skor
                   </button>
                   <button
                     onClick={() => setScoringMatchId(null)}
-                    className={cn("py-4 text-white font-bold text-sm rounded-2xl shadow-xl tap-target active:scale-[0.98] transition-all", accentTheme.solid, accentTheme.solidShadow)}
+                    className={cn("py-3 text-white font-bold text-sm rounded-xl shadow-xl tap-target active:scale-[0.98] transition-all", accentTheme.solid, accentTheme.solidShadow)}
                   >
                     Simpan & Tutup
                   </button>
@@ -5299,6 +5299,8 @@ export default function App() {
   };
 
   const handleUpdateMatchPlayScore = (matchId: string, team: 'A' | 'B') => {
+    let setWinMessage: string | null = null;
+
     setTournament(prev => {
       const newRounds = prev.rounds.map(round => {
         const isMatchInRound = round.matches.some(m => m.id === matchId);
@@ -5311,9 +5313,21 @@ export default function App() {
             let pB = match.pointsB || '0';
             let gamesA = [...(match.teamA.sets || [0])];
             let gamesB = [...(match.teamB.sets || [0])];
-            let currentSet = match.currentSet || 0;
+            const currentSet = Number.isFinite(match.currentSet) ? (match.currentSet as number) : 0;
+            if (gamesA[currentSet] === undefined || Number.isNaN(gamesA[currentSet])) gamesA[currentSet] = 0;
+            if (gamesB[currentSet] === undefined || Number.isNaN(gamesB[currentSet])) gamesB[currentSet] = 0;
 
-            const tennisPoints = ['0', '15', '30', '40', 'Game'];
+            // Once a set is already decided, keep it immutable to avoid corrupted states.
+            const isSetAlreadyFinished =
+              (gamesA[currentSet] >= 6 || gamesB[currentSet] >= 6) &&
+              Math.abs(gamesA[currentSet] - gamesB[currentSet]) >= 2;
+            if (isSetAlreadyFinished) {
+              return {
+                ...match,
+                teamA: { ...match.teamA, sets: gamesA, score: gamesA.reduce((a, b) => a + b, 0) },
+                teamB: { ...match.teamB, sets: gamesB, score: gamesB.reduce((a, b) => a + b, 0) }
+              };
+            }
 
             if (team === 'A') {
               if (pA === '0') pA = '15';
@@ -5368,10 +5382,9 @@ export default function App() {
 
             // Check if set won (simplified: first to 6 games)
             if (gamesA[currentSet] >= 6 && gamesA[currentSet] - gamesB[currentSet] >= 2) {
-              addNotification('Set Selesai!', `Team A memenangkan set ${currentSet + 1} dengan skor ${gamesA[currentSet]} - ${gamesB[currentSet]}`, 'achievement');
-              // For now, we just keep it in one set or could start a new one
+              setWinMessage = `Team A memenangkan set ${currentSet + 1} dengan skor ${gamesA[currentSet]} - ${gamesB[currentSet]}`;
             } else if (gamesB[currentSet] >= 6 && gamesB[currentSet] - gamesA[currentSet] >= 2) {
-              addNotification('Set Selesai!', `Team B memenangkan set ${currentSet + 1} dengan skor ${gamesB[currentSet]} - ${gamesA[currentSet]}`, 'achievement');
+              setWinMessage = `Team B memenangkan set ${currentSet + 1} dengan skor ${gamesB[currentSet]} - ${gamesA[currentSet]}`;
             } else if (gamesA[currentSet] === 6 && gamesB[currentSet] === 6) {
               // Tie-break logic could go here, but let's keep it simple for now
             }
@@ -5390,6 +5403,10 @@ export default function App() {
       });
       return { ...prev, rounds: newRounds };
     });
+
+    if (setWinMessage) {
+      addNotification('Set Selesai!', setWinMessage, 'achievement');
+    }
   };
 
   const handleSwapPlayer = (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => {
