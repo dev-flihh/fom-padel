@@ -134,6 +134,13 @@ const RankBadge = ({ mmr, size = 'md', showLabel = true }: { mmr: number, size?:
 
 const getPlayersStorageKey = (uid: string) => `gas_padel_players_${uid}`;
 const getTournamentStorageKey = (uid: string) => `fom_play_active_tournament_${uid}`;
+const DEFAULT_PLAYER_SEED_NAMES = new Set(INITIAL_PLAYERS.map((p) => p.name.toLowerCase()));
+
+const isLegacySeedPlayers = (players: Player[] | null | undefined) => {
+  if (!players || players.length === 0) return false;
+  if (players.length !== INITIAL_PLAYERS.length) return false;
+  return players.every((p) => DEFAULT_PLAYER_SEED_NAMES.has((p?.name || '').toLowerCase()));
+};
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -266,7 +273,10 @@ const BottomNav = ({
     : "bg-primary/12 text-primary border border-primary/25";
 
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-50 px-4" style={{ paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+    <nav
+      className="fixed inset-x-0 z-50 px-4"
+      style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)' }}
+    >
       <div className="mx-auto w-full max-w-md rounded-full border border-white/70 bg-white/68 backdrop-blur-2xl supports-[backdrop-filter]:bg-white/58 px-2 py-2 shadow-[0_10px_28px_rgba(17,24,39,0.10)]">
         <div className="flex items-center justify-between gap-1">
           {tabs.map((tab) => {
@@ -1122,34 +1132,58 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
   const [googlePlacesBlocked, setGooglePlacesBlocked] = useState(false);
 
   useEffect(() => {
-    const uid = currentUser?.uid;
-    let cancelled = false;
-
+    const uid = auth.currentUser?.uid || currentUser?.uid;
     setFriends([]);
+    setLoadingFriends(true);
+
     if (!uid) {
       setLoadingFriends(false);
       return;
     }
 
-    setLoadingFriends(true);
     const q = query(collection(db, 'users', uid, 'friends'), orderBy('displayName', 'asc'));
-    getDocs(q).then(snapshot => {
-      if (cancelled) return;
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetched: Friend[] = [];
-      snapshot.forEach(doc => fetched.push(doc.data() as Friend));
+      snapshot.forEach((docSnap) => fetched.push(docSnap.data() as Friend));
       setFriends(fetched);
       setLoadingFriends(false);
-    }).catch(err => {
-      if (cancelled) return;
+    }, (err) => {
       console.error('Error fetching friends for settings:', err);
       setFriends([]);
       setLoadingFriends(false);
     });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [currentUser?.uid]);
+    return () => unsubscribe();
+  }, [currentUser?.uid, auth.currentUser?.uid]);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid || currentUser?.uid;
+    if (!uid) return;
+
+    const displayName = (currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Saya').trim();
+    const initials = displayName
+      .split(' ')
+      .filter(Boolean)
+      .map((n: string) => n[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'ME';
+
+    setAllPlayers(prev => {
+      if (prev.some(p => p.id === uid)) return prev;
+      return [
+        {
+          id: uid,
+          name: displayName,
+          rating: currentUser?.mmr || 0,
+          avatar: currentUser?.photoURL || '',
+          initials,
+          stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+        },
+        ...prev
+      ];
+    });
+  }, [currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, currentUser?.mmr, setAllPlayers]);
 
   const minPlayersNeeded = courts * 4;
   const isReady = selectedPlayers.length >= minPlayersNeeded;
@@ -1791,7 +1825,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, tournament, setTournament, al
                     )}
                   >
                     <div className={cn(
-                      "w-14 h-14 rounded-2xl overflow-hidden border-2 flex items-center justify-center bg-ios-gray/5",
+                      "w-14 h-14 rounded-full overflow-hidden border-2 flex items-center justify-center bg-ios-gray/5",
                       isSelected ? "border-primary shadow-lg shadow-primary/20" : "border-transparent"
                     )}>
                       {friend.photoURL ? <img src={friend.photoURL} className="w-full h-full object-cover" /> : <User size={24} className="text-ios-gray/30" />}
@@ -2092,6 +2126,7 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
 
 const MatchActiveScreen = ({
   onBack,
+  onStartNewMatch,
   tournament,
   onUpdateScore,
   onNextRound,
@@ -2102,6 +2137,7 @@ const MatchActiveScreen = ({
   isReadOnly
 }: {
   onBack: () => void,
+  onStartNewMatch: () => void,
   tournament: Tournament,
   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void,
   onNextRound: () => void,
@@ -2180,7 +2216,7 @@ const MatchActiveScreen = ({
   const hasActiveTournament = currentRoundIndex !== -1;
   const activeRound = currentRoundIndex !== -1 ? (tournament.rounds[currentRoundIndex] ?? null) : null;
   const activeRoundId = activeRound?.id ?? null;
-  const isLastRound = currentRoundIndex !== -1 && currentRoundIndex === tournament.rounds.length - 1;
+  const isLastRound = currentRoundIndex !== -1 && currentRoundIndex >= (tournament.numRounds - 1);
   const isTournamentEnded = tournament.rounds.length > 0 && tournament.rounds.every(r => r.matches.every(m => m.status === 'completed'));
   const totalElapsed = tournament.startedAt ? formatDurationFromMs(nowMs - tournament.startedAt) : '00:00';
   const fomPlayUrl = 'https://fomplay.com';
@@ -2382,7 +2418,7 @@ const MatchActiveScreen = ({
           </div>
 
           <button
-            onClick={onBack}
+            onClick={onStartNewMatch}
             className="w-full h-[56px] bg-primary text-white rounded-[16px] font-bold text-[17px] shadow-lg shadow-primary/20 tap-target flex items-center justify-center gap-2"
           >
             <PlusCircle size={20} />
@@ -3052,14 +3088,12 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
         const scoreA = match.teamA.score || 0;
         const scoreB = match.teamB.score || 0;
         const hasLiveScore = scoreA > 0 || scoreB > 0;
-        const shouldCountMatchAppearance = match.status !== 'pending';
         const shouldCountStandingScore = match.status === 'completed' || hasLiveScore;
-        if (!shouldCountMatchAppearance && !shouldCountStandingScore) return;
+        if (!shouldCountStandingScore && match.status !== 'completed') return;
 
         match.teamA.players.forEach(player => {
           const stats = playerStatsMap[player.id];
           if (!stats) return;
-          if (shouldCountMatchAppearance) stats.matches += 1;
           if (shouldCountStandingScore) {
             stats.totalPoints += scoreA;
             stats.pointsDiff += (scoreA - scoreB);
@@ -3073,7 +3107,6 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
         match.teamB.players.forEach(player => {
           const stats = playerStatsMap[player.id];
           if (!stats) return;
-          if (shouldCountMatchAppearance) stats.matches += 1;
           if (shouldCountStandingScore) {
             stats.totalPoints += scoreB;
             stats.pointsDiff += (scoreB - scoreA);
@@ -3085,6 +3118,11 @@ const KlasemenScreen = ({ tournament, onBack }: { tournament: Tournament | Tourn
           }
         });
       });
+    });
+
+    Object.values(playerStatsMap).forEach((stats) => {
+      // Keep "M" fully consistent with finished outcomes shown as W/L/D.
+      stats.matches = stats.w + stats.l + stats.d;
     });
 
     return Object.values(playerStatsMap).sort((a, b) => {
@@ -3982,7 +4020,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification }: {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const uid = currentUser?.uid;
+    const uid = auth.currentUser?.uid || currentUser?.uid;
     setFriends([]);
     setLoading(true);
 
@@ -4005,7 +4043,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification }: {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, auth.currentUser?.uid]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4315,7 +4353,7 @@ export default function App() {
   const [sharedMatchId, setSharedMatchId] = useState<string | null>(null);
   const [isSharedViewer, setIsSharedViewer] = useState(false);
   const [tournament, setTournament] = useState<Tournament>(INITIAL_TOURNAMENT);
-  const [allPlayers, setAllPlayers] = useState<Player[]>(INITIAL_PLAYERS);
+  const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [tournaments, setTournaments] = useState<TournamentHistory[]>([]);
   const [selectedHistory, setSelectedHistory] = useState<TournamentHistory | null>(null);
@@ -4336,7 +4374,8 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         const savedPlayers = localStorage.getItem(getPlayersStorageKey(firebaseUser.uid));
-        setAllPlayers(savedPlayers ? JSON.parse(savedPlayers) : INITIAL_PLAYERS);
+        const parsedPlayers: Player[] = savedPlayers ? JSON.parse(savedPlayers) : [];
+        setAllPlayers(isLegacySeedPlayers(parsedPlayers) ? [] : parsedPlayers);
 
         if (!isSharedViewer) {
           const savedTournament = localStorage.getItem(getTournamentStorageKey(firebaseUser.uid));
@@ -4398,7 +4437,7 @@ export default function App() {
       } else {
         setUser(null);
         setIsLoggedIn(false);
-        setAllPlayers(INITIAL_PLAYERS);
+        setAllPlayers([]);
         if (!isSharedViewer) {
           setTournament(INITIAL_TOURNAMENT);
         }
@@ -4779,9 +4818,12 @@ export default function App() {
     const now = Date.now();
     if (!tournament.rounds) return;
     const currentRoundIndex = tournament.rounds.findIndex(r => r && r.matches && r.matches.some(m => m && m.status === 'active'));
+    if (currentRoundIndex === -1) return;
     const nextRoundId = currentRoundIndex + 2;
+    const isConfiguredLastRound = currentRoundIndex >= (tournament.numRounds - 1);
+    const hasPreGeneratedNextRound = Boolean(tournament.rounds[currentRoundIndex + 1]);
 
-    if (currentRoundIndex === tournament.numRounds - 1) {
+    if (isConfiguredLastRound || (tournament.format !== 'Mexicano' && !hasPreGeneratedNextRound)) {
       // Tournament finished - mark last round as completed
       setTournament(prev => {
         const newRounds = prev.rounds.map((round, idx) => {
@@ -5255,6 +5297,7 @@ export default function App() {
         {screen === 'active' && (
           <MatchActiveScreen
             onBack={() => setScreen('dashboard')}
+            onStartNewMatch={() => setScreen('settings')}
             tournament={tournament}
             onUpdateScore={handleUpdateScore}
             onNextRound={handleNextRound}
