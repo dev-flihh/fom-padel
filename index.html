@@ -15,6 +15,43 @@
     <meta name="description" content="Padel Tournament & MMR System" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      (function () {
+        const canonicalHost = 'fomplay.asia';
+        const host = window.location.hostname.toLowerCase();
+        const defaultHosts = new Set([
+          'gen-lang-client-0996764238.web.app',
+          'gen-lang-client-0996764238.firebaseapp.com',
+        ]);
+        const isLocalHost =
+          host === 'localhost' ||
+          host === '127.0.0.1' ||
+          host === '0.0.0.0' ||
+          host.endsWith('.local');
+
+        if (isLocalHost) return;
+
+        const canonicalUrl =
+          'https://' +
+          canonicalHost +
+          window.location.pathname +
+          window.location.search +
+          window.location.hash;
+
+        const canonicalLink = document.createElement('link');
+        canonicalLink.rel = 'canonical';
+        canonicalLink.href = canonicalUrl;
+        document.head.appendChild(canonicalLink);
+
+        if (defaultHosts.has(host)) {
+          const robotsMeta = document.createElement('meta');
+          robotsMeta.name = 'robots';
+          robotsMeta.content = 'noindex, nofollow, noarchive';
+          document.head.appendChild(robotsMeta);
+          window.location.replace(canonicalUrl);
+        }
+      })();
+    </script>
     <style>
       html, body, #root {
         margin: 0;
