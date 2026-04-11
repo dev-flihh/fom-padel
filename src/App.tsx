@@ -2410,10 +2410,11 @@ const MatchActiveScreen = ({
   const activeHeroPhoto = useMemo(() => {
     const pool = activeBackgroundPools[tournament.format] || [];
     if (!pool.length) return '';
-    const seed = Number(tournament.startedAt || 0) + tournament.players.length + tournament.rounds.length;
+    // Keep hero photo stable for the lifetime of one tournament session.
+    const seed = Number(tournament.startedAt || 0) + tournament.players.length;
     const index = Math.abs(seed) % pool.length;
     return pool[index];
-  }, [activeBackgroundPools, tournament.format, tournament.players.length, tournament.rounds.length, tournament.startedAt]);
+  }, [activeBackgroundPools, tournament.format, tournament.players.length, tournament.startedAt]);
   const fomPlayUrl = useMemo(() => {
     const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
     const runtimeBase = `${window.location.protocol}//${window.location.host}`;
@@ -2423,16 +2424,16 @@ const MatchActiveScreen = ({
     tournament.format === 'Americano'
       ? {
         base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
-        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.34)_0%,rgba(11,46,37,0.20)_16%,rgba(28,96,80,0.10)_32%,rgba(233,250,246,0.08)_44%,rgba(233,250,246,0.34)_56%,rgba(233,250,246,0.70)_70%,rgba(233,250,246,0.90)_82%,rgba(245,255,251,1)_100%)]'
+        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.22)_0%,rgba(11,46,37,0.12)_16%,rgba(28,96,80,0.06)_32%,rgba(233,250,246,0.04)_44%,rgba(233,250,246,0.18)_58%,rgba(233,250,246,0.42)_72%,rgba(233,250,246,0.62)_86%,rgba(245,255,251,1)_100%)]'
       }
       : tournament.format === 'Mexicano'
         ? {
           base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.34)_0%,rgba(78,35,14,0.20)_16%,rgba(156,74,28,0.10)_32%,rgba(255,243,231,0.08)_44%,rgba(255,243,231,0.34)_56%,rgba(255,243,231,0.70)_70%,rgba(255,243,231,0.90)_82%,rgba(255,245,236,1)_100%)]'
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.22)_0%,rgba(78,35,14,0.12)_16%,rgba(156,74,28,0.06)_32%,rgba(255,243,231,0.04)_44%,rgba(255,243,231,0.18)_58%,rgba(255,243,231,0.42)_72%,rgba(255,243,231,0.62)_86%,rgba(255,245,236,1)_100%)]'
         }
         : {
           base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.38)_0%,rgba(14,44,82,0.22)_16%,rgba(37,92,171,0.10)_32%,rgba(237,243,255,0.08)_44%,rgba(237,243,255,0.34)_56%,rgba(237,243,255,0.70)_70%,rgba(237,243,255,0.90)_82%,rgba(246,249,255,1)_100%)]'
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.24)_0%,rgba(14,44,82,0.14)_16%,rgba(37,92,171,0.06)_32%,rgba(237,243,255,0.04)_44%,rgba(237,243,255,0.18)_58%,rgba(237,243,255,0.42)_72%,rgba(237,243,255,0.62)_86%,rgba(246,249,255,1)_100%)]'
         };
   const gameDateLabel = tournament.startedAt
     ? new Date(tournament.startedAt).toLocaleDateString('id-ID', {
@@ -2649,7 +2650,7 @@ const MatchActiveScreen = ({
     <div className="relative min-h-screen pb-32 overflow-hidden bg-transparent z-0">
       <div className="fixed inset-0 z-0 pointer-events-none">
         <div className={cn('absolute inset-0', pageBgTheme.base)} />
-        <div className="absolute inset-x-0 top-0 h-[80vh] min-h-[440px] max-h-[620px] overflow-hidden">
+        <div className="absolute inset-x-0 top-0 h-screen min-h-screen max-h-none overflow-hidden">
           {activeHeroPhoto && (
             <img
               src={activeHeroPhoto}
@@ -2802,7 +2803,12 @@ const MatchActiveScreen = ({
           return (
             <div key={round.id} className="mb-4">
               <section className="bg-white/78 backdrop-blur-sm p-4 rounded-[20px] shadow-sm border border-white/45">
-                <div className="flex items-center justify-between gap-3 mb-1.5">
+                <button
+                  type="button"
+                  onClick={() => toggleRound(round.id)}
+                  className="w-full flex items-center justify-between gap-3 mb-1.5 tap-target text-left"
+                  aria-label={isCollapsed ? `Buka ronde ${round.id}` : `Tutup ronde ${round.id}`}
+                >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", accentTheme.headingStrong)}>
                       Ronde {round.id}
@@ -2812,15 +2818,10 @@ const MatchActiveScreen = ({
                       {roundDuration}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleRound(round.id)}
-                    className="tap-target p-1 text-ios-gray/65"
-                    aria-label={isCollapsed ? `Buka ronde ${round.id}` : `Tutup ronde ${round.id}`}
-                  >
+                  <span className="p-1 text-ios-gray/65">
                     <ChevronRight size={22} className={cn("transition-transform", !isCollapsed && "rotate-90")} />
-                  </button>
-                </div>
+                  </span>
+                </button>
 
                 <AnimatePresence>
                   {!isCollapsed && (
@@ -2947,13 +2948,10 @@ const MatchActiveScreen = ({
         })}
 
         {!isReadOnly && (
-          <div className="pt-4 pb-12">
-            <p className={cn("mb-2 text-center text-[10px] font-bold uppercase tracking-[0.14em]", accentTheme.textSoft)}>
-              {isLastRound ? 'Round terakhir siap diselesaikan' : 'Lanjutkan ke ronde berikutnya'}
-            </p>
+          <div className="pt-3 pb-12">
             <button
               onClick={onNextRound}
-              className={cn("w-full h-[54px] rounded-[14px] text-white font-bold text-[16px] tap-target flex items-center justify-center gap-2", accentTheme.solid, accentTheme.solidShadow)}
+              className={cn("w-full h-[52px] rounded-[14px] text-white font-bold text-[15px] tracking-[0.01em] tap-target inline-flex items-center justify-center gap-2 border border-white/12", accentTheme.solid, accentTheme.solidShadow)}
             >
               <span>{isLastRound ? 'Selesaikan Turnamen' : 'Ronde Berikutnya'}</span>
               <Zap size={18} />
@@ -3272,6 +3270,11 @@ const KlasemenScreen = ({
   onBack: () => void,
   onShare: (t: Tournament | TournamentHistory) => void
 }) => {
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const fomPlayUrl = useMemo(() => {
     const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
     const runtimeBase = `${window.location.protocol}//${window.location.host}`;
@@ -3299,6 +3302,9 @@ const KlasemenScreen = ({
   const locationLabel = (tournament.location || '').trim();
   const placeLabel = [venueLabel, locationLabel].filter(Boolean).join(' | ');
   const locationDateLabel = placeLabel ? `${placeLabel} | ${dateLabel}` : dateLabel;
+  const totalElapsed = ('startedAt' in tournament && tournament.startedAt)
+    ? formatDurationFromMs(nowMs - tournament.startedAt)
+    : '00:00';
 
   const infoTheme =
     tournament.format === 'Americano'
@@ -3373,23 +3379,24 @@ const KlasemenScreen = ({
   const klasemenHeroPhoto = useMemo(() => {
     const pool = klasemenBackgroundPools[tournament.format] || [];
     if (!pool.length) return '';
-    const seed = Number('startedAt' in tournament ? (tournament.startedAt || 0) : 0) + tournamentPlayers.length + tournamentRounds.length;
+    // Keep hero photo stable for one tournament so standings and active stay consistent.
+    const seed = Number('startedAt' in tournament ? (tournament.startedAt || 0) : 0) + tournamentPlayers.length;
     return pool[Math.abs(seed) % pool.length];
-  }, [klasemenBackgroundPools, tournament.format, tournamentPlayers.length, tournamentRounds.length, tournament]);
+  }, [klasemenBackgroundPools, tournament.format, tournamentPlayers.length, tournament]);
   const klasemenPageBgTheme =
     tournament.format === 'Americano'
       ? {
         base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
-        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.34)_0%,rgba(11,46,37,0.20)_16%,rgba(28,96,80,0.10)_32%,rgba(233,250,246,0.08)_44%,rgba(233,250,246,0.34)_56%,rgba(233,250,246,0.70)_70%,rgba(233,250,246,0.90)_82%,rgba(245,255,251,1)_100%)]'
+        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.22)_0%,rgba(11,46,37,0.12)_16%,rgba(28,96,80,0.06)_32%,rgba(233,250,246,0.04)_44%,rgba(233,250,246,0.18)_58%,rgba(233,250,246,0.42)_72%,rgba(233,250,246,0.62)_86%,rgba(245,255,251,1)_100%)]'
       }
       : tournament.format === 'Mexicano'
         ? {
           base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.34)_0%,rgba(78,35,14,0.20)_16%,rgba(156,74,28,0.10)_32%,rgba(255,243,231,0.08)_44%,rgba(255,243,231,0.34)_56%,rgba(255,243,231,0.70)_70%,rgba(255,243,231,0.90)_82%,rgba(255,245,236,1)_100%)]'
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.22)_0%,rgba(78,35,14,0.12)_16%,rgba(156,74,28,0.06)_32%,rgba(255,243,231,0.04)_44%,rgba(255,243,231,0.18)_58%,rgba(255,243,231,0.42)_72%,rgba(255,243,231,0.62)_86%,rgba(255,245,236,1)_100%)]'
         }
         : {
           base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.38)_0%,rgba(14,44,82,0.22)_16%,rgba(37,92,171,0.10)_32%,rgba(237,243,255,0.08)_44%,rgba(237,243,255,0.34)_56%,rgba(237,243,255,0.70)_70%,rgba(237,243,255,0.90)_82%,rgba(246,249,255,1)_100%)]'
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.24)_0%,rgba(14,44,82,0.14)_16%,rgba(37,92,171,0.06)_32%,rgba(237,243,255,0.04)_44%,rgba(237,243,255,0.18)_58%,rgba(237,243,255,0.42)_72%,rgba(237,243,255,0.62)_86%,rgba(246,249,255,1)_100%)]'
         };
 
   const sortedPlayers = useMemo(() => {
@@ -3501,7 +3508,7 @@ const KlasemenScreen = ({
     <div className="relative min-h-screen pb-12 overflow-hidden bg-transparent z-0">
       <div className="fixed inset-0 z-0 pointer-events-none">
         <div className={cn('absolute inset-0', klasemenPageBgTheme.base)} />
-        <div className="absolute inset-x-0 top-0 h-[80vh] min-h-[440px] max-h-[620px] overflow-hidden">
+        <div className="absolute inset-x-0 top-0 h-screen min-h-screen max-h-none overflow-hidden">
           {klasemenHeroPhoto && (
             <img
               src={klasemenHeroPhoto}
@@ -3542,42 +3549,47 @@ const KlasemenScreen = ({
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'
         }}
       >
-        <section className={cn('relative overflow-hidden rounded-2xl p-4 border border-white/40 bg-white/8 backdrop-blur-md text-white', infoTheme.shadow)}>
+        <section className={cn('relative overflow-hidden rounded-2xl p-3.5 border border-white/40 bg-white/8 backdrop-blur-md text-white', infoTheme.shadow)}>
 
-          <div className="relative flex items-baseline justify-between gap-3 mb-3">
+          <div className="relative flex items-baseline justify-between gap-3 mb-2.5">
             <div className="min-w-0">
               <h2 className="text-[18px] font-black tracking-tight text-white truncate">{tournament.name || '-'}</h2>
               <p className="mt-1 text-[11px] text-white/85 truncate">{locationDateLabel}</p>
             </div>
-            <span className="shrink-0 text-[12px] leading-none font-bold uppercase tracking-[0.1em] text-white/90">
-              {isTournamentEnded ? 'Final' : 'Live'}
+            <span className="shrink-0 text-[16px] leading-none font-display font-bold tabular-nums text-white/95 drop-shadow-[0_1px_1px_rgba(0,0,0,0.14)]">
+              {isTournamentEnded ? 'Berakhir' : totalElapsed}
             </span>
           </div>
 
           <div className="relative grid grid-cols-4 gap-2">
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Mode</p>
               <p className="text-[12px] font-semibold text-white truncate">{tournament.format}</p>
             </div>
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Player</p>
               <p className="text-[12px] font-semibold text-white">{sortedPlayers.length}</p>
             </div>
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lapangan</p>
               <p className="text-[12px] font-semibold text-white">{courtsCount}</p>
             </div>
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Ronde</p>
               <p className="text-[12px] font-semibold text-white">{completedRounds}/{tournamentRounds.length || 0}</p>
             </div>
           </div>
 
-          <div className="relative mt-3 pt-2 border-t border-white/30 flex items-center justify-between">
-            <p className="text-[11px] text-white/88">Ronde selesai: <span className="font-bold text-white">{completedRounds}/{tournamentRounds.length || 0}</span></p>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-white/85">{isTournamentEnded ? 'Klasemen Akhir' : 'Klasemen Sementara'}</span>
+          <div className="relative mt-2.5 pt-2 flex items-center justify-between text-[10px] font-semibold text-white/78 tabular-nums">
+            <span>Match {completedMatches}/{totalMatches}</span>
+            <span>Progress {completionPercent}%</span>
           </div>
-          <div className="relative mt-2 pt-2 flex items-center justify-between gap-2">
+          <div className="relative mt-1.5">
+            <div className="h-1.5 rounded-full bg-white/25 overflow-hidden">
+              <div className="h-full rounded-full bg-white/90 transition-all duration-300" style={{ width: `${completionPercent}%` }} />
+            </div>
+          </div>
+          <div className="relative mt-2.5 pt-2 flex items-center justify-start gap-2">
             <div className="absolute inset-x-0 top-0 h-px bg-white/30 pointer-events-none" />
             <p className="relative z-10 text-[11px] text-white/88 whitespace-nowrap">
               Hosted with{' '}
@@ -3589,42 +3601,25 @@ const KlasemenScreen = ({
                 FOM Play
               </button>
             </p>
-            <button
-              onClick={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
-              className="relative z-10 shrink-0 h-7 px-0 bg-transparent border-0 text-white text-[11px] font-bold inline-flex items-center gap-1.5 tap-target"
-            >
-              Coba FOM
-              <ArrowRight size={12} />
-            </button>
-          </div>
-          <div className="relative mt-1 flex items-center justify-between text-[10px] font-semibold text-white/78 tabular-nums">
-            <span>Match {completedMatches}/{totalMatches}</span>
-            <span>Live {activeMatches}</span>
-          </div>
-          <div className="relative mt-2">
-            <div className="h-1.5 rounded-full bg-white/25 overflow-hidden">
-              <div className="h-full rounded-full bg-white/90 transition-all duration-300" style={{ width: `${completionPercent}%` }} />
-            </div>
-            <p className="mt-1 text-[10px] font-semibold text-white/80">Progress pertandingan {completionPercent}%</p>
           </div>
         </section>
 
         <section className="space-y-2">
           <div className="flex items-center justify-between px-1">
-            <h3 className="text-[12px] font-bold uppercase tracking-wide text-ios-gray">Ranking Pemain</h3>
-            <span className={cn('text-[10px] font-bold uppercase tracking-widest', infoTheme.accentSoft)}>{isTournamentEnded ? 'Final Result' : 'Live Update'}</span>
+            <h3 className="text-[12px] font-bold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">Ranking Pemain</h3>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{isTournamentEnded ? 'Final Result' : 'Live Update'}</span>
           </div>
-          <p className="px-1 text-[10px] font-semibold text-ios-gray/70">Urutan: Menang (W) → Diff → Poin.</p>
+          <p className="px-1 text-[10px] font-semibold text-white/92 drop-shadow-[0_1px_2px_rgba(0,0,0,0.32)]">Urutan: Menang (W) → Diff → Poin.</p>
 
-          <div className="rounded-2xl bg-white/76 backdrop-blur-sm border border-white/70 p-2 shadow-[0_6px_20px_rgba(17,24,39,0.06)]">
-            <div className="grid grid-cols-[1fr_48px_44px] gap-2 px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-ios-gray/65">
+          <div className="rounded-2xl bg-white/78 backdrop-blur-sm border border-white/45 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)]">
+            <div className="grid grid-cols-[1fr_48px_44px] gap-2 px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-on-surface/55">
               <span>Pemain</span>
               <span className="text-right">Diff</span>
               <span className="text-right">Poin</span>
             </div>
             <div className="space-y-1.5">
               {sortedPlayers.map((player, i) => (
-                <div key={player.id} className="bg-white/95 p-3 rounded-[14px] border border-ios-gray/10 grid grid-cols-[1fr_48px_44px] gap-2 items-center">
+                <div key={player.id} className="bg-white/88 p-3 rounded-[14px] border border-white/45 grid grid-cols-[1fr_48px_44px] gap-2 items-center">
                   <div className="min-w-0 flex items-center gap-2.5">
                     <div className={cn('w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-black shrink-0', i < 3 ? cn(infoTheme.accentBg, infoTheme.accent) : 'bg-ios-gray/10 text-ios-gray')}>
                       {i + 1}
@@ -3663,7 +3658,7 @@ const KlasemenScreen = ({
         </section>
 
         <section className="pt-1 pb-8">
-          <button onClick={() => onShare(tournament)} className={cn('w-full h-[50px] rounded-xl text-white font-bold text-[14px] tap-target inline-flex items-center justify-center gap-2', infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
+          <button onClick={() => onShare(tournament)} className={cn('w-full h-[52px] rounded-[14px] text-white font-bold text-[15px] tracking-[0.01em] tap-target inline-flex items-center justify-center gap-2 border border-white/12', infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
             <Share2 size={16} />
             Bagikan Klasemen
           </button>
