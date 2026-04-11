@@ -174,10 +174,12 @@ const getInitialSharedContext = () => {
 
 const InstallAppButton = ({
   className,
-  compact = false
+  compact = false,
+  variant = 'pill'
 }: {
   className?: string;
   compact?: boolean;
+  variant?: 'pill' | 'minimal';
 }) => {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -237,9 +239,16 @@ const InstallAppButton = ({
     <button
       onClick={handleInstall}
       className={cn(
-        "tap-target h-9 rounded-full inline-flex items-center justify-center gap-1.5 border",
-        compact ? "px-2.5 text-[11px]" : "px-3 text-[12px]",
-        "font-semibold",
+        "tap-target inline-flex items-center justify-center gap-1.5 font-semibold",
+        variant === 'pill'
+          ? cn(
+            "h-9 rounded-full border",
+            compact ? "px-2.5 text-[11px]" : "px-3 text-[12px]"
+          )
+          : cn(
+            "h-8 rounded-none border-0 bg-transparent",
+            compact ? "px-0 text-[12px]" : "px-0 text-[13px]"
+          ),
         className
       )}
       aria-label="Install app"
@@ -2370,6 +2379,41 @@ const MatchActiveScreen = ({
   const isLastRound = currentRoundIndex !== -1 && currentRoundIndex >= (tournament.numRounds - 1);
   const isTournamentEnded = tournament.rounds.length > 0 && tournament.rounds.every(r => r.matches.every(m => m.status === 'completed'));
   const totalElapsed = tournament.startedAt ? formatDurationFromMs(nowMs - tournament.startedAt) : '00:00';
+  const activeBackgroundPools: Record<MatchFormat, string[]> = useMemo(() => ({
+    Americano: [
+      '/mockups/active-v2/images/Americano-01.jpg',
+      '/mockups/active-v2/images/Americano-02.jpg',
+      '/mockups/active-v2/images/Americano-03.jpg',
+      '/mockups/active-v2/images/Americano-04.jpg',
+      '/mockups/active-v2/images/americano-06.jpg'
+    ],
+    Mexicano: [
+      '/mockups/active-v2/images/Mexicano-01.jpg',
+      '/mockups/active-v2/images/Mexicano-02.jpg',
+      '/mockups/active-v2/images/Mexicano-03.jpg',
+      '/mockups/active-v2/images/mexicano-04.jpg',
+      '/mockups/active-v2/images/mexicano-05.jpg',
+      '/mockups/active-v2/images/mexicano-06.jpg',
+      '/mockups/active-v2/images/mexicano-07.jpg'
+    ],
+    'Match Play': [
+      '/mockups/active-v2/images/match-01.jpg',
+      '/mockups/active-v2/images/Match-02.jpg',
+      '/mockups/active-v2/images/Match-03.jpg',
+      '/mockups/active-v2/images/match-04.jpg',
+      '/mockups/active-v2/images/match-05.jpg',
+      '/mockups/active-v2/images/match-06.jpg',
+      '/mockups/active-v2/images/Match-07.jpg',
+      '/mockups/active-v2/images/match-08.jpg'
+    ]
+  }), []);
+  const activeHeroPhoto = useMemo(() => {
+    const pool = activeBackgroundPools[tournament.format] || [];
+    if (!pool.length) return '';
+    const seed = Number(tournament.startedAt || 0) + tournament.players.length + tournament.rounds.length;
+    const index = Math.abs(seed) % pool.length;
+    return pool[index];
+  }, [activeBackgroundPools, tournament.format, tournament.players.length, tournament.rounds.length, tournament.startedAt]);
   const fomPlayUrl = useMemo(() => {
     const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
     const runtimeBase = `${window.location.protocol}//${window.location.host}`;
@@ -2379,22 +2423,16 @@ const MatchActiveScreen = ({
     tournament.format === 'Americano'
       ? {
         base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
-        curveA: 'border-[rgba(24,164,134,0.24)]',
-        curveB: 'border-[rgba(24,164,134,0.18)]',
-        glow: 'bg-[radial-gradient(circle_at_22%_18%,rgba(24,164,134,0.24),transparent_38%),radial-gradient(circle_at_80%_82%,rgba(24,164,134,0.16),transparent_34%)]'
+        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.34)_0%,rgba(11,46,37,0.20)_16%,rgba(28,96,80,0.10)_32%,rgba(233,250,246,0.08)_44%,rgba(233,250,246,0.34)_56%,rgba(233,250,246,0.70)_70%,rgba(233,250,246,0.90)_82%,rgba(245,255,251,1)_100%)]'
       }
       : tournament.format === 'Mexicano'
         ? {
           base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
-          curveA: 'border-[rgba(230,94,20,0.22)]',
-          curveB: 'border-[rgba(230,94,20,0.18)]',
-          glow: 'bg-[radial-gradient(circle_at_22%_18%,rgba(230,94,20,0.24),transparent_38%),radial-gradient(circle_at_80%_82%,rgba(230,94,20,0.16),transparent_34%)]'
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.34)_0%,rgba(78,35,14,0.20)_16%,rgba(156,74,28,0.10)_32%,rgba(255,243,231,0.08)_44%,rgba(255,243,231,0.34)_56%,rgba(255,243,231,0.70)_70%,rgba(255,243,231,0.90)_82%,rgba(255,245,236,1)_100%)]'
         }
         : {
           base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
-          curveA: 'border-[rgba(47,111,228,0.24)]',
-          curveB: 'border-[rgba(47,111,228,0.18)]',
-          glow: 'bg-[radial-gradient(circle_at_22%_18%,rgba(47,111,228,0.24),transparent_38%),radial-gradient(circle_at_80%_82%,rgba(47,111,228,0.16),transparent_34%)]'
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.38)_0%,rgba(14,44,82,0.22)_16%,rgba(37,92,171,0.10)_32%,rgba(237,243,255,0.08)_44%,rgba(237,243,255,0.34)_56%,rgba(237,243,255,0.70)_70%,rgba(237,243,255,0.90)_82%,rgba(246,249,255,1)_100%)]'
         };
   const gameDateLabel = tournament.startedAt
     ? new Date(tournament.startedAt).toLocaleDateString('id-ID', {
@@ -2412,20 +2450,69 @@ const MatchActiveScreen = ({
   const infoTheme =
     tournament.format === 'Americano'
       ? {
-        bg: 'from-[#12806A] via-[#18A486] to-[#4FC3A1]',
+        bg: 'bg-[linear-gradient(165deg,rgba(18,128,106,0.44),rgba(24,164,134,0.34)_45%,rgba(79,195,161,0.28))]',
         shadow: 'shadow-[0_14px_30px_rgba(18,128,106,0.32)]',
         ring: 'bg-[#0F2A2A]/18'
       }
       : tournament.format === 'Mexicano'
         ? {
-          bg: 'from-[#E65E14] via-[#F26A2A] to-[#FF8A4C]',
+          bg: 'bg-[linear-gradient(165deg,rgba(230,94,20,0.44),rgba(242,106,42,0.34)_45%,rgba(255,138,76,0.28))]',
           shadow: 'shadow-[0_14px_30px_rgba(230,94,20,0.35)]',
           ring: 'bg-[#1F2937]/18'
         }
         : {
-          bg: 'from-[#2248B5] via-[#2F6FE4] to-[#56A3F7]',
+          bg: 'bg-[linear-gradient(165deg,rgba(34,72,181,0.44),rgba(47,111,228,0.34)_45%,rgba(86,163,247,0.28))]',
           shadow: 'shadow-[0_14px_30px_rgba(34,72,181,0.32)]',
           ring: 'bg-[#0F1E3A]/18'
+        };
+  const klasemenBackgroundPools: Record<MatchFormat, string[]> = useMemo(() => ({
+    Americano: [
+      '/mockups/active-v2/images/Americano-01.jpg',
+      '/mockups/active-v2/images/Americano-02.jpg',
+      '/mockups/active-v2/images/Americano-03.jpg',
+      '/mockups/active-v2/images/Americano-04.jpg',
+      '/mockups/active-v2/images/americano-06.jpg'
+    ],
+    Mexicano: [
+      '/mockups/active-v2/images/Mexicano-01.jpg',
+      '/mockups/active-v2/images/Mexicano-02.jpg',
+      '/mockups/active-v2/images/Mexicano-03.jpg',
+      '/mockups/active-v2/images/mexicano-04.jpg',
+      '/mockups/active-v2/images/mexicano-05.jpg',
+      '/mockups/active-v2/images/mexicano-06.jpg',
+      '/mockups/active-v2/images/mexicano-07.jpg'
+    ],
+    'Match Play': [
+      '/mockups/active-v2/images/match-01.jpg',
+      '/mockups/active-v2/images/Match-02.jpg',
+      '/mockups/active-v2/images/Match-03.jpg',
+      '/mockups/active-v2/images/match-04.jpg',
+      '/mockups/active-v2/images/match-05.jpg',
+      '/mockups/active-v2/images/match-06.jpg',
+      '/mockups/active-v2/images/Match-07.jpg',
+      '/mockups/active-v2/images/match-08.jpg'
+    ]
+  }), []);
+  const klasemenHeroPhoto = useMemo(() => {
+    const pool = klasemenBackgroundPools[tournament.format] || [];
+    if (!pool.length) return '';
+    const seed = Number('startedAt' in tournament ? (tournament.startedAt || 0) : 0) + tournamentPlayers.length + tournamentRounds.length;
+    return pool[Math.abs(seed) % pool.length];
+  }, [klasemenBackgroundPools, tournament.format, tournamentPlayers.length, tournamentRounds.length, tournament]);
+  const klasemenPageBgTheme =
+    tournament.format === 'Americano'
+      ? {
+        base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
+        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.34)_0%,rgba(11,46,37,0.20)_16%,rgba(28,96,80,0.10)_32%,rgba(233,250,246,0.08)_44%,rgba(233,250,246,0.34)_56%,rgba(233,250,246,0.70)_70%,rgba(233,250,246,0.90)_82%,rgba(245,255,251,1)_100%)]'
+      }
+      : tournament.format === 'Mexicano'
+        ? {
+          base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.34)_0%,rgba(78,35,14,0.20)_16%,rgba(156,74,28,0.10)_32%,rgba(255,243,231,0.08)_44%,rgba(255,243,231,0.34)_56%,rgba(255,243,231,0.70)_70%,rgba(255,243,231,0.90)_82%,rgba(255,245,236,1)_100%)]'
+        }
+        : {
+          base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.38)_0%,rgba(14,44,82,0.22)_16%,rgba(37,92,171,0.10)_32%,rgba(237,243,255,0.08)_44%,rgba(237,243,255,0.34)_56%,rgba(237,243,255,0.70)_70%,rgba(237,243,255,0.90)_82%,rgba(246,249,255,1)_100%)]'
         };
   const accentTheme =
     tournament.format === 'Americano'
@@ -2436,7 +2523,12 @@ const MatchActiveScreen = ({
         bgSoftHover: 'hover:bg-[#18A486]/10',
         borderSoft: 'border-[#18A486]/25',
         solid: 'bg-[#18A486]',
-        solidShadow: 'shadow-[0_10px_22px_rgba(24,164,134,0.26)]'
+        solidShadow: 'shadow-[0_10px_22px_rgba(24,164,134,0.26)]',
+        headingStrong: 'text-[#0E6A57]',
+        headingSoft: 'text-[#107763]/80',
+        headingIdle: 'text-[#4B5563]',
+        headingSurface: 'bg-white/58',
+        headingSurfaceBorder: 'border-white/60'
       }
       : tournament.format === 'Mexicano'
         ? {
@@ -2446,7 +2538,12 @@ const MatchActiveScreen = ({
           bgSoftHover: 'hover:bg-primary/10',
           borderSoft: 'border-primary/25',
           solid: 'bg-primary',
-          solidShadow: 'shadow-[0_10px_22px_rgba(230,94,20,0.24)]'
+          solidShadow: 'shadow-[0_10px_22px_rgba(230,94,20,0.24)]',
+          headingStrong: 'text-[#A14513]',
+          headingSoft: 'text-[#B24B14]/80',
+          headingIdle: 'text-[#4B5563]',
+          headingSurface: 'bg-white/58',
+          headingSurfaceBorder: 'border-white/60'
         }
         : {
           text: 'text-[#2F6FE4]',
@@ -2455,33 +2552,13 @@ const MatchActiveScreen = ({
           bgSoftHover: 'hover:bg-[#2F6FE4]/10',
           borderSoft: 'border-[#2F6FE4]/25',
           solid: 'bg-[#2F6FE4]',
-          solidShadow: 'shadow-[0_10px_22px_rgba(47,111,228,0.26)]'
+          solidShadow: 'shadow-[0_10px_22px_rgba(47,111,228,0.26)]',
+          headingStrong: 'text-[#214FA7]',
+          headingSoft: 'text-[#2A62CD]/80',
+          headingIdle: 'text-[#4B5563]',
+          headingSurface: 'bg-white/58',
+          headingSurfaceBorder: 'border-white/60'
         };
-  const topNavTheme =
-    tournament.format === 'Americano'
-      ? {
-        bg: 'bg-[#12806A]/92 supports-[backdrop-filter]:bg-[#12806A]/82',
-        border: 'border-[#0d5f4e]/35',
-        shareBg: 'bg-white/18',
-        shareText: 'text-white',
-        shareBorder: 'border-white/35'
-      }
-      : tournament.format === 'Mexicano'
-        ? {
-          bg: 'bg-primary/92 supports-[backdrop-filter]:bg-primary/82',
-          border: 'border-[#b8480f]/35',
-          shareBg: 'bg-white/18',
-          shareText: 'text-white',
-          shareBorder: 'border-white/35'
-        }
-        : {
-          bg: 'bg-[#2F6FE4]/92 supports-[backdrop-filter]:bg-[#2F6FE4]/82',
-          border: 'border-[#1f4ca8]/35',
-          shareBg: 'bg-white/18',
-          shareText: 'text-white',
-          shareBorder: 'border-white/35'
-        };
-
   // Initialize collapsed rounds: collapse all except the active one
   useEffect(() => {
     if (!hasActiveTournament || activeRoundId === null) return;
@@ -2560,6 +2637,18 @@ const MatchActiveScreen = ({
     setIsRoundEditorOpen(false);
   };
 
+  const getRoundDuration = (round: Round) => {
+    const activeStarted = round.matches
+      .filter((m) => m.status === 'active' && typeof m.startedAt === 'number')
+      .map((m) => m.startedAt as number);
+    if (activeStarted.length > 0) {
+      const earliestStartedAt = Math.min(...activeStarted);
+      return formatDurationFromMs(nowMs - earliestStartedAt);
+    }
+    const firstCompletedWithDuration = round.matches.find((m) => !!m.duration);
+    return firstCompletedWithDuration?.duration || '00:00';
+  };
+
   if (!shouldShowActiveMatchScreen) {
     return (
       <div className="min-h-screen bg-surface flex flex-col pb-24">
@@ -2607,19 +2696,26 @@ const MatchActiveScreen = ({
 
   return (
     <div className="relative min-h-screen pb-32 overflow-hidden bg-transparent z-0">
-      <div className="absolute inset-0 z-0 pointer-events-none">
+      <div className="fixed inset-0 z-0 pointer-events-none">
         <div className={cn('absolute inset-0', pageBgTheme.base)} />
-        <div className={cn('absolute -left-36 -top-20 w-[760px] h-[380px] rounded-[999px] border-[22px] rotate-[10deg]', pageBgTheme.curveA)} />
-        <div className={cn('absolute -right-44 bottom-4 w-[820px] h-[390px] rounded-[999px] border-[20px] -rotate-[8deg]', pageBgTheme.curveB)} />
-        <div className={cn('absolute inset-0 opacity-[0.14]', pageBgTheme.glow)} />
+        <div className="absolute inset-x-0 top-0 h-[80vh] min-h-[440px] max-h-[620px] overflow-hidden">
+          {activeHeroPhoto && (
+            <img
+              src={activeHeroPhoto}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover object-center scale-[1.12]"
+            />
+          )}
+          <div className={cn('absolute inset-0', pageBgTheme.photoBlend)} />
+        </div>
       </div>
 
       <header
-        className={cn("fixed top-0 inset-x-0 z-50 border-b backdrop-blur-2xl", topNavTheme.bg, topNavTheme.border)}
+        className="relative z-20 bg-transparent border-b border-transparent"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-lg mx-auto h-16 px-4 grid grid-cols-[84px_1fr_auto] items-center gap-2">
-          <div className="justify-self-start">
+        <div className="max-w-lg mx-auto h-16 px-5 relative flex items-center justify-between">
+          <div className="shrink-0">
             <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", accentTheme.solid, accentTheme.solidShadow)}>
               <span className="relative flex h-2.5 w-2.5">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-white/55 animate-ping" />
@@ -2628,36 +2724,25 @@ const MatchActiveScreen = ({
               <span className="animate-pulse">Live</span>
             </span>
           </div>
-          <div className="flex justify-center items-center">
+          <div className="absolute left-1/2 -translate-x-1/2 flex justify-center items-center pointer-events-none">
             <img
               src="/fom-long-logotype-white.png"
               alt="Friends of Motion"
               className="h-8 w-auto object-contain"
             />
           </div>
-          <div className="justify-self-end flex items-center gap-1.5">
-            {!isReadOnly && (
-              <span
-                className={cn(
-                  "text-[10px] font-bold px-2 py-1 rounded-full border",
-                  saveState === 'saved' && "text-white/95 border-white/35 bg-white/18",
-                  saveState === 'saving' && "text-white/95 border-white/35 bg-white/14",
-                  saveState === 'error' && "text-red-100 border-red-200/55 bg-red-500/35"
-                )}
-              >
-                {saveState === 'saved' ? 'Tersimpan' : saveState === 'saving' ? 'Menyimpan...' : 'Gagal Simpan'}
-              </span>
-            )}
+          <div className="shrink-0 flex items-center gap-3">
             <InstallAppButton
               compact
-              className={cn(topNavTheme.shareBg, topNavTheme.shareText, topNavTheme.shareBorder)}
+              variant="minimal"
+              className="text-white"
             />
             {isReadOnly ? (
               <span className="text-[10px] font-bold uppercase tracking-widest text-white/90">View Only</span>
             ) : (
               <button
                 onClick={onShareMatch}
-                className={cn("tap-target h-9 px-3 rounded-full inline-flex items-center gap-1.5 border", topNavTheme.shareBg, topNavTheme.shareText, topNavTheme.shareBorder)}
+                className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white"
                 aria-label="Share pertandingan"
               >
                 <Share2 size={16} />
@@ -2671,7 +2756,7 @@ const MatchActiveScreen = ({
       <main
         className="relative z-10 px-5 space-y-6 max-w-lg mx-auto"
         style={{
-          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 88px)'
+          paddingTop: '16px'
         }}
       >
         {isReadOnly && (
@@ -2681,28 +2766,17 @@ const MatchActiveScreen = ({
         )}
 
         <section className={cn(
-          "relative overflow-hidden rounded-2xl p-4 border border-white/25 bg-gradient-to-br",
-          infoTheme.bg,
+          "relative overflow-hidden rounded-2xl p-4 border border-white/40 bg-white/8 backdrop-blur-md",
           infoTheme.shadow
         )}>
-          <div className="absolute inset-0 pointer-events-none">
-            <div className="absolute -left-10 top-10 w-[160%] h-[2px] bg-white/75 rotate-[10deg]" />
-            <div className="absolute right-8 -top-8 w-[2px] h-[155%] bg-white/75 rotate-[10deg]" />
-            <div className="absolute inset-0 opacity-[0.14] bg-[repeating-linear-gradient(30deg,rgba(255,255,255,0.10)_0px,rgba(255,255,255,0.10)_1px,transparent_1px,transparent_5px)]" />
-          </div>
-          <div className="absolute -left-32 top-4 w-[680px] h-[240px] rounded-[999px] border-[14px] border-white/85 rotate-[8deg] pointer-events-none" />
-          <div className={cn("absolute -right-14 -bottom-14 w-64 h-64 rounded-full pointer-events-none", infoTheme.ring)} />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_75%_10%,rgba(255,255,255,0.30),transparent_32%)] pointer-events-none" />
-
-          <div className="relative flex items-start justify-between gap-3 mb-3">
+          <div className="relative flex items-baseline justify-between gap-3 mb-3">
             <div className="min-w-0">
               <h2 className="text-[18px] font-black tracking-tight text-white truncate">{tournament.name || '-'}</h2>
               <p className="mt-1 text-[11px] text-white/85 truncate">{locationDateLabel}</p>
             </div>
-            <div className="shrink-0 rounded-xl border border-white/40 bg-white/20 backdrop-blur-sm px-3 py-1.5 text-right">
-              <span className="block text-[9px] font-bold uppercase tracking-wider text-white/85">Durasi</span>
-              <span className="text-[14px] font-bold text-white leading-none">{totalElapsed}</span>
-            </div>
+            <span className="shrink-0 text-[16px] leading-none font-display font-bold tabular-nums text-white/95 drop-shadow-[0_1px_1px_rgba(0,0,0,0.14)]">
+              {totalElapsed}
+            </span>
           </div>
 
           <div className="relative grid grid-cols-4 gap-2">
@@ -2724,125 +2798,106 @@ const MatchActiveScreen = ({
             </div>
           </div>
 
-          <div className="relative mt-3 pt-2 flex items-center justify-between gap-2">
+          <div className="relative mt-3.5 pt-2.5 min-h-[30px] flex items-center justify-between gap-2">
             <div className="absolute inset-x-0 top-0 h-px bg-white/30 pointer-events-none" />
             <p className="relative z-10 text-[11px] text-white/88 whitespace-nowrap">
-              Hosted with <span className="font-bold text-white">FOM Play</span>
+              Hosted with{' '}
+              <button
+                type="button"
+                onClick={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
+                className="inline p-0 bg-transparent border-0 font-bold text-white underline-offset-2 hover:underline cursor-pointer"
+              >
+                FOM Play
+              </button>
             </p>
-            <button
-              onClick={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
-              className="relative z-10 shrink-0 h-7 px-2.5 rounded-full border border-white/70 bg-white/12 text-white text-[10px] font-bold inline-flex items-center gap-1 tap-target"
-            >
-              Coba
-              <ArrowRight size={12} />
-            </button>
-          </div>
-        </section>
-
-        <section className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-ios-gray/70">Aksi Turnamen</span>
             {!isReadOnly && (
               <button
+                type="button"
                 onClick={handleOpenRoundEditor}
-                className={cn(
-                  "tap-target h-8 px-3 rounded-full bg-white/76 backdrop-blur-sm border inline-flex items-center gap-1.5 text-[11px] font-bold",
-                  accentTheme.text,
-                  accentTheme.borderSoft
-                )}
+                className="relative z-10 shrink-0 h-7 px-0 bg-transparent border-0 text-white text-[11px] font-bold inline-flex items-center gap-1.5 tap-target"
               >
-                <Edit3 size={13} />
-                <span>Ubah ronde</span>
+                <Edit3 size={12} />
+                Ubah ronde
               </button>
             )}
           </div>
+        </section>
 
+        <section className="-mt-1">
           <button
             onClick={onOpenStandings}
             className={cn(
-              "tap-target w-full h-12 rounded-2xl bg-white/80 backdrop-blur-sm border px-4 flex items-center justify-between",
-              accentTheme.text,
-              accentTheme.borderSoft
+              "tap-target w-full h-12 rounded-2xl px-4 flex items-center justify-between border border-white/40 bg-white/8 backdrop-blur-md text-white",
+              infoTheme.shadow
             )}
           >
             <div className="flex items-center gap-2.5 min-w-0">
-              <span className={cn("w-7 h-7 rounded-full flex items-center justify-center", accentTheme.bgSoft)}>
+              <span className="w-7 h-7 rounded-full flex items-center justify-center border border-white/35 bg-white/20">
                 <Trophy size={15} />
               </span>
               <span className="text-[13px] font-bold truncate">
                 {isTournamentEnded ? 'Lihat Klasemen Akhir' : 'Lihat Klasemen Sementara'}
               </span>
             </div>
-            <ChevronRight size={16} className="opacity-70 shrink-0" />
+            <ChevronRight size={16} className="opacity-80 shrink-0" />
           </button>
         </section>
 
         {tournament.rounds.map((round) => {
           const isActive = activeRoundId !== null && round.id === activeRoundId;
           const isCollapsed = collapsedRounds.has(round.id);
-          const isPast = activeRoundId !== null && round.id < activeRoundId;
+          const roundDuration = getRoundDuration(round);
 
           return (
-            <div key={round.id} className="space-y-4">
-              <button
-                onClick={() => toggleRound(round.id)}
-                className="w-full flex justify-between items-center group"
-              >
-                <div className="flex flex-col items-start">
-                  <span className={cn(
-                    "text-[12px] font-bold uppercase tracking-wide transition-colors",
-                    isActive ? accentTheme.text : "text-ios-gray"
-                  )}>
-                    Ronde {round.id}
-                  </span>
-                  {isActive && <span className={cn("text-[10px] font-bold uppercase", accentTheme.textSoft)}>Sesi Aktif</span>}
-                  {isPast && !isActive && <span className="text-[10px] font-bold text-ios-gray/40 uppercase">Selesai</span>}
-                </div>
-                <div className={cn(
-                  "p-2 rounded-full transition-all",
-                  isActive ? cn(accentTheme.bgSoft, accentTheme.text) : "bg-ios-gray/5 text-ios-gray",
-                  !isCollapsed && "rotate-180"
-                )}>
-                  <ChevronRight size={18} />
-                </div>
-              </button>
-
-              <AnimatePresence>
-                {!isCollapsed && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden"
+            <div key={round.id} className="mb-4">
+              <section className="bg-white/78 backdrop-blur-sm p-4 rounded-[20px] shadow-sm border border-white/45">
+                <div className="flex items-center justify-between gap-3 mb-1.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", accentTheme.headingStrong)}>
+                      Ronde {round.id}
+                    </span>
+                    <span className="w-1 h-1 rounded-full bg-ios-gray/40" />
+                    <span className="text-[11px] leading-none font-semibold uppercase tracking-[0.06em] tabular-nums text-ios-gray/60">
+                      {roundDuration}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => toggleRound(round.id)}
+                    className="tap-target p-1 text-ios-gray/65"
+                    aria-label={isCollapsed ? `Buka ronde ${round.id}` : `Tutup ronde ${round.id}`}
                   >
-                    <section className="bg-white p-5 rounded-[20px] shadow-sm border border-ios-gray/10 mb-4">
-                      <div className="space-y-4">
+                    <ChevronRight size={22} className={cn("transition-transform", !isCollapsed && "rotate-90")} />
+                  </button>
+                </div>
+
+                <AnimatePresence>
+                  {!isCollapsed && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="h-px bg-ios-gray/10 mb-2.5" />
+                      <div className="space-y-3.5">
                         {round.matches.map((match, i) => (
                           <div key={match.id}>
-                            <div className="flex justify-between items-start mb-4">
-                              <div className="min-w-0 pr-2 flex items-center gap-2 flex-wrap">
-                                <span className={cn("inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider leading-none", accentTheme.bgSoft, accentTheme.text)}>
-                                  Ronde {match.roundId}
-                                </span>
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-ios-gray/10 text-on-surface/75 text-[10px] font-bold uppercase tracking-wider leading-none">
-                                  Lapangan {match.court}
-                                </span>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-wider">DURASI</span>
-                                <span className={cn("text-sm font-semibold", accentTheme.text)}>{getMatchDuration(match)}</span>
-                              </div>
+                            <div className="flex justify-start mb-3">
+                              <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
+                                Lapangan {match.court}
+                              </span>
                             </div>
 
                             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                              <div className="flex flex-col items-center gap-1.5 min-w-0">
+                              <div className="flex flex-col items-center gap-1 min-w-0">
                                 <div className="flex -space-x-3">
                                   {match.teamA.players.map((p, idx) => (
                                     <div
                                       key={idx}
                                       onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: idx, currentPlayer: p })}
                                       className={cn(
-                                        "w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold",
+                                        "w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 flex items-center justify-center text-[10px] font-bold",
                                         isActive && "cursor-pointer tap-target"
                                       )}
                                     >
@@ -2854,7 +2909,7 @@ const MatchActiveScreen = ({
                                   type="button"
                                   onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: 0, currentPlayer: match.teamA.players[0] })}
                                   className={cn(
-                                    "bg-transparent border-0 p-0 text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none",
+                                    "bg-transparent border-0 p-0 text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]",
                                     isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
                                   )}
                                   disabled={!isActive || isReadOnly || !match.teamA.players[0]}
@@ -2867,18 +2922,18 @@ const MatchActiveScreen = ({
                                 onClick={() => isActive && !isReadOnly && setScoringMatchId(match.id)}
                                 disabled={!isActive || isReadOnly}
                                 className={cn(
-                                  "flex flex-col items-center min-w-[84px] rounded-xl px-2 py-1 transition-colors",
+                                  "flex flex-col items-center min-w-[86px] rounded-xl px-2 py-1 transition-colors",
                                   isActive && !isReadOnly
                                     ? cn("cursor-pointer tap-target", accentTheme.bgSoftHover)
                                     : "cursor-default"
                                 )}
                               >
-                                <div className="text-[30px] leading-none font-display font-black italic tracking-tighter">
+                                <div className="text-[31px] leading-none font-display font-black tracking-tight tabular-nums">
                                   <span className={accentTheme.text}>{match.teamA.score}</span>
                                   <span className="text-ios-gray/30 mx-1">-</span>
                                   <span className="text-on-surface">{match.teamB.score}</span>
                                 </div>
-                                <span className="text-[10px] font-bold text-ios-gray tracking-wide">
+                                <span className="text-[9px] font-bold text-ios-gray/80 tracking-[0.11em]">
                                   SKOR
                                   {tournament.format === 'Match Play' && (
                                     <span className="ml-1 normal-case tracking-normal text-[10px]">
@@ -2887,14 +2942,14 @@ const MatchActiveScreen = ({
                                   )}
                                 </span>
                               </button>
-                              <div className="flex flex-col items-center gap-1.5 min-w-0">
+                              <div className="flex flex-col items-center gap-1 min-w-0">
                                 <div className="flex -space-x-3">
                                   {match.teamB.players.map((p, idx) => (
                                     <div
                                       key={idx}
                                       onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: idx, currentPlayer: p })}
                                       className={cn(
-                                        "w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold",
+                                        "w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 flex items-center justify-center text-[10px] font-bold",
                                         isActive && "cursor-pointer tap-target"
                                       )}
                                     >
@@ -2906,7 +2961,7 @@ const MatchActiveScreen = ({
                                   type="button"
                                   onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: 0, currentPlayer: match.teamB.players[0] })}
                                   className={cn(
-                                    "bg-transparent border-0 p-0 text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none",
+                                    "bg-transparent border-0 p-0 text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]",
                                     isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
                                   )}
                                   disabled={!isActive || isReadOnly || !match.teamB.players[0]}
@@ -2916,26 +2971,26 @@ const MatchActiveScreen = ({
                               </div>
                             </div>
 
-                            {i < round.matches.length - 1 && <div className="my-4 h-px bg-ios-gray/10" />}
+                            {i < round.matches.length - 1 && <div className="my-3.5 h-px bg-ios-gray/10" />}
                           </div>
                         ))}
                       </div>
 
                       {round.playersBye.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-ios-gray/10">
-                          <div className="flex items-center justify-between mb-2">
-                            <h3 className="text-[10px] font-bold text-ios-gray/70 uppercase tracking-[0.18em]">Pemain Bye</h3>
-                            <span className="text-[11px] font-medium text-ios-gray/45">{round.playersBye.length} Pemain</span>
+                        <div className="mt-3 pt-3 border-t border-ios-gray/10">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <h3 className="text-[9px] font-bold text-ios-gray/65 uppercase tracking-[0.18em]">Pemain Bye</h3>
+                            <span className="text-[10px] font-medium text-ios-gray/45">{round.playersBye.length} Pemain</span>
                           </div>
-                          <p className="text-[12px] leading-relaxed text-ios-gray/80 font-medium">
+                          <p className="text-[12px] leading-relaxed text-ios-gray/72 font-medium">
                             {round.playersBye.map(p => p.name).join(', ')}
                           </p>
                         </div>
                       )}
-                    </section>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </section>
             </div>
           );
         })}
@@ -3444,33 +3499,35 @@ const KlasemenScreen = ({
 
   return (
     <div className="relative min-h-screen pb-12 overflow-hidden bg-transparent z-0">
-      <div className="absolute inset-0 z-0 pointer-events-none">
-        <div className={cn('absolute inset-0', tournament.format === 'Americano'
-          ? 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]'
-          : tournament.format === 'Mexicano'
-            ? 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]'
-            : 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]')} />
-        <div className={cn('absolute -left-36 -top-20 w-[760px] h-[380px] rounded-[999px] border-[22px] rotate-[10deg]',
-          tournament.format === 'Americano' ? 'border-[rgba(24,164,134,0.24)]' : tournament.format === 'Mexicano' ? 'border-[rgba(230,94,20,0.22)]' : 'border-[rgba(47,111,228,0.24)]')} />
-        <div className={cn('absolute -right-44 bottom-4 w-[820px] h-[390px] rounded-[999px] border-[20px] -rotate-[8deg]',
-          tournament.format === 'Americano' ? 'border-[rgba(24,164,134,0.18)]' : tournament.format === 'Mexicano' ? 'border-[rgba(230,94,20,0.18)]' : 'border-[rgba(47,111,228,0.18)]')} />
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className={cn('absolute inset-0', klasemenPageBgTheme.base)} />
+        <div className="absolute inset-x-0 top-0 h-[80vh] min-h-[440px] max-h-[620px] overflow-hidden">
+          {klasemenHeroPhoto && (
+            <img
+              src={klasemenHeroPhoto}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover object-center scale-[1.12]"
+            />
+          )}
+          <div className={cn('absolute inset-0', klasemenPageBgTheme.photoBlend)} />
+        </div>
       </div>
 
       <header
-        className={cn('fixed top-0 inset-x-0 z-50 border-b backdrop-blur-2xl', infoTheme.topBg, infoTheme.topBorder)}
+        className="relative z-20 bg-transparent border-b border-transparent"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-lg mx-auto h-16 px-4 grid grid-cols-[84px_1fr_auto] items-center gap-2">
-          <button onClick={onBack} className="justify-self-start tap-target h-9 px-3 rounded-full bg-white/16 text-white border border-white/30 inline-flex items-center gap-1.5">
-            <ChevronLeft size={16} />
+        <div className="max-w-lg mx-auto h-16 px-5 relative flex items-center justify-between">
+          <button onClick={onBack} className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white">
+            <ChevronLeft size={18} />
             <span className="text-[12px] font-semibold">Back</span>
           </button>
-          <div className="flex justify-center items-center">
+          <div className="absolute left-1/2 -translate-x-1/2 flex justify-center items-center pointer-events-none">
             <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className="h-8 w-auto object-contain" />
           </div>
-          <div className="justify-self-end flex items-center gap-1.5">
-            <InstallAppButton compact className="bg-white/18 text-white border-white/35" />
-            <button onClick={() => onShare(tournament)} className="tap-target h-9 px-3 rounded-full bg-white/16 text-white border border-white/30 inline-flex items-center gap-1.5">
+          <div className="shrink-0 flex items-center gap-3">
+            <InstallAppButton compact variant="minimal" className="text-white" />
+            <button onClick={() => onShare(tournament)} className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white">
               <Share2 size={16} />
               <span className="text-[12px] font-semibold">Share</span>
             </button>
@@ -3479,26 +3536,22 @@ const KlasemenScreen = ({
       </header>
 
       <main
-        className="relative z-10 px-4 space-y-4 max-w-lg mx-auto"
+        className="relative z-10 px-5 space-y-4 max-w-lg mx-auto"
         style={{
-          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 88px)',
+          paddingTop: '16px',
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'
         }}
       >
-        <section className={cn('relative overflow-hidden rounded-2xl p-4 border border-white/25 bg-gradient-to-br', infoTheme.bg, infoTheme.shadow)}>
-          <div className="absolute -left-32 top-4 w-[680px] h-[240px] rounded-[999px] border-[14px] border-white/85 rotate-[8deg] pointer-events-none" />
-          <div className={cn('absolute -right-14 -bottom-14 w-64 h-64 rounded-full pointer-events-none', infoTheme.ring)} />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_75%_10%,rgba(255,255,255,0.30),transparent_32%)] pointer-events-none" />
+        <section className={cn('relative overflow-hidden rounded-2xl p-4 border border-white/40 bg-white/8 backdrop-blur-md text-white', infoTheme.shadow)}>
 
-          <div className="relative flex items-start justify-between gap-3 mb-3">
+          <div className="relative flex items-baseline justify-between gap-3 mb-3">
             <div className="min-w-0">
               <h2 className="text-[18px] font-black tracking-tight text-white truncate">{tournament.name || '-'}</h2>
               <p className="mt-1 text-[11px] text-white/85 truncate">{locationDateLabel}</p>
             </div>
-            <div className="shrink-0 rounded-xl border border-white/40 bg-white/20 backdrop-blur-sm px-3 py-1.5 text-right">
-              <span className="block text-[9px] font-bold uppercase tracking-wider text-white/85">Status</span>
-              <span className="text-[14px] font-bold text-white leading-none">{isTournamentEnded ? 'Final' : 'Live'}</span>
-            </div>
+            <span className="shrink-0 text-[12px] leading-none font-bold uppercase tracking-[0.1em] text-white/90">
+              {isTournamentEnded ? 'Final' : 'Live'}
+            </span>
           </div>
 
           <div className="relative grid grid-cols-4 gap-2">
@@ -3527,13 +3580,20 @@ const KlasemenScreen = ({
           <div className="relative mt-2 pt-2 flex items-center justify-between gap-2">
             <div className="absolute inset-x-0 top-0 h-px bg-white/30 pointer-events-none" />
             <p className="relative z-10 text-[11px] text-white/88 whitespace-nowrap">
-              Hosted with <span className="font-bold text-white">FOM Play</span>
+              Hosted with{' '}
+              <button
+                type="button"
+                onClick={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
+                className="inline p-0 bg-transparent border-0 font-bold text-white underline-offset-2 hover:underline cursor-pointer"
+              >
+                FOM Play
+              </button>
             </p>
             <button
               onClick={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
-              className="relative z-10 shrink-0 h-7 px-2.5 rounded-full border border-white/70 bg-white/12 text-white text-[10px] font-bold inline-flex items-center gap-1 tap-target"
+              className="relative z-10 shrink-0 h-7 px-0 bg-transparent border-0 text-white text-[11px] font-bold inline-flex items-center gap-1.5 tap-target"
             >
-              Coba
+              Coba FOM
               <ArrowRight size={12} />
             </button>
           </div>
@@ -5008,6 +5068,14 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
 
 export default function App() {
   const initialSharedContext = getInitialSharedContext();
+  const isMockupV3 = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('mockup') === 'v3';
+    } catch {
+      return false;
+    }
+  }, []);
   const [screen, setScreen] = useState<Screen>(initialSharedContext.isShared ? initialSharedContext.targetView : 'login');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -6546,6 +6614,76 @@ export default function App() {
     });
     addNotification('Pemain Diganti', `Pemain telah diganti di lapangan pertandingan.`, 'system');
   };
+
+  const mockupV3Tournament = useMemo<Tournament>(() => {
+    const basePlayers = [...INITIAL_PLAYERS].slice(0, 10).map((p, idx) => ({
+      ...p,
+      id: `mock-${idx + 1}`,
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+    }));
+    const matchOneTeamA = [basePlayers[0], basePlayers[1]].filter(Boolean) as Player[];
+    const matchOneTeamB = [basePlayers[2], basePlayers[3]].filter(Boolean) as Player[];
+    const matchTwoTeamA = [basePlayers[4], basePlayers[5]].filter(Boolean) as Player[];
+    const matchTwoTeamB = [basePlayers[6], basePlayers[7]].filter(Boolean) as Player[];
+    const playersBye = [basePlayers[8], basePlayers[9]].filter(Boolean) as Player[];
+
+    return {
+      ...INITIAL_TOURNAMENT,
+      name: 'Padel Tournament',
+      format: 'Americano',
+      players: basePlayers,
+      courts: 2,
+      numRounds: 5,
+      rounds: [
+        {
+          id: 1,
+          playersBye,
+          matches: [
+            {
+              id: 'mock-r1-m1',
+              court: 1,
+              roundId: 1,
+              status: 'active',
+              startedAt: Date.now() - 11 * 60 * 1000,
+              duration: '00:11',
+              teamA: { players: matchOneTeamA, score: 0 },
+              teamB: { players: matchOneTeamB, score: 0 }
+            },
+            {
+              id: 'mock-r1-m2',
+              court: 2,
+              roundId: 1,
+              status: 'active',
+              startedAt: Date.now() - 7 * 60 * 1000,
+              duration: '00:07',
+              teamA: { players: matchTwoTeamA, score: 0 },
+              teamB: { players: matchTwoTeamB, score: 0 }
+            }
+          ]
+        }
+      ],
+      startedAt: Date.now() - 11 * 60 * 1000
+    };
+  }, []);
+
+  if (isMockupV3) {
+    return (
+      <MatchActiveScreen
+        onBack={() => { }}
+        onStartNewMatch={() => { }}
+        tournament={mockupV3Tournament}
+        onUpdateScore={() => { }}
+        onNextRound={() => { }}
+        onUpdateRounds={() => false}
+        onOpenStandings={() => { }}
+        onSwapPlayer={() => { }}
+        onUpdateMatchPlayScore={() => { }}
+        onShareMatch={() => { }}
+        isReadOnly={false}
+        saveState="saved"
+      />
+    );
+  }
 
   if (!isAuthChecked) {
     return <AppLoadingScreen />;
