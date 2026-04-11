@@ -2465,55 +2465,6 @@ const MatchActiveScreen = ({
           shadow: 'shadow-[0_14px_30px_rgba(34,72,181,0.32)]',
           ring: 'bg-[#0F1E3A]/18'
         };
-  const klasemenBackgroundPools: Record<MatchFormat, string[]> = useMemo(() => ({
-    Americano: [
-      '/mockups/active-v2/images/Americano-01.jpg',
-      '/mockups/active-v2/images/Americano-02.jpg',
-      '/mockups/active-v2/images/Americano-03.jpg',
-      '/mockups/active-v2/images/Americano-04.jpg',
-      '/mockups/active-v2/images/americano-06.jpg'
-    ],
-    Mexicano: [
-      '/mockups/active-v2/images/Mexicano-01.jpg',
-      '/mockups/active-v2/images/Mexicano-02.jpg',
-      '/mockups/active-v2/images/Mexicano-03.jpg',
-      '/mockups/active-v2/images/mexicano-04.jpg',
-      '/mockups/active-v2/images/mexicano-05.jpg',
-      '/mockups/active-v2/images/mexicano-06.jpg',
-      '/mockups/active-v2/images/mexicano-07.jpg'
-    ],
-    'Match Play': [
-      '/mockups/active-v2/images/match-01.jpg',
-      '/mockups/active-v2/images/Match-02.jpg',
-      '/mockups/active-v2/images/Match-03.jpg',
-      '/mockups/active-v2/images/match-04.jpg',
-      '/mockups/active-v2/images/match-05.jpg',
-      '/mockups/active-v2/images/match-06.jpg',
-      '/mockups/active-v2/images/Match-07.jpg',
-      '/mockups/active-v2/images/match-08.jpg'
-    ]
-  }), []);
-  const klasemenHeroPhoto = useMemo(() => {
-    const pool = klasemenBackgroundPools[tournament.format] || [];
-    if (!pool.length) return '';
-    const seed = Number('startedAt' in tournament ? (tournament.startedAt || 0) : 0) + tournamentPlayers.length + tournamentRounds.length;
-    return pool[Math.abs(seed) % pool.length];
-  }, [klasemenBackgroundPools, tournament.format, tournamentPlayers.length, tournamentRounds.length, tournament]);
-  const klasemenPageBgTheme =
-    tournament.format === 'Americano'
-      ? {
-        base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
-        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.34)_0%,rgba(11,46,37,0.20)_16%,rgba(28,96,80,0.10)_32%,rgba(233,250,246,0.08)_44%,rgba(233,250,246,0.34)_56%,rgba(233,250,246,0.70)_70%,rgba(233,250,246,0.90)_82%,rgba(245,255,251,1)_100%)]'
-      }
-      : tournament.format === 'Mexicano'
-        ? {
-          base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.34)_0%,rgba(78,35,14,0.20)_16%,rgba(156,74,28,0.10)_32%,rgba(255,243,231,0.08)_44%,rgba(255,243,231,0.34)_56%,rgba(255,243,231,0.70)_70%,rgba(255,243,231,0.90)_82%,rgba(255,245,236,1)_100%)]'
-        }
-        : {
-          base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.38)_0%,rgba(14,44,82,0.22)_16%,rgba(37,92,171,0.10)_32%,rgba(237,243,255,0.08)_44%,rgba(237,243,255,0.34)_56%,rgba(237,243,255,0.70)_70%,rgba(237,243,255,0.90)_82%,rgba(246,249,255,1)_100%)]'
-        };
   const accentTheme =
     tournament.format === 'Americano'
       ? {
@@ -3390,6 +3341,55 @@ const KlasemenScreen = ({
           accentBorder: 'border-[#2F6FE4]/25',
           accentSolid: 'bg-[#2F6FE4]',
           accentSolidShadow: 'shadow-[0_10px_22px_rgba(47,111,228,0.26)]'
+        };
+  const klasemenBackgroundPools: Record<MatchFormat, string[]> = useMemo(() => ({
+    Americano: [
+      '/mockups/active-v2/images/Americano-01.jpg',
+      '/mockups/active-v2/images/Americano-02.jpg',
+      '/mockups/active-v2/images/Americano-03.jpg',
+      '/mockups/active-v2/images/Americano-04.jpg',
+      '/mockups/active-v2/images/americano-06.jpg'
+    ],
+    Mexicano: [
+      '/mockups/active-v2/images/Mexicano-01.jpg',
+      '/mockups/active-v2/images/Mexicano-02.jpg',
+      '/mockups/active-v2/images/Mexicano-03.jpg',
+      '/mockups/active-v2/images/mexicano-04.jpg',
+      '/mockups/active-v2/images/mexicano-05.jpg',
+      '/mockups/active-v2/images/mexicano-06.jpg',
+      '/mockups/active-v2/images/mexicano-07.jpg'
+    ],
+    'Match Play': [
+      '/mockups/active-v2/images/match-01.jpg',
+      '/mockups/active-v2/images/Match-02.jpg',
+      '/mockups/active-v2/images/Match-03.jpg',
+      '/mockups/active-v2/images/match-04.jpg',
+      '/mockups/active-v2/images/match-05.jpg',
+      '/mockups/active-v2/images/match-06.jpg',
+      '/mockups/active-v2/images/Match-07.jpg',
+      '/mockups/active-v2/images/match-08.jpg'
+    ]
+  }), []);
+  const klasemenHeroPhoto = useMemo(() => {
+    const pool = klasemenBackgroundPools[tournament.format] || [];
+    if (!pool.length) return '';
+    const seed = Number('startedAt' in tournament ? (tournament.startedAt || 0) : 0) + tournamentPlayers.length + tournamentRounds.length;
+    return pool[Math.abs(seed) % pool.length];
+  }, [klasemenBackgroundPools, tournament.format, tournamentPlayers.length, tournamentRounds.length, tournament]);
+  const klasemenPageBgTheme =
+    tournament.format === 'Americano'
+      ? {
+        base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
+        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.34)_0%,rgba(11,46,37,0.20)_16%,rgba(28,96,80,0.10)_32%,rgba(233,250,246,0.08)_44%,rgba(233,250,246,0.34)_56%,rgba(233,250,246,0.70)_70%,rgba(233,250,246,0.90)_82%,rgba(245,255,251,1)_100%)]'
+      }
+      : tournament.format === 'Mexicano'
+        ? {
+          base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.34)_0%,rgba(78,35,14,0.20)_16%,rgba(156,74,28,0.10)_32%,rgba(255,243,231,0.08)_44%,rgba(255,243,231,0.34)_56%,rgba(255,243,231,0.70)_70%,rgba(255,243,231,0.90)_82%,rgba(255,245,236,1)_100%)]'
+        }
+        : {
+          base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.38)_0%,rgba(14,44,82,0.22)_16%,rgba(37,92,171,0.10)_32%,rgba(237,243,255,0.08)_44%,rgba(237,243,255,0.34)_56%,rgba(237,243,255,0.70)_70%,rgba(237,243,255,0.90)_82%,rgba(246,249,255,1)_100%)]'
         };
 
   const sortedPlayers = useMemo(() => {
