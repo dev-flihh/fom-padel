@@ -38,7 +38,8 @@ import {
   Mail,
   ArrowRight,
   Download,
-  Building2
+  Building2,
+  AlertTriangle
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus } from './types';
@@ -1140,7 +1141,16 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     type?: string;
   };
 
-  const [selectedPlayers, setSelectedPlayers] = useState<Player[]>(tournament.players);
+  const dedupePlayersById = (players: Player[]) => {
+    const deduped = new Map<string, Player>();
+    players.forEach((player) => {
+      if (!player?.id) return;
+      if (!deduped.has(player.id)) deduped.set(player.id, player);
+    });
+    return Array.from(deduped.values());
+  };
+
+  const [selectedPlayers, setSelectedPlayers] = useState<Player[]>(() => dedupePlayersById(tournament.players || []));
   const [format, setFormat] = useState<MatchFormat>(tournament.format);
   const [criteria, setCriteria] = useState<RankingCriteria>(tournament.criteria);
   const [scoringType, setScoringType] = useState<ScoringType>(tournament.scoringType || 'Golden Point');
@@ -1165,6 +1175,13 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   const [selectedCourtId, setSelectedCourtId] = useState<string | null>(null);
   const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
   const [googlePlacesBlocked, setGooglePlacesBlocked] = useState(false);
+  const [playerDataNotice, setPlayerDataNotice] = useState<{
+    missingFromList: number;
+    duplicateInSelected: number;
+    duplicateInList: number;
+  } | null>(null);
+  const [dismissPlayerDataNotice, setDismissPlayerDataNotice] = useState(false);
+  const lastPlayerDataIssueSignatureRef = useRef('');
 
   useEffect(() => {
     const uid = auth.currentUser?.uid || currentUser?.uid;
@@ -1209,6 +1226,81 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   }, [friends]);
 
   const quickFriends = sortedFriends.slice(0, 8);
+  const normalizedAllPlayers = useMemo(() => dedupePlayersById(allPlayers || []), [allPlayers]);
+  const playerDataIntegrity = useMemo(() => {
+    const normalizedSelected = dedupePlayersById(selectedPlayers || []);
+    const normalizedAll = dedupePlayersById(allPlayers || []);
+    const allIds = new Set(normalizedAll.map((p) => p.id));
+    const missingFromList = normalizedSelected.filter((p) => !allIds.has(p.id)).length;
+    const duplicateInSelected = Math.max(0, (selectedPlayers || []).filter(Boolean).length - normalizedSelected.length);
+    const duplicateInList = Math.max(0, (allPlayers || []).filter(Boolean).length - normalizedAll.length);
+    return { missingFromList, duplicateInSelected, duplicateInList };
+  }, [selectedPlayers, allPlayers]);
+
+  useEffect(() => {
+    const hasIssue =
+      playerDataIntegrity.missingFromList > 0 ||
+      playerDataIntegrity.duplicateInSelected > 0 ||
+      playerDataIntegrity.duplicateInList > 0;
+    if (!hasIssue) return;
+
+    setPlayerDataNotice((prev) => {
+      if (
+        prev &&
+        prev.missingFromList === playerDataIntegrity.missingFromList &&
+        prev.duplicateInSelected === playerDataIntegrity.duplicateInSelected &&
+        prev.duplicateInList === playerDataIntegrity.duplicateInList
+      ) {
+        return prev;
+      }
+      return playerDataIntegrity;
+    });
+    setDismissPlayerDataNotice(false);
+
+    const issueSignature = [
+      playerDataIntegrity.missingFromList,
+      playerDataIntegrity.duplicateInSelected,
+      playerDataIntegrity.duplicateInList,
+      selectedPlayers.length,
+      allPlayers.length
+    ].join(':');
+
+    if (lastPlayerDataIssueSignatureRef.current !== issueSignature) {
+      lastPlayerDataIssueSignatureRef.current = issueSignature;
+      console.info('[MatchSettings] Player data mismatch recovered', {
+        ...playerDataIntegrity,
+        selectedCount: selectedPlayers.length,
+        allPlayersCount: allPlayers.length,
+        tournamentPlayersCount: (tournament.players || []).length
+      });
+    }
+  }, [playerDataIntegrity]);
+
+  useEffect(() => {
+    const normalizedFromTournament = dedupePlayersById(tournament.players || []);
+    const currentIds = selectedPlayers.map((p) => p.id).join('|');
+    const nextIds = normalizedFromTournament.map((p) => p.id).join('|');
+    if (currentIds !== nextIds) setSelectedPlayers(normalizedFromTournament);
+  }, [tournament.players]);
+
+  useEffect(() => {
+    if (selectedPlayers.length === 0) return;
+    setAllPlayers((prev) => {
+      const normalizedPrev = dedupePlayersById(prev || []);
+      const knownIds = new Set(normalizedPrev.map((p) => p.id));
+      let changed = normalizedPrev.length !== prev.length;
+      const merged = [...normalizedPrev];
+
+      selectedPlayers.forEach((player) => {
+        if (!player?.id || knownIds.has(player.id)) return;
+        merged.push(player);
+        knownIds.add(player.id);
+        changed = true;
+      });
+
+      return changed ? merged : prev;
+    });
+  }, [selectedPlayers, setAllPlayers]);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid || currentUser?.uid;
@@ -1432,12 +1524,14 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   }, [courtQuery]);
 
   const togglePlayer = (player: Player) => {
-    if (!player) return;
-    if (selectedPlayers.find(p => p && p.id === player.id)) {
-      setSelectedPlayers(selectedPlayers.filter(p => p && p.id !== player.id));
-    } else {
-      setSelectedPlayers([...selectedPlayers, player]);
-    }
+    if (!player?.id) return;
+    setSelectedPlayers((prev) => {
+      const alreadySelected = prev.some((p) => p?.id === player.id);
+      const next = alreadySelected
+        ? prev.filter((p) => p?.id !== player.id)
+        : [...prev, player];
+      return dedupePlayersById(next);
+    });
   };
 
   const friendToPlayer = (friend: Friend): Player => ({
@@ -1457,8 +1551,8 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   };
 
   const handleAddPlayer = (newPlayer: Player) => {
-    setAllPlayers(prev => [newPlayer, ...prev]);
-    setSelectedPlayers(prev => [newPlayer, ...prev]);
+    setAllPlayers(prev => dedupePlayersById([newPlayer, ...prev]));
+    setSelectedPlayers(prev => dedupePlayersById([newPlayer, ...prev]));
     setIsAddModalOpen(false);
     onAddNotification('Pemain Baru!', `${newPlayer.name} telah ditambahkan ke daftar pemain.`, 'system');
   };
@@ -2005,6 +2099,32 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
             </button>
           </div>
 
+          {playerDataNotice && !dismissPlayerDataNotice && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} className="text-amber-600" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-bold text-amber-900 leading-tight">Data pemain sempat tidak sinkron, sudah kami rapikan otomatis.</p>
+                <p className="mt-1 text-[11px] font-medium text-amber-800 leading-tight">
+                  {[
+                    playerDataNotice.missingFromList > 0 ? `${playerDataNotice.missingFromList} pemain dipulihkan ke daftar` : null,
+                    playerDataNotice.duplicateInSelected > 0 ? `${playerDataNotice.duplicateInSelected} duplikat pilihan dibersihkan` : null,
+                    playerDataNotice.duplicateInList > 0 ? `${playerDataNotice.duplicateInList} duplikat daftar dibersihkan` : null
+                  ].filter(Boolean).join(' | ')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDismissPlayerDataNotice(true)}
+                className="p-1.5 rounded-lg text-amber-700/80 hover:text-amber-900 tap-target"
+                aria-label="Tutup notifikasi sinkronisasi data pemain"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
           <AnimatePresence mode="wait">
             {!isReady && (
               <motion.div
@@ -2029,7 +2149,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
           </AnimatePresence>
 
           <div className="space-y-3">
-            {allPlayers.filter(p => !!p).map((player) => {
+            {normalizedAllPlayers.map((player) => {
               const isSelected = selectedPlayers.find(p => p && p.id === player.id);
               const isSelf = player.id === (auth.currentUser?.uid || currentUser?.uid);
               return (
@@ -4844,16 +4964,16 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
                           : 'Tambah';
 
                     return (
-                  <button
-                    onClick={() => sendFriendRequest(res)}
-                    disabled={disabled}
-                    className={cn(
-                      "px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest tap-target",
+                      <button
+                        onClick={() => sendFriendRequest(res)}
+                        disabled={disabled}
+                        className={cn(
+                          "px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest tap-target",
                           disabled ? "bg-ios-gray/10 text-ios-gray" : "bg-primary text-white"
-                    )}
-                  >
+                        )}
+                      >
                         {label}
-                  </button>
+                      </button>
                     );
                   })()}
                 </div>
@@ -5094,6 +5214,7 @@ export default function App() {
   const isAuthResolvedRef = useRef(false);
   const isHandlingPopStateRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; ts: number } | null>(null);
+  const lastFriendPickerSummaryRef = useRef('');
 
   useEffect(() => {
     return () => {
@@ -5930,14 +6051,34 @@ export default function App() {
       stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
     };
 
-    setAllPlayers((prev) => prev.some((p) => p.id === playerObj.id) ? prev : [playerObj, ...prev]);
+    setAllPlayers((prev) => {
+      const existsInList = prev.some((p) => p.id === playerObj.id);
+      const next = existsInList ? prev : [playerObj, ...prev];
+      if (!existsInList) {
+        console.info('[FriendsPicker] Added friend to allPlayers catalog', {
+          friendUid: friend.uid,
+          friendName: friend.displayName,
+          allPlayersBefore: prev.length,
+          allPlayersAfter: next.length
+        });
+      }
+      return next;
+    });
     setTournament((prev) => {
       const alreadySelected = prev.players.some((p) => p.id === playerObj.id);
+      const nextPlayers = alreadySelected
+        ? prev.players.filter((p) => p.id !== playerObj.id)
+        : [...prev.players, playerObj];
+      console.info('[FriendsPicker] Toggle friend selection for match', {
+        friendUid: friend.uid,
+        friendName: friend.displayName,
+        action: alreadySelected ? 'removed' : 'added',
+        selectedBefore: prev.players.length,
+        selectedAfter: nextPlayers.length
+      });
       return {
         ...prev,
-        players: alreadySelected
-          ? prev.players.filter((p) => p.id !== playerObj.id)
-          : [...prev.players, playerObj]
+        players: nextPlayers
       };
     });
 
@@ -6736,6 +6877,14 @@ export default function App() {
             onBack={() => setScreen('dashboard')}
             onGenerate={handleGenerateTournament}
             onOpenFriends={() => {
+              const selectedIds = new Set((tournament.players || []).filter(Boolean).map((p) => p.id));
+              const allIds = new Set((allPlayers || []).filter(Boolean).map((p) => p.id));
+              const missingFromList = Array.from(selectedIds).filter((id) => !allIds.has(id)).length;
+              console.info('[FriendsPicker] Open from match settings', {
+                selectedCount: selectedIds.size,
+                allPlayersCount: allIds.size,
+                missingFromList
+              });
               setFriendsEntrySource('settings');
               setScreen('friends');
             }}
@@ -6817,7 +6966,21 @@ export default function App() {
             pickerMode={friendsEntrySource === 'settings'}
             selectedPlayerIds={tournament.players.map((p) => p.id)}
             onTogglePickForMatch={upsertPlayerFromFriend}
-            onDonePick={() => setScreen('settings')}
+            onDonePick={() => {
+              const selectedIds = new Set((tournament.players || []).filter(Boolean).map((p) => p.id));
+              const allIds = new Set((allPlayers || []).filter(Boolean).map((p) => p.id));
+              const missingFromList = Array.from(selectedIds).filter((id) => !allIds.has(id)).length;
+              const summarySignature = `${selectedIds.size}:${allIds.size}:${missingFromList}`;
+              if (lastFriendPickerSummaryRef.current !== summarySignature) {
+                lastFriendPickerSummaryRef.current = summarySignature;
+                console.info('[FriendsPicker] Done selecting players', {
+                  selectedCount: selectedIds.size,
+                  allPlayersCount: allIds.size,
+                  missingFromList
+                });
+              }
+              setScreen('settings');
+            }}
           />
         )}
       </div>
