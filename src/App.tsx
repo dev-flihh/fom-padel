@@ -123,6 +123,117 @@ const formatDurationFromMs = (elapsedMs: number) => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
+const parseDurationToMs = (duration?: string) => {
+  if (!duration) return null;
+  const parts = duration.split(':').map((part) => Number.parseInt(part, 10));
+  if (parts.some((part) => Number.isNaN(part) || part < 0)) return null;
+  if (parts.length === 2) {
+    const [minutes, seconds] = parts;
+    return (minutes * 60 + seconds) * 1000;
+  }
+  if (parts.length === 3) {
+    const [hours, minutes, seconds] = parts;
+    return (hours * 3600 + minutes * 60 + seconds) * 1000;
+  }
+  return null;
+};
+
+const getTournamentElapsedMs = (
+  rounds: Round[] | undefined,
+  nowMs: number,
+  endedAt?: number
+) => {
+  if (!rounds || rounds.length === 0) return 0;
+
+  return rounds.reduce((totalMs, round) => (
+    totalMs + (round.matches || []).reduce((roundMs, match) => {
+      if (match.status === 'pending') return roundMs;
+
+      if (match.status === 'active' && typeof match.startedAt === 'number') {
+        return roundMs + Math.max(0, nowMs - match.startedAt);
+      }
+
+      const parsedDuration = parseDurationToMs(match.duration);
+      if (parsedDuration !== null) {
+        return roundMs + parsedDuration;
+      }
+
+      if (typeof match.startedAt === 'number' && typeof endedAt === 'number') {
+        return roundMs + Math.max(0, endedAt - match.startedAt);
+      }
+
+      return roundMs;
+    }, 0)
+  ), 0);
+};
+
+const hashStringToInt = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+};
+
+const getTournamentVisualSeed = (tournament: Tournament | TournamentHistory) => {
+  const explicitId =
+    'id' in tournament && typeof tournament.id === 'string' && tournament.id.trim().length > 0
+      ? tournament.id.trim()
+      : '';
+  const startedAtOrDate =
+    'startedAt' in tournament && typeof tournament.startedAt === 'number'
+      ? tournament.startedAt
+      : ('date' in tournament && tournament.date ? new Date(tournament.date).getTime() : 0);
+  const stableKey = explicitId || [
+    tournament.name || '',
+    tournament.format || '',
+    tournament.venueName || '',
+    tournament.location || '',
+    String(startedAtOrDate || 0)
+  ].join('|');
+  return Math.abs(hashStringToInt(stableKey));
+};
+
+const normalizeHistoryTournament = (rawItem: TournamentHistory): TournamentHistory => {
+  const normalizedDate = rawItem.date ? new Date(rawItem.date) : new Date();
+  const rounds = Array.isArray(rawItem.rounds) ? rawItem.rounds : [];
+  if (rounds.length === 0) {
+    return { ...rawItem, date: normalizedDate };
+  }
+
+  const fallbackEndedAt = typeof rawItem.endedAt === 'number'
+    ? rawItem.endedAt
+    : normalizedDate.getTime();
+
+  let hasStatusRepair = false;
+  const normalizedRounds = rounds.map((round) => ({
+    ...round,
+    playersBye: Array.isArray(round.playersBye) ? round.playersBye : [],
+    matches: (round.matches || []).map((match) => {
+      if (match.status === 'completed') return match;
+      hasStatusRepair = true;
+      const repairedDuration = match.duration || (
+        typeof match.startedAt === 'number'
+          ? formatDurationFromMs(Math.max(0, fallbackEndedAt - match.startedAt))
+          : '00:00'
+      );
+      return {
+        ...match,
+        status: 'completed' as const,
+        duration: repairedDuration
+      };
+    })
+  }));
+
+  return {
+    ...rawItem,
+    date: normalizedDate,
+    endedAt: rawItem.endedAt ?? (hasStatusRepair ? fallbackEndedAt : rawItem.endedAt),
+    rounds: normalizedRounds
+  };
+};
+
 const RankBadge = ({ mmr, size = 'md', showLabel = true }: { mmr: number, size?: 'sm' | 'md' | 'lg', showLabel?: boolean }) => {
   const rank = getRankInfo(mmr);
   const Icon = rank.icon;
@@ -171,6 +282,12 @@ const getInitialSharedContext = () => {
     targetView,
     isShared: Boolean(sharedId)
   };
+};
+
+const getInitialE2EScenario = () => {
+  const params = new URLSearchParams(window.location.search);
+  const scenario = params.get('e2e');
+  return scenario === 'finished-flow' ? scenario : null;
 };
 
 const InstallAppButton = ({
@@ -2407,6 +2524,7 @@ const MatchActiveScreen = ({
   onUpdateMatchPlayScore,
   onShareMatch,
   isReadOnly,
+  isSharedViewer,
   saveState
 }: {
   onBack: () => void,
@@ -2420,6 +2538,7 @@ const MatchActiveScreen = ({
   onUpdateMatchPlayScore: (matchId: string, team: 'A' | 'B') => void,
   onShareMatch: () => void,
   isReadOnly: boolean,
+  isSharedViewer: boolean,
   saveState: 'saved' | 'saving' | 'error'
 }) => {
   const [scoringMatchId, setScoringMatchId] = useState<string | null>(null);
@@ -2493,12 +2612,18 @@ const MatchActiveScreen = ({
   const currentRoundIndex = tournament.rounds.findIndex(r => r.matches.some(m => m.status === 'active'));
   const hasActiveTournament = currentRoundIndex !== -1;
   const hasTournamentData = tournament.rounds.length > 0;
-  const shouldShowActiveMatchScreen = hasActiveTournament || (isReadOnly && hasTournamentData);
+  const shouldShowActiveMatchScreen = hasTournamentData;
   const activeRound = currentRoundIndex !== -1 ? (tournament.rounds[currentRoundIndex] ?? null) : null;
   const activeRoundId = activeRound?.id ?? null;
   const isLastRound = currentRoundIndex !== -1 && currentRoundIndex >= (tournament.numRounds - 1);
   const isTournamentEnded = tournament.rounds.length > 0 && tournament.rounds.every(r => r.matches.every(m => m.status === 'completed'));
-  const totalElapsed = tournament.startedAt ? formatDurationFromMs(nowMs - tournament.startedAt) : '00:00';
+  const totalElapsed = formatDurationFromMs(
+    getTournamentElapsedMs(
+      tournament.rounds,
+      nowMs,
+      (tournament as TournamentHistory).endedAt
+    )
+  );
   const activeBackgroundPools: Record<MatchFormat, string[]> = useMemo(() => ({
     Americano: [
       '/mockups/active-v2/images/Americano-01.jpg',
@@ -2530,11 +2655,10 @@ const MatchActiveScreen = ({
   const activeHeroPhoto = useMemo(() => {
     const pool = activeBackgroundPools[tournament.format] || [];
     if (!pool.length) return '';
-    // Keep hero photo stable for the lifetime of one tournament session.
-    const seed = Number(tournament.startedAt || 0) + tournament.players.length;
+    const seed = getTournamentVisualSeed(tournament);
     const index = Math.abs(seed) % pool.length;
     return pool[index];
-  }, [activeBackgroundPools, tournament.format, tournament.players.length, tournament.startedAt]);
+  }, [activeBackgroundPools, tournament]);
   const fomPlayUrl = useMemo(() => {
     const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
     const runtimeBase = `${window.location.protocol}//${window.location.host}`;
@@ -2789,11 +2913,15 @@ const MatchActiveScreen = ({
         <div className="max-w-lg mx-auto h-16 px-5 relative flex items-center justify-between">
           <div className="shrink-0">
             <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", accentTheme.solid, accentTheme.solidShadow)}>
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-white/55 animate-ping" />
-                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
+              {!isTournamentEnded && (
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-white/55 animate-ping" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
+                </span>
+              )}
+              <span className={cn(!isTournamentEnded && "animate-pulse")}>
+                {isTournamentEnded ? 'Berakhir' : 'Live'}
               </span>
-              <span className="animate-pulse">Live</span>
             </span>
           </div>
           <div className="absolute left-1/2 -translate-x-1/2 flex justify-center items-center pointer-events-none">
@@ -2809,7 +2937,7 @@ const MatchActiveScreen = ({
               variant="minimal"
               className="text-white"
             />
-            {isReadOnly ? (
+            {isSharedViewer ? (
               <span className="text-[10px] font-bold uppercase tracking-widest text-white/90">View Only</span>
             ) : (
               <button
@@ -2831,10 +2959,10 @@ const MatchActiveScreen = ({
           paddingTop: '16px'
         }}
       >
-        {isReadOnly && (
-          <section className={cn("rounded-xl p-3 border", accentTheme.bgSoft, accentTheme.borderSoft)}>
-            <p className={cn("text-[12px] font-semibold", accentTheme.text)}>Mode penonton aktif. Halaman ini hanya untuk melihat skor.</p>
-          </section>
+        {isSharedViewer && (
+          <p className="-mt-1 -mb-3 px-1 text-[10px] font-medium text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
+            Mode penonton aktif, halaman ini hanya untuk melihat skor.
+          </p>
         )}
 
         <section className={cn(
@@ -3067,7 +3195,7 @@ const MatchActiveScreen = ({
           );
         })}
 
-        {!isReadOnly && (
+        {!isReadOnly && !isTournamentEnded && (
           <div className="pt-3 pb-12">
             <button
               onClick={onNextRound}
@@ -3384,11 +3512,15 @@ const MatchActiveScreen = ({
 const KlasemenScreen = ({
   tournament,
   onBack,
-  onShare
+  onShare,
+  onOpenActive,
+  isSharedViewer
 }: {
   tournament: Tournament | TournamentHistory,
   onBack: () => void,
-  onShare: (t: Tournament | TournamentHistory) => void
+  onShare: (t: Tournament | TournamentHistory) => void,
+  onOpenActive: () => void,
+  isSharedViewer?: boolean
 }) => {
   const [nowMs, setNowMs] = useState(Date.now());
   useEffect(() => {
@@ -3408,7 +3540,6 @@ const KlasemenScreen = ({
   const completedRounds = tournamentRounds.filter(r => r.matches.every(m => m.status === 'completed')).length;
   const totalMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.length, 0);
   const completedMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.filter(m => m.status === 'completed').length, 0);
-  const activeMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.filter(m => m.status === 'active').length, 0);
   const isTournamentEnded = tournamentRounds.length > 0
     ? tournamentRounds.every(r => r.matches.every(m => m.status === 'completed'))
     : true;
@@ -3422,9 +3553,13 @@ const KlasemenScreen = ({
   const locationLabel = (tournament.location || '').trim();
   const placeLabel = [venueLabel, locationLabel].filter(Boolean).join(' | ');
   const locationDateLabel = placeLabel ? `${placeLabel} | ${dateLabel}` : dateLabel;
-  const totalElapsed = ('startedAt' in tournament && tournament.startedAt)
-    ? formatDurationFromMs(nowMs - tournament.startedAt)
-    : '00:00';
+  const totalElapsed = formatDurationFromMs(
+    getTournamentElapsedMs(
+      tournamentRounds,
+      nowMs,
+      'endedAt' in tournament ? tournament.endedAt : undefined
+    )
+  );
 
   const infoTheme =
     tournament.format === 'Americano'
@@ -3499,10 +3634,9 @@ const KlasemenScreen = ({
   const klasemenHeroPhoto = useMemo(() => {
     const pool = klasemenBackgroundPools[tournament.format] || [];
     if (!pool.length) return '';
-    // Keep hero photo stable for one tournament so standings and active stay consistent.
-    const seed = Number('startedAt' in tournament ? (tournament.startedAt || 0) : 0) + tournamentPlayers.length;
+    const seed = getTournamentVisualSeed(tournament);
     return pool[Math.abs(seed) % pool.length];
-  }, [klasemenBackgroundPools, tournament.format, tournamentPlayers.length, tournament]);
+  }, [klasemenBackgroundPools, tournament]);
   const klasemenPageBgTheme =
     tournament.format === 'Americano'
       ? {
@@ -3645,56 +3779,75 @@ const KlasemenScreen = ({
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
         <div className="max-w-lg mx-auto h-16 px-5 relative flex items-center justify-between">
-          <button onClick={onBack} className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white">
-            <ChevronLeft size={18} />
-            <span className="text-[12px] font-semibold">Back</span>
-          </button>
+          <div className="shrink-0">
+            <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
+              {!isTournamentEnded && (
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-white/55 animate-ping" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
+                </span>
+              )}
+              <span className={cn(!isTournamentEnded && "animate-pulse")}>
+                {isTournamentEnded ? 'Berakhir' : 'Live'}
+              </span>
+            </span>
+          </div>
           <div className="absolute left-1/2 -translate-x-1/2 flex justify-center items-center pointer-events-none">
             <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className="h-8 w-auto object-contain" />
           </div>
           <div className="shrink-0 flex items-center gap-3">
             <InstallAppButton compact variant="minimal" className="text-white" />
-            <button onClick={() => onShare(tournament)} className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white">
-              <Share2 size={16} />
-              <span className="text-[12px] font-semibold">Share</span>
-            </button>
+            {isSharedViewer ? (
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/90">View Only</span>
+            ) : (
+              <button onClick={() => onShare(tournament)} className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white">
+                <Share2 size={16} />
+                <span className="text-[12px] font-semibold">Share</span>
+              </button>
+            )}
           </div>
         </div>
       </header>
 
       <main
-        className="relative z-10 px-5 space-y-4 max-w-lg mx-auto"
+        className="relative z-10 px-5 space-y-6 max-w-lg mx-auto"
         style={{
           paddingTop: '16px',
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'
         }}
       >
-        <section className={cn('relative overflow-hidden rounded-2xl p-3.5 border border-white/40 bg-white/8 backdrop-blur-md text-white', infoTheme.shadow)}>
+        {isSharedViewer && (
+          <p className="px-1 text-[10px] font-medium leading-tight text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
+            Mode penonton klasemen aktif, halaman ini hanya untuk melihat hasil.
+          </p>
+        )}
 
-          <div className="relative flex items-baseline justify-between gap-3 mb-2.5">
+        <section className={cn('relative overflow-hidden rounded-2xl p-4 border border-white/40 bg-white/8 backdrop-blur-md', infoTheme.shadow)}>
+
+          <div className="relative flex items-baseline justify-between gap-3 mb-3">
             <div className="min-w-0">
               <h2 className="text-[18px] font-black tracking-tight text-white truncate">{tournament.name || '-'}</h2>
               <p className="mt-1 text-[11px] text-white/85 truncate">{locationDateLabel}</p>
             </div>
             <span className="shrink-0 text-[16px] leading-none font-display font-bold tabular-nums text-white/95 drop-shadow-[0_1px_1px_rgba(0,0,0,0.14)]">
-              {isTournamentEnded ? 'Berakhir' : totalElapsed}
+              {totalElapsed}
             </span>
           </div>
 
           <div className="relative grid grid-cols-4 gap-2">
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Mode</p>
               <p className="text-[12px] font-semibold text-white truncate">{tournament.format}</p>
             </div>
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Player</p>
               <p className="text-[12px] font-semibold text-white">{sortedPlayers.length}</p>
             </div>
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lapangan</p>
               <p className="text-[12px] font-semibold text-white">{courtsCount}</p>
             </div>
-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-1.5">
+            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Ronde</p>
               <p className="text-[12px] font-semibold text-white">{completedRounds}/{tournamentRounds.length || 0}</p>
             </div>
@@ -3709,7 +3862,7 @@ const KlasemenScreen = ({
               <div className="h-full rounded-full bg-white/90 transition-all duration-300" style={{ width: `${completionPercent}%` }} />
             </div>
           </div>
-          <div className="relative mt-2.5 pt-2 flex items-center justify-start gap-2">
+          <div className="relative mt-3.5 pt-2.5 min-h-[30px] flex items-center justify-start gap-2">
             <div className="absolute inset-x-0 top-0 h-px bg-white/30 pointer-events-none" />
             <p className="relative z-10 text-[11px] text-white/88 whitespace-nowrap">
               Hosted with{' '}
@@ -3724,10 +3877,29 @@ const KlasemenScreen = ({
           </div>
         </section>
 
+        <section className="-mt-1">
+          <button
+            onClick={onOpenActive}
+            className={cn(
+              "tap-target w-full h-12 rounded-2xl px-4 flex items-center justify-between border border-white/40 bg-white/8 backdrop-blur-md text-white",
+              infoTheme.shadow
+            )}
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="w-7 h-7 rounded-full flex items-center justify-center border border-white/35 bg-white/20">
+                <Zap size={15} />
+              </span>
+              <span className="text-[13px] font-bold truncate">
+                {isTournamentEnded ? 'Lihat Detail Per Round' : 'Lihat Pertandingan Aktif'}
+              </span>
+            </div>
+            <ChevronRight size={16} className="opacity-80 shrink-0" />
+          </button>
+        </section>
+
         <section className="space-y-2">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-[12px] font-bold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">Ranking Pemain</h3>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">{isTournamentEnded ? 'Final Result' : 'Live Update'}</span>
           </div>
           <p className="px-1 text-[10px] font-semibold text-white/92 drop-shadow-[0_1px_2px_rgba(0,0,0,0.32)]">Urutan: Menang (W) → Diff → Poin.</p>
 
@@ -3873,7 +4045,17 @@ const NotificationsScreen = ({ notifications, onMarkAsRead, onClearAll, onBack }
     </div>
   );
 };
-const HistoryDetailScreen = ({ tournament, onBack, onViewFinalStandings }: { tournament: TournamentHistory, onBack: () => void, onViewFinalStandings: () => void }) => {
+const HistoryDetailScreen = ({
+  tournament,
+  onBack,
+  onViewFinalStandings,
+  onViewMatchDetails
+}: {
+  tournament: TournamentHistory,
+  onBack: () => void,
+  onViewFinalStandings: () => void,
+  onViewMatchDetails: () => void
+}) => {
   const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
 
   const toggleRound = (roundId: number) => {
@@ -3915,13 +4097,22 @@ const HistoryDetailScreen = ({ tournament, onBack, onViewFinalStandings }: { tou
               <span className="text-sm font-bold text-on-surface">{tournament.numPlayers} Orang</span>
             </div>
           </div>
-          <button
-            onClick={onViewFinalStandings}
-            className="mt-4 w-full h-11 rounded-xl border border-primary/20 bg-white/80 text-primary text-[13px] font-bold inline-flex items-center justify-center gap-2 tap-target"
-          >
-            <Trophy size={16} />
-            Lihat Klasemen Akhir
-          </button>
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button
+              onClick={onViewFinalStandings}
+              className="w-full h-11 rounded-xl border border-primary/20 bg-white/80 text-primary text-[13px] font-bold inline-flex items-center justify-center gap-2 tap-target"
+            >
+              <Trophy size={16} />
+              Lihat Klasemen Akhir
+            </button>
+            <button
+              onClick={onViewMatchDetails}
+              className="w-full h-11 rounded-xl border border-ios-gray/20 bg-white text-on-surface text-[13px] font-bold inline-flex items-center justify-center gap-2 tap-target"
+            >
+              <Zap size={16} />
+              Detail Per Round
+            </button>
+          </div>
         </div>
 
         {tournament.rounds?.map((round) => {
@@ -5183,6 +5374,7 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
 
 export default function App() {
   const initialSharedContext = getInitialSharedContext();
+  const initialE2EScenario = getInitialE2EScenario();
   const isMockupV3 = useMemo(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -5191,6 +5383,60 @@ export default function App() {
       return false;
     }
   }, []);
+  const e2eFinishedHistory = useMemo<TournamentHistory | null>(() => {
+    if (initialE2EScenario !== 'finished-flow') return null;
+    const playerPool: Player[] = Array.from({ length: 16 }).map((_, idx) => ({
+      id: `e2e-p${idx + 1}`,
+      name: `Player ${idx + 1}`,
+      rating: 3 + ((idx % 5) * 0.2),
+      initials: `P${idx + 1}`,
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+    }));
+    const startedAt = Date.now() - 78 * 60 * 1000;
+    const roundDurationMs = 22 * 60 * 1000;
+    const rounds: Round[] = [];
+    for (let roundId = 1; roundId <= 3; roundId++) {
+      const roundStartedAt = startedAt + ((roundId - 1) * roundDurationMs);
+      const matches: Match[] = [];
+      for (let court = 1; court <= 4; court++) {
+        const baseIndex = ((roundId - 1) * 4 + (court - 1)) % playerPool.length;
+        const picked = Array.from({ length: 4 }).map((__, pickIdx) => playerPool[(baseIndex + pickIdx) % playerPool.length]);
+        const scoreA = 6 + ((roundId + court) % 3);
+        const scoreB = 4 + ((roundId + court + 1) % 3);
+        matches.push({
+          id: `e2e-r${roundId}-m${court}`,
+          court,
+          roundId,
+          status: 'completed',
+          startedAt: roundStartedAt,
+          duration: '22:00',
+          teamA: { players: [picked[0], picked[1]], score: scoreA, sets: [scoreA] },
+          teamB: { players: [picked[2], picked[3]], score: scoreB, sets: [scoreB] }
+        });
+      }
+      rounds.push({ id: roundId, matches, playersBye: [] });
+    }
+    const endedAt = startedAt + (3 * roundDurationMs);
+    return {
+      id: 'e2e-finished-flow',
+      userId: 'e2e-user',
+      name: 'E2E Finished Tournament',
+      format: 'Match Play',
+      criteria: 'Matches Won',
+      scoringType: 'Advantage',
+      date: new Date(endedAt),
+      startedAt,
+      endedAt,
+      courts: 4,
+      totalPoints: 0,
+      numRounds: 3,
+      numPlayers: playerPool.length,
+      rounds,
+      players: playerPool,
+      venueName: 'FOM Test Court',
+      location: 'Jakarta Selatan, DKI Jakarta'
+    };
+  }, [initialE2EScenario]);
   const [screen, setScreen] = useState<Screen>(initialSharedContext.isShared ? initialSharedContext.targetView : 'login');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -5207,6 +5453,8 @@ export default function App() {
   const [selectedHistory, setSelectedHistory] = useState<TournamentHistory | null>(null);
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
   const [klasemenBackScreen, setKlasemenBackScreen] = useState<'dashboard' | 'active' | 'history-detail'>('dashboard');
+  const [activeScreenTournament, setActiveScreenTournament] = useState<Tournament | null>(null);
+  const [activeBackScreen, setActiveBackScreen] = useState<'dashboard' | 'history-detail' | 'klasemen'>('dashboard');
   const [friendsEntrySource, setFriendsEntrySource] = useState<'profile' | 'settings'>('profile');
   const [activeSaveState, setActiveSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const shareToastTimeoutRef = useRef<number | null>(null);
@@ -5228,6 +5476,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (initialE2EScenario === 'finished-flow' && e2eFinishedHistory) {
+      setIsSharedViewer(false);
+      setSharedMatchId(null);
+      setIsSharedDataReady(true);
+      setUser({ uid: 'e2e-user', displayName: 'E2E User', mmr: 1500 });
+      setIsLoggedIn(true);
+      setIsAuthChecked(true);
+      setTournaments([e2eFinishedHistory]);
+      setSelectedHistory(e2eFinishedHistory);
+      setTournament(buildReadOnlyTournamentFromHistory(e2eFinishedHistory));
+      setScreen('history-detail');
+      return;
+    }
+
+    if (initialE2EScenario === 'finished-flow') {
+      setIsAuthChecked(true);
+      return;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         if (firebaseUser) {
@@ -5250,10 +5517,7 @@ export default function App() {
             const rawHistory = localStorage.getItem(getTournamentHistoryStorageKey(firebaseUser.uid));
             if (rawHistory) {
               const parsedHistory = JSON.parse(rawHistory) as TournamentHistory[];
-              const normalized = parsedHistory.map((item) => ({
-                ...item,
-                date: item.date ? new Date(item.date) : new Date()
-              }));
+              const normalized = parsedHistory.map((item) => normalizeHistoryTournament(item));
               setTournaments(normalized);
             } else {
               setTournaments([]);
@@ -5308,11 +5572,11 @@ export default function App() {
             const fetchedTournaments: TournamentHistory[] = [];
             querySnapshot.forEach((doc) => {
               const data = doc.data();
-              fetchedTournaments.push({
+              fetchedTournaments.push(normalizeHistoryTournament({
                 ...data,
                 id: doc.id,
                 date: data.date.toDate()
-              } as TournamentHistory);
+              } as TournamentHistory));
             });
             setTournaments(prev => {
               const merged = new Map<string, TournamentHistory>();
@@ -5353,7 +5617,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [isSharedViewer, sharedTargetScreen]);
+  }, [e2eFinishedHistory, initialE2EScenario, isSharedViewer, sharedTargetScreen]);
 
   useEffect(() => {
     if (!isAuthResolvedRef.current) return;
@@ -5679,9 +5943,45 @@ export default function App() {
   };
 
   const handleOpenLiveStandings = () => {
-    setSelectedKlasemenTournament(tournament);
+    setSelectedKlasemenTournament(activeScreenTournament || tournament);
     setKlasemenBackScreen('active');
     setScreen('klasemen');
+  };
+
+  const buildReadOnlyTournamentFromHistory = (history: TournamentHistory): Tournament => {
+    const rounds = (history.rounds || []).map((round) => ({
+      ...round,
+      playersBye: Array.isArray(round.playersBye) ? round.playersBye : []
+    }));
+    const fallbackStartedAt = typeof history.startedAt === 'number'
+      ? history.startedAt
+      : (history.date ? new Date(history.date).getTime() : undefined);
+    const fallbackEndedAt = typeof history.endedAt === 'number'
+      ? history.endedAt
+      : fallbackStartedAt;
+    const detectedCourts = Math.max(1, ...rounds.flatMap((round) => round.matches.map((match) => match.court || 1)));
+    const maxKnownMatchPoints = rounds.reduce((maxPoints, round) => (
+      round.matches.reduce((roundMax, match) => (
+        Math.max(roundMax, (match.teamA.score || 0) + (match.teamB.score || 0))
+      ), maxPoints)
+    ), 0);
+
+    return {
+      id: history.id,
+      name: history.name,
+      format: history.format,
+      criteria: history.criteria || 'Points Won',
+      scoringType: history.scoringType,
+      startedAt: fallbackStartedAt,
+      endedAt: fallbackEndedAt,
+      courts: history.courts || detectedCourts,
+      totalPoints: history.totalPoints ?? (history.format === 'Match Play' ? 0 : Math.max(21, maxKnownMatchPoints || 21)),
+      players: history.players || [],
+      rounds,
+      numRounds: history.numRounds || rounds.length || 1,
+      venueName: history.venueName,
+      location: history.location
+    };
   };
 
   const handleOpenHistoryFinalStandings = () => {
@@ -5689,6 +5989,38 @@ export default function App() {
     setSelectedKlasemenTournament(selectedHistory);
     setKlasemenBackScreen('history-detail');
     setScreen('klasemen');
+  };
+
+  const handleOpenHistoryMatchDetails = () => {
+    if (!selectedHistory) return;
+    setActiveScreenTournament(buildReadOnlyTournamentFromHistory(selectedHistory));
+    setActiveBackScreen('history-detail');
+    setScreen('active');
+  };
+
+  const handleOpenActiveFromStandings = () => {
+    const standingsTournament = selectedKlasemenTournament || tournament;
+    if (isSharedViewer) {
+      setActiveScreenTournament(null);
+      setActiveBackScreen('klasemen');
+      setScreen('active');
+      return;
+    }
+
+    if (klasemenBackScreen === 'active') {
+      setActiveScreenTournament(null);
+      setActiveBackScreen('klasemen');
+      setScreen('active');
+      return;
+    }
+
+    if ('numPlayers' in standingsTournament) {
+      setActiveScreenTournament(buildReadOnlyTournamentFromHistory(standingsTournament as TournamentHistory));
+    } else {
+      setActiveScreenTournament(standingsTournament as Tournament);
+    }
+    setActiveBackScreen('klasemen');
+    setScreen('active');
   };
 
   const handleShareCurrentMatch = async () => {
@@ -6006,7 +6338,8 @@ export default function App() {
     }
 
     setSharedMatchId(null);
-    setTournament({ ...settings, rounds, startedAt: now });
+    const tournamentId = settings.id || `tm_${Math.random().toString(36).slice(2, 10)}`;
+    setTournament({ ...settings, id: tournamentId, rounds, startedAt: now, endedAt: undefined });
     // Navigate immediately so user never feels "stuck" on settings after tapping Generate.
     setScreen('preview');
     addNotification('Turnamen Dimulai!', `Turnamen ${settings.name} telah dibuat dengan ${settings.players.length} pemain.`, 'tournament');
@@ -6116,25 +6449,21 @@ export default function App() {
     const nextRoundId = currentRoundIndex + 2;
     const isConfiguredLastRound = currentRoundIndex >= (tournament.numRounds - 1);
     const hasPreGeneratedNextRound = Boolean(tournament.rounds[currentRoundIndex + 1]);
+    const finalizedRounds = tournament.rounds.map((round, idx) => {
+      if (idx !== currentRoundIndex) return round;
+      return {
+        ...round,
+        matches: round.matches.map((m) => m ? ({
+          ...m,
+          status: 'completed' as const,
+          duration: m.startedAt ? formatDurationFromMs(now - m.startedAt) : (m.duration || '00:00')
+        }) : m)
+      };
+    });
 
     if (isConfiguredLastRound || (tournament.format !== 'Mexicano' && !hasPreGeneratedNextRound)) {
       // Tournament finished - mark last round as completed
-      setTournament(prev => {
-        const newRounds = prev.rounds.map((round, idx) => {
-          if (idx === currentRoundIndex) {
-            return {
-              ...round,
-              matches: round.matches.map(m => m ? ({
-                ...m,
-                status: 'completed' as const,
-                duration: m.startedAt ? formatDurationFromMs(now - m.startedAt) : (m.duration || '00:00')
-              }) : m)
-            };
-          }
-          return round;
-        });
-        return { ...prev, rounds: newRounds };
-      });
+      setTournament(prev => ({ ...prev, rounds: finalizedRounds, endedAt: now }));
       addNotification('Turnamen Selesai!', `Selamat kepada para pemenang turnamen ${tournament.name}!`, 'achievement');
 
       // Save tournament to history
@@ -6144,7 +6473,7 @@ export default function App() {
         let mmrChange = 0;
 
         if (userInTournament) {
-          tournament.rounds.forEach(round => {
+          finalizedRounds.forEach(round => {
             if (!round || !round.matches) return;
             round.matches.forEach(match => {
               if (!match || !match.teamA || !match.teamB) return;
@@ -6204,14 +6533,20 @@ export default function App() {
         }
 
         const historyItem: TournamentHistory = {
-          id: Math.random().toString(36).substr(2, 9),
+          id: tournament.id || Math.random().toString(36).substr(2, 9),
           userId: user.uid,
           name: tournament.name,
           format: tournament.format,
+          criteria: tournament.criteria,
+          scoringType: tournament.scoringType,
           date: new Date(),
+          startedAt: tournament.startedAt,
+          endedAt: now,
+          courts: tournament.courts,
+          totalPoints: tournament.totalPoints,
           numRounds: tournament.numRounds,
           numPlayers: tournament.players.length,
-          rounds: tournament.rounds,
+          rounds: finalizedRounds,
           players: tournament.players,
           venueName: tournament.venueName,
           location: tournament.location
@@ -6227,14 +6562,8 @@ export default function App() {
 
       setSelectedKlasemenTournament({
         ...tournament,
-        rounds: tournament.rounds.map((round, idx) => idx === currentRoundIndex ? {
-          ...round,
-          matches: round.matches.map(m => m ? ({
-            ...m,
-            status: 'completed' as const,
-            duration: m.startedAt ? formatDurationFromMs(now - m.startedAt) : (m.duration || '00:00')
-          }) : m)
-        } : round)
+        rounds: finalizedRounds,
+        endedAt: now
       });
       setKlasemenBackScreen('dashboard');
       setScreen('klasemen');
@@ -6816,6 +7145,7 @@ export default function App() {
         onUpdateMatchPlayScore={() => { }}
         onShareMatch={() => { }}
         isReadOnly={false}
+        isSharedViewer={false}
         saveState="saved"
       />
     );
@@ -6838,7 +7168,11 @@ export default function App() {
             onStartMatch={() => setScreen('settings')}
             onViewRank={() => setScreen('rank-discovery')}
             tournament={tournament}
-            onContinueMatch={() => setScreen('active')}
+            onContinueMatch={() => {
+              setActiveScreenTournament(null);
+              setActiveBackScreen('dashboard');
+              setScreen('active');
+            }}
             onNotifications={() => setScreen('notifications')}
             onViewHistory={(t) => {
               setSelectedHistory(t);
@@ -6868,8 +7202,13 @@ export default function App() {
         {screen === 'history-detail' && selectedHistory && (
           <HistoryDetailScreen
             tournament={selectedHistory}
-            onBack={() => setScreen('dashboard')}
+            onBack={() => {
+              setActiveScreenTournament(null);
+              setActiveBackScreen('dashboard');
+              setScreen('dashboard');
+            }}
             onViewFinalStandings={handleOpenHistoryFinalStandings}
+            onViewMatchDetails={handleOpenHistoryMatchDetails}
           />
         )}
         {screen === 'settings' && (
@@ -6899,15 +7238,29 @@ export default function App() {
         {screen === 'preview' && (
           <MatchPreviewScreen
             onBack={() => setScreen('settings')}
-            onConfirm={() => setScreen('active')}
+            onConfirm={() => {
+              setActiveScreenTournament(null);
+              setActiveBackScreen('dashboard');
+              setScreen('active');
+            }}
             tournament={tournament}
           />
         )}
         {screen === 'active' && (
           <MatchActiveScreen
-            onBack={() => setScreen('dashboard')}
+            onBack={() => {
+              if (activeBackScreen === 'history-detail') {
+                setScreen('history-detail');
+                return;
+              }
+              if (activeBackScreen === 'klasemen') {
+                setScreen('klasemen');
+                return;
+              }
+              setScreen('dashboard');
+            }}
             onStartNewMatch={() => setScreen('settings')}
-            tournament={tournament}
+            tournament={activeScreenTournament || tournament}
             onUpdateScore={handleUpdateScore}
             onNextRound={handleNextRound}
             onUpdateRounds={handleUpdateRounds}
@@ -6915,15 +7268,18 @@ export default function App() {
             onSwapPlayer={handleSwapPlayer}
             onUpdateMatchPlayScore={handleUpdateMatchPlayScore}
             onShareMatch={handleShareCurrentMatch}
-            isReadOnly={isSharedViewer}
+            isReadOnly={isSharedViewer || Boolean(activeScreenTournament)}
+            isSharedViewer={isSharedViewer}
             saveState={activeSaveState}
           />
         )}
         {screen === 'klasemen' && (
           <KlasemenScreen
-            tournament={klasemenBackScreen === 'active' ? tournament : (selectedKlasemenTournament || tournament)}
+            tournament={selectedKlasemenTournament || tournament}
             onBack={() => setScreen(isSharedViewer ? 'active' : klasemenBackScreen)}
             onShare={handleShareStandings}
+            onOpenActive={handleOpenActiveFromStandings}
+            isSharedViewer={isSharedViewer}
           />
         )}
         {screen === 'notifications' && (

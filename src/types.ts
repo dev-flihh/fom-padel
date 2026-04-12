@@ -45,11 +45,13 @@ export interface Round {
 }
 
 export interface Tournament {
+  id?: string;
   name: string;
   format: MatchFormat;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
   startedAt?: number;
+  endedAt?: number;
   courts: number;
   totalPoints: number;
   players: Player[];
@@ -64,7 +66,13 @@ export interface TournamentHistory {
   userId: string;
   name: string;
   format: MatchFormat;
+  criteria?: RankingCriteria;
+  scoringType?: ScoringType;
   date: Date;
+  startedAt?: number;
+  endedAt?: number;
+  courts?: number;
+  totalPoints?: number;
   numRounds: number;
   numPlayers: number;
   rounds?: Round[];
