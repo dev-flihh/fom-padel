@@ -5465,6 +5465,31 @@ export default function App() {
   const lastFriendPickerSummaryRef = useRef('');
 
   useEffect(() => {
+    const getSystemBarColor = () => {
+      if (screen === 'active' || screen === 'klasemen') {
+        const visualTournament = (screen === 'active'
+          ? (activeScreenTournament || tournament)
+          : (selectedKlasemenTournament || tournament)) as Tournament | TournamentHistory;
+        if (visualTournament?.format === 'Americano') return '#0f2a2a';
+        if (visualTournament?.format === 'Mexicano') return '#2b160d';
+        return '#0f1e3a';
+      }
+      return '#f7f7fa';
+    };
+
+    const systemBarColor = getSystemBarColor();
+    let themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (!themeColorMeta) {
+      themeColorMeta = document.createElement('meta');
+      themeColorMeta.setAttribute('name', 'theme-color');
+      document.head.appendChild(themeColorMeta);
+    }
+    themeColorMeta.setAttribute('content', systemBarColor);
+    document.documentElement.style.backgroundColor = systemBarColor;
+    document.body.style.backgroundColor = systemBarColor;
+  }, [screen, tournament, activeScreenTournament, selectedKlasemenTournament]);
+
+  useEffect(() => {
     return () => {
       if (shareToastTimeoutRef.current) {
         window.clearTimeout(shareToastTimeoutRef.current);
