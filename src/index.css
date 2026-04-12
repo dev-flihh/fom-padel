@@ -21,7 +21,7 @@
 
   html {
     color-scheme: light;
-    background-color: #F7F7FA;
+    background-color: #111827;
   }
 
   * {
@@ -31,9 +31,10 @@
   body {
     @apply bg-surface text-on-surface antialiased;
     color-scheme: light;
-    background-color: #F7F7FA;
+    background-color: #111827;
     font-family: var(--font-sans);
     text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
   }
 
   h1, h2, h3, h4 {

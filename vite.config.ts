@@ -17,8 +17,8 @@ export default defineConfig(({mode}) => {
           name: 'FOM Play',
           short_name: 'FOM Play',
           description: 'Padel Tournament & MMR System',
-          theme_color: '#ffffff',
-          background_color: '#ffffff',
+          theme_color: '#111827',
+          background_color: '#111827',
           display: 'standalone',
           icons: [
             {
