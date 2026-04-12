@@ -50,6 +50,8 @@
 @layer components {
   .ios-blur {
     @apply backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+    padding-top: env(safe-area-inset-top, 0px);
+    min-height: calc(56px + env(safe-area-inset-top, 0px));
   }
   
   .ios-card {

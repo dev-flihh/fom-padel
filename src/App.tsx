@@ -2910,7 +2910,7 @@ const MatchActiveScreen = ({
         className="relative z-20 bg-transparent border-b border-transparent"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-lg mx-auto h-16 px-5 relative flex items-center justify-between">
+        <div className="max-w-lg mx-auto h-14 px-5 relative flex items-center justify-between">
           <div className="shrink-0">
             <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", accentTheme.solid, accentTheme.solidShadow)}>
               {!isTournamentEnded && (
@@ -3778,7 +3778,7 @@ const KlasemenScreen = ({
         className="relative z-20 bg-transparent border-b border-transparent"
         style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
       >
-        <div className="max-w-lg mx-auto h-16 px-5 relative flex items-center justify-between">
+        <div className="max-w-lg mx-auto h-14 px-5 relative flex items-center justify-between">
           <div className="shrink-0">
             <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
               {!isTournamentEnded && (
