@@ -2951,9 +2951,6 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
   const previewTheme =
     tournament.format === 'Americano'
       ? {
-        page: 'bg-[linear-gradient(175deg,#f1fbf8_0%,#e8f7f2_48%,#f8fdfb_100%)]',
-        lineA: 'border-[rgba(24,164,134,0.16)]',
-        lineB: 'border-[rgba(24,164,134,0.12)]',
         accentText: 'text-[#12806A]',
         accentBg: 'bg-[#18A486]/10',
         accentBorder: 'border-[#18A486]/20',
@@ -2962,9 +2959,6 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
       }
       : tournament.format === 'Mexicano'
         ? {
-          page: 'bg-[linear-gradient(175deg,#fff7f1_0%,#ffefe4_48%,#fffaf5_100%)]',
-          lineA: 'border-[rgba(230,94,20,0.16)]',
-          lineB: 'border-[rgba(230,94,20,0.12)]',
           accentText: 'text-primary',
           accentBg: 'bg-primary/10',
           accentBorder: 'border-primary/20',
@@ -2972,14 +2966,26 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
           accentSoft: 'bg-primary/12',
         }
         : {
-          page: 'bg-[linear-gradient(175deg,#f3f7ff_0%,#eaf1ff_48%,#f8faff_100%)]',
-          lineA: 'border-[rgba(47,111,228,0.16)]',
-          lineB: 'border-[rgba(47,111,228,0.12)]',
           accentText: 'text-[#2F6FE4]',
           accentBg: 'bg-[#2F6FE4]/10',
           accentBorder: 'border-[#2F6FE4]/20',
           accentSolid: 'bg-[#2F6FE4]',
           accentSoft: 'bg-[#2F6FE4]/12',
+        };
+  const previewPageBgTheme =
+    tournament.format === 'Americano'
+      ? {
+        base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
+        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.22)_0%,rgba(11,46,37,0.12)_16%,rgba(28,96,80,0.06)_32%,rgba(233,250,246,0.04)_44%,rgba(233,250,246,0.18)_58%,rgba(233,250,246,0.42)_72%,rgba(233,250,246,0.62)_86%,rgba(245,255,251,1)_100%)]'
+      }
+      : tournament.format === 'Mexicano'
+        ? {
+          base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.22)_0%,rgba(78,35,14,0.12)_16%,rgba(156,74,28,0.06)_32%,rgba(255,243,231,0.04)_44%,rgba(255,243,231,0.18)_58%,rgba(255,243,231,0.42)_72%,rgba(255,243,231,0.62)_86%,rgba(255,245,236,1)_100%)]'
+        }
+        : {
+          base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
+          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.24)_0%,rgba(14,44,82,0.14)_16%,rgba(37,92,171,0.06)_32%,rgba(237,243,255,0.04)_44%,rgba(237,243,255,0.18)_58%,rgba(237,243,255,0.42)_72%,rgba(237,243,255,0.62)_86%,rgba(246,249,255,1)_100%)]'
         };
   const previewVenue = (tournament.venueName || '').trim();
   const previewCity = (tournament.location || '').trim();
@@ -2988,19 +2994,19 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
     : (previewVenue || previewCity || 'Lokasi belum dipilih');
 
   return (
-    <div className="relative min-h-screen overflow-hidden pb-10">
-      <div className="absolute inset-0 pointer-events-none z-0">
-        <img
-          src={previewBackground}
-          alt="Preview background"
-          className="absolute inset-0 w-full h-full object-cover"
-          loading="eager"
-          decoding="async"
-        />
-        <div className="absolute inset-0 bg-black/30" />
-        <div className={cn('absolute inset-0', previewTheme.page, 'opacity-55')} />
-        <div className={cn('absolute -left-24 -top-12 w-[560px] h-[250px] rounded-[999px] border-[16px] rotate-[10deg]', previewTheme.lineA)} />
-        <div className={cn('absolute -right-28 bottom-6 w-[560px] h-[250px] rounded-[999px] border-[14px] -rotate-[8deg]', previewTheme.lineB)} />
+    <div className="relative min-h-screen pb-10 overflow-hidden bg-transparent z-0">
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className={cn('absolute inset-0', previewPageBgTheme.base)} />
+        <div className="absolute inset-x-0 top-0 h-screen min-h-screen max-h-none overflow-hidden">
+          <img
+            src={previewBackground}
+            alt="Preview background"
+            className="absolute inset-0 h-full w-full object-cover object-center scale-[1.12]"
+            loading="eager"
+            decoding="async"
+          />
+          <div className={cn('absolute inset-0', previewPageBgTheme.photoBlend)} />
+        </div>
       </div>
 
       <header
