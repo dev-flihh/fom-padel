@@ -2944,7 +2944,10 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
   tournament: Tournament,
   selectedBackgroundId?: string | null
 }) => {
-  const previewBackground = resolveMatchBackground(tournament.format, selectedBackgroundId);
+  const previewBackground = resolveMatchBackground(
+    tournament.format,
+    selectedBackgroundId || tournament.backgroundId
+  );
   const previewTheme =
     tournament.format === 'Americano'
       ? {
@@ -7338,6 +7341,7 @@ export default function App() {
     setTournament({
       ...settings,
       id: tournamentId,
+      backgroundId: undefined,
       inactivePlayerIds: sanitizedInactivePlayerIds,
       rounds,
       startedAt: now,
@@ -7375,6 +7379,10 @@ export default function App() {
   const handleSkipMatchBackground = () => {
     const randomBackgroundId = getRandomMatchBackground(tournament.format);
     setDraftMatchBackgroundId(randomBackgroundId);
+    setTournament((prev) => ({
+      ...prev,
+      backgroundId: randomBackgroundId
+    }));
     setScreen('preview');
   };
 
@@ -8328,6 +8336,10 @@ export default function App() {
             onSkip={handleSkipMatchBackground}
             onContinue={() => {
               if (!draftMatchBackgroundId) return;
+              setTournament((prev) => ({
+                ...prev,
+                backgroundId: draftMatchBackgroundId
+              }));
               setScreen('preview');
             }}
           />
@@ -8336,10 +8348,6 @@ export default function App() {
           <MatchPreviewScreen
             onBack={() => setScreen('background-picker')}
             onConfirm={() => {
-              setTournament((prev) => ({
-                ...prev,
-                backgroundId: resolveMatchBackground(prev.format, draftMatchBackgroundId)
-              }));
               setActiveScreenTournament(null);
               setActiveBackScreen('dashboard');
               setScreen('active');
