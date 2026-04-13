@@ -38,7 +38,7 @@ test.describe('Background Picker Flow', () => {
     expect(previewBackgroundSrc).toBe(selectedBackgroundSrc);
   });
 
-  test('skip random works and preview can navigate back to picker', async ({ page }) => {
+  test('skip random stays locked when navigating back and forth from preview', async ({ page }) => {
     await page.goto('/?e2e=background-flow');
 
     await page.getByRole('button', { name: 'Generate' }).click();
@@ -48,11 +48,46 @@ test.describe('Background Picker Flow', () => {
     await expect(page.getByRole('heading', { name: 'Preview Pertandingan' })).toBeVisible();
     const previewBackground = page.locator('img[alt="Preview background"]').first();
     await expect(previewBackground).toBeVisible();
-    const previewBackgroundSrc = await previewBackground.getAttribute('src');
-    expect(previewBackgroundSrc).not.toBeNull();
-    expect(matchPlayBackgroundPool).toContain(previewBackgroundSrc as string);
+    const firstPreviewBackgroundSrc = await previewBackground.getAttribute('src');
+    expect(firstPreviewBackgroundSrc).not.toBeNull();
+    expect(matchPlayBackgroundPool).toContain(firstPreviewBackgroundSrc as string);
 
     await page.locator('header button').first().click();
     await expect(page.getByRole('heading', { name: 'Pilih Background' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Lanjut ke Preview' })).toBeEnabled();
+
+    await page.getByRole('button', { name: 'Lanjut ke Preview' }).click();
+    await expect(page.getByRole('heading', { name: 'Preview Pertandingan' })).toBeVisible();
+    const secondPreviewBackgroundSrc = await page.locator('img[alt="Preview background"]').first().getAttribute('src');
+    expect(secondPreviewBackgroundSrc).toBe(firstPreviewBackgroundSrc);
+  });
+
+  test('selected background remains consistent in preview, active match, and standings', async ({ page }) => {
+    await page.goto('/?e2e=background-flow');
+
+    await page.getByRole('button', { name: 'Generate' }).click();
+    await expect(page.getByRole('heading', { name: 'Pilih Background' })).toBeVisible();
+
+    const selectedBackground = page.locator('img[alt="Background 2"]').first();
+    const selectedBackgroundSrc = await selectedBackground.getAttribute('src');
+    expect(selectedBackgroundSrc).not.toBeNull();
+
+    await selectedBackground.click();
+    await page.getByRole('button', { name: 'Lanjut ke Preview' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Preview Pertandingan' })).toBeVisible();
+    const previewBackgroundSrc = await page.locator('img[alt="Preview background"]').first().getAttribute('src');
+    expect(previewBackgroundSrc).toBe(selectedBackgroundSrc);
+
+    await page.getByRole('button', { name: 'Mulai' }).click();
+    const activeBackground = page.locator('img[alt="Active background"]').first();
+    await expect(activeBackground).toBeVisible();
+    const activeBackgroundSrc = await activeBackground.getAttribute('src');
+    expect(activeBackgroundSrc).toBe(selectedBackgroundSrc);
+
+    await page.getByRole('button', { name: /Lihat Klasemen/i }).first().click();
+    await expect(page.getByText('Ranking Pemain')).toBeVisible();
+    const standingsBackgroundSrc = await page.locator('img[alt="Standings background"]').first().getAttribute('src');
+    expect(standingsBackgroundSrc).toBe(selectedBackgroundSrc);
   });
 });

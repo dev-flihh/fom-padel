@@ -3256,41 +3256,9 @@ const MatchActiveScreen = ({
       (tournament as TournamentHistory).endedAt
     )
   );
-  const activeBackgroundPools: Record<MatchFormat, string[]> = useMemo(() => ({
-    Americano: [
-      '/mockups/active-v2/images/Americano-01.jpg',
-      '/mockups/active-v2/images/Americano-02.jpg',
-      '/mockups/active-v2/images/Americano-03.jpg',
-      '/mockups/active-v2/images/Americano-04.jpg',
-      '/mockups/active-v2/images/americano-06.jpg'
-    ],
-    Mexicano: [
-      '/mockups/active-v2/images/Mexicano-01.jpg',
-      '/mockups/active-v2/images/Mexicano-02.jpg',
-      '/mockups/active-v2/images/Mexicano-03.jpg',
-      '/mockups/active-v2/images/mexicano-04.jpg',
-      '/mockups/active-v2/images/mexicano-05.jpg',
-      '/mockups/active-v2/images/mexicano-06.jpg',
-      '/mockups/active-v2/images/mexicano-07.jpg'
-    ],
-    'Match Play': [
-      '/mockups/active-v2/images/match-01.jpg',
-      '/mockups/active-v2/images/Match-02.jpg',
-      '/mockups/active-v2/images/Match-03.jpg',
-      '/mockups/active-v2/images/match-04.jpg',
-      '/mockups/active-v2/images/match-05.jpg',
-      '/mockups/active-v2/images/match-06.jpg',
-      '/mockups/active-v2/images/Match-07.jpg',
-      '/mockups/active-v2/images/match-08.jpg'
-    ]
-  }), []);
   const activeHeroPhoto = useMemo(() => {
-    const pool = activeBackgroundPools[tournament.format] || [];
-    if (!pool.length) return '';
-    const seed = getTournamentVisualSeed(tournament);
-    const index = Math.abs(seed) % pool.length;
-    return pool[index];
-  }, [activeBackgroundPools, tournament]);
+    return resolveMatchBackground(tournament.format, tournament.backgroundId);
+  }, [tournament.backgroundId, tournament.format]);
   const fomPlayUrl = useMemo(() => {
     const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
     const runtimeBase = `${window.location.protocol}//${window.location.host}`;
@@ -3595,7 +3563,7 @@ const MatchActiveScreen = ({
           {activeHeroPhoto && (
             <img
               src={activeHeroPhoto}
-              alt=""
+              alt="Active background"
               className="absolute inset-0 h-full w-full object-cover object-center scale-[1.12]"
             />
           )}
@@ -4553,40 +4521,9 @@ const KlasemenScreen = ({
           accentSolid: 'bg-[#2F6FE4]',
           accentSolidShadow: 'shadow-[0_10px_22px_rgba(47,111,228,0.26)]'
         };
-  const klasemenBackgroundPools: Record<MatchFormat, string[]> = useMemo(() => ({
-    Americano: [
-      '/mockups/active-v2/images/Americano-01.jpg',
-      '/mockups/active-v2/images/Americano-02.jpg',
-      '/mockups/active-v2/images/Americano-03.jpg',
-      '/mockups/active-v2/images/Americano-04.jpg',
-      '/mockups/active-v2/images/americano-06.jpg'
-    ],
-    Mexicano: [
-      '/mockups/active-v2/images/Mexicano-01.jpg',
-      '/mockups/active-v2/images/Mexicano-02.jpg',
-      '/mockups/active-v2/images/Mexicano-03.jpg',
-      '/mockups/active-v2/images/mexicano-04.jpg',
-      '/mockups/active-v2/images/mexicano-05.jpg',
-      '/mockups/active-v2/images/mexicano-06.jpg',
-      '/mockups/active-v2/images/mexicano-07.jpg'
-    ],
-    'Match Play': [
-      '/mockups/active-v2/images/match-01.jpg',
-      '/mockups/active-v2/images/Match-02.jpg',
-      '/mockups/active-v2/images/Match-03.jpg',
-      '/mockups/active-v2/images/match-04.jpg',
-      '/mockups/active-v2/images/match-05.jpg',
-      '/mockups/active-v2/images/match-06.jpg',
-      '/mockups/active-v2/images/Match-07.jpg',
-      '/mockups/active-v2/images/match-08.jpg'
-    ]
-  }), []);
   const klasemenHeroPhoto = useMemo(() => {
-    const pool = klasemenBackgroundPools[tournament.format] || [];
-    if (!pool.length) return '';
-    const seed = getTournamentVisualSeed(tournament);
-    return pool[Math.abs(seed) % pool.length];
-  }, [klasemenBackgroundPools, tournament]);
+    return resolveMatchBackground(tournament.format, tournament.backgroundId);
+  }, [tournament.backgroundId, tournament.format]);
   const klasemenPageBgTheme =
     tournament.format === 'Americano'
       ? {
@@ -4716,7 +4653,7 @@ const KlasemenScreen = ({
           {klasemenHeroPhoto && (
             <img
               src={klasemenHeroPhoto}
-              alt=""
+              alt="Standings background"
               className="absolute inset-0 h-full w-full object-cover object-center scale-[1.12]"
             />
           )}
@@ -7014,6 +6951,7 @@ export default function App() {
       id: history.id,
       name: history.name,
       format: history.format,
+      backgroundId: history.backgroundId,
       criteria: history.criteria || 'Points Won',
       scoringType: history.scoringType,
       startedAt: fallbackStartedAt,
@@ -7798,6 +7736,7 @@ export default function App() {
           userId: user.uid,
           name: tournament.name,
           format: tournament.format,
+          backgroundId: tournament.backgroundId,
           criteria: tournament.criteria,
           scoringType: tournament.scoringType,
           date: new Date(),
@@ -8397,6 +8336,10 @@ export default function App() {
           <MatchPreviewScreen
             onBack={() => setScreen('background-picker')}
             onConfirm={() => {
+              setTournament((prev) => ({
+                ...prev,
+                backgroundId: resolveMatchBackground(prev.format, draftMatchBackgroundId)
+              }));
               setActiveScreenTournament(null);
               setActiveBackScreen('dashboard');
               setScreen('active');

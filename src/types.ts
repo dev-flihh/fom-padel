@@ -48,6 +48,7 @@ export interface Tournament {
   id?: string;
   name: string;
   format: MatchFormat;
+  backgroundId?: string;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
   startedAt?: number;
@@ -67,6 +68,7 @@ export interface TournamentHistory {
   userId: string;
   name: string;
   format: MatchFormat;
+  backgroundId?: string;
   criteria?: RankingCriteria;
   scoringType?: ScoringType;
   date: Date;
