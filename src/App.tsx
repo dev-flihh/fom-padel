@@ -39,18 +39,20 @@ import {
   ArrowRight,
   Download,
   Building2,
-  AlertTriangle
+  AlertTriangle,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus } from './types';
 import { INITIAL_PLAYERS, INITIAL_TOURNAMENT } from './constants';
 import { auth, db, googleProvider } from './firebase';
+import { getScreenRoute, resolveTrackableButton, syncAnalyticsUser, trackButtonClick, trackPageView } from './analytics';
 import { RegionSelector } from './components/RegionSelector';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   sendPasswordResetEmail,
   RecaptchaVerifier,
@@ -68,17 +70,56 @@ const Logo = ({ className }: { className?: string }) => (
   />
 );
 
-const AppLoadingScreen = () => (
-  <div className="fixed inset-0 z-[220] bg-[#F86600]">
-    <img
-      src="/loading-screen.png"
-      alt="FOM Play loading"
-      className="w-full h-full object-cover"
-      loading="eager"
-      decoding="async"
-    />
-  </div>
-);
+const AppLoadingScreen = () => {
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const root = document.getElementById('root');
+    const prevHtmlBg = html.style.backgroundColor;
+    const prevBodyBg = body.style.backgroundColor;
+    const hadHtmlClass = html.classList.contains('app-loading');
+    const hadBodyClass = body.classList.contains('app-loading');
+    const hadRootClass = root?.classList.contains('app-loading') ?? false;
+    html.style.backgroundColor = '#ff5501';
+    body.style.backgroundColor = '#ff5501';
+    html.classList.add('app-loading');
+    body.classList.add('app-loading');
+    root?.classList.add('app-loading');
+
+    return () => {
+      html.style.backgroundColor = prevHtmlBg;
+      body.style.backgroundColor = prevBodyBg;
+      if (!hadHtmlClass) html.classList.remove('app-loading');
+      if (!hadBodyClass) body.classList.remove('app-loading');
+      if (root && !hadRootClass) root.classList.remove('app-loading');
+    };
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-[220] overflow-hidden"
+      style={{
+        backgroundColor: '#ff5501'
+      }}
+    >
+      <img
+        src="/loading-screen.png"
+        alt="FOM Play loading"
+        className="absolute inset-0 w-full h-full object-cover"
+        loading="eager"
+        decoding="async"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute left-0 right-0 bg-[#ff5501]"
+        style={{
+          bottom: 'calc(-1 * env(safe-area-inset-bottom, 0px) - 140px)',
+          height: 'calc(env(safe-area-inset-bottom, 0px) + 180px)'
+        }}
+      />
+    </div>
+  );
+};
 
 // --- Constants & Helpers ---
 
@@ -167,6 +208,243 @@ const getTournamentElapsedMs = (
   ), 0);
 };
 
+const sanitizeInactivePlayerIds = (players: Player[], rawInactiveIds?: string[]) => {
+  if (!Array.isArray(rawInactiveIds) || rawInactiveIds.length === 0) return [];
+  const knownIds = new Set(players.map((player) => player.id));
+  const unique = new Set<string>();
+  const sanitized: string[] = [];
+  rawInactiveIds.forEach((id) => {
+    if (!id || !knownIds.has(id) || unique.has(id)) return;
+    unique.add(id);
+    sanitized.push(id);
+  });
+  return sanitized;
+};
+
+const getActivePlayersFromTournament = (tournament: Tournament) => {
+  const inactiveIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
+  const inactiveSet = new Set(inactiveIds);
+  return (tournament.players || []).filter((player) => !inactiveSet.has(player.id));
+};
+
+const rebuildAmericanoFutureRounds = (
+  tournament: Tournament,
+  targetNumRounds: number
+): Round[] => {
+  const safeTarget = Math.max(1, Math.floor(targetNumRounds || 1));
+  const currentRoundIndex = tournament.rounds.findIndex((round) => (
+    (round.matches || []).some((match) => match.status === 'active')
+  ));
+  const lockedRoundCount = currentRoundIndex === -1
+    ? Math.min(tournament.rounds.length, safeTarget)
+    : Math.min(currentRoundIndex + 1, safeTarget);
+
+  const nextRounds: Round[] = tournament.rounds.slice(0, lockedRoundCount).map((round) => ({
+    ...round,
+    playersBye: [...(round.playersBye || [])],
+    matches: round.matches.map((match) => ({
+      ...match,
+      teamA: { ...match.teamA, players: [...match.teamA.players] },
+      teamB: { ...match.teamB, players: [...match.teamB.players] }
+    }))
+  }));
+
+  const activePlayers = getActivePlayersFromTournament(tournament);
+  const playerMatchCounts: Record<string, number> = {};
+  const partnerCounts: Record<string, Record<string, number>> = {};
+  const opponentCounts: Record<string, Record<string, number>> = {};
+  const lastPartnerByPlayer: Record<string, string | null> = {};
+
+  activePlayers.forEach((player) => {
+    playerMatchCounts[player.id] = 0;
+    partnerCounts[player.id] = {};
+    opponentCounts[player.id] = {};
+    lastPartnerByPlayer[player.id] = null;
+  });
+
+  const getPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
+    if (map[a.id] === undefined || map[b.id] === undefined) return 0;
+    return map[a.id]?.[b.id] || 0;
+  };
+
+  const incrementPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
+    if (map[a.id] === undefined || map[b.id] === undefined) return;
+    map[a.id][b.id] = (map[a.id][b.id] || 0) + 1;
+    map[b.id][a.id] = (map[b.id][a.id] || 0) + 1;
+  };
+
+  nextRounds.forEach((round) => {
+    round.matches.forEach((match) => {
+      const [p1, p2] = match.teamA.players;
+      const [p3, p4] = match.teamB.players;
+      if (!p1 || !p2 || !p3 || !p4) return;
+
+      [p1, p2, p3, p4].forEach((player) => {
+        if (playerMatchCounts[player.id] === undefined) return;
+        playerMatchCounts[player.id] = (playerMatchCounts[player.id] || 0) + 1;
+      });
+
+      incrementPairCount(partnerCounts, p1, p2);
+      incrementPairCount(partnerCounts, p3, p4);
+      incrementPairCount(opponentCounts, p1, p3);
+      incrementPairCount(opponentCounts, p1, p4);
+      incrementPairCount(opponentCounts, p2, p3);
+      incrementPairCount(opponentCounts, p2, p4);
+
+      if (playerMatchCounts[p1.id] !== undefined && playerMatchCounts[p2.id] !== undefined) {
+        lastPartnerByPlayer[p1.id] = p2.id;
+        lastPartnerByPlayer[p2.id] = p1.id;
+      }
+      if (playerMatchCounts[p3.id] !== undefined && playerMatchCounts[p4.id] !== undefined) {
+        lastPartnerByPlayer[p3.id] = p4.id;
+        lastPartnerByPlayer[p4.id] = p3.id;
+      }
+    });
+  });
+
+  const listCombinationsOf3 = (arr: Player[]) => {
+    const combos: Player[][] = [];
+    for (let i = 0; i < arr.length; i++) {
+      for (let j = i + 1; j < arr.length; j++) {
+        for (let k = j + 1; k < arr.length; k++) {
+          combos.push([arr[i], arr[j], arr[k]]);
+        }
+      }
+    }
+    return combos;
+  };
+
+  const evaluateSplitPenalty = (group: Player[]) => {
+    const splits: [number, number, number, number][] = [
+      [0, 1, 2, 3],
+      [0, 2, 1, 3],
+      [0, 3, 1, 2]
+    ];
+    let best = {
+      penalty: Number.POSITIVE_INFINITY,
+      teamA: [group[0], group[1]] as [Player, Player],
+      teamB: [group[2], group[3]] as [Player, Player]
+    };
+
+    for (const [a1, a2, b1, b2] of splits) {
+      const teamA: [Player, Player] = [group[a1], group[a2]];
+      const teamB: [Player, Player] = [group[b1], group[b2]];
+
+      const partnerPenaltyA =
+        getPairCount(partnerCounts, teamA[0], teamA[1]) * 100 +
+        (lastPartnerByPlayer[teamA[0].id] === teamA[1].id ? 180 : 0);
+      const partnerPenaltyB =
+        getPairCount(partnerCounts, teamB[0], teamB[1]) * 100 +
+        (lastPartnerByPlayer[teamB[0].id] === teamB[1].id ? 180 : 0);
+
+      const opponentPenalty =
+        getPairCount(opponentCounts, teamA[0], teamB[0]) * 12 +
+        getPairCount(opponentCounts, teamA[0], teamB[1]) * 12 +
+        getPairCount(opponentCounts, teamA[1], teamB[0]) * 12 +
+        getPairCount(opponentCounts, teamA[1], teamB[1]) * 12;
+
+      const penalty = partnerPenaltyA + partnerPenaltyB + opponentPenalty;
+      if (penalty < best.penalty) {
+        best = { penalty, teamA, teamB };
+      }
+    }
+
+    return best;
+  };
+
+  const playersPerRound = Math.min(Math.floor(activePlayers.length / 4) * 4, tournament.courts * 4);
+  while (nextRounds.length < safeTarget) {
+    const roundId = nextRounds.length + 1;
+    const sortedPlayers = [...activePlayers].sort((a, b) => {
+      const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+      return diff !== 0 ? diff : (Math.random() - 0.5);
+    });
+    const playersInRound = sortedPlayers.slice(0, playersPerRound);
+    const playersBye = sortedPlayers.slice(playersPerRound);
+    const roundMatches: Match[] = [];
+
+    if (playersPerRound > 0) {
+      const remaining = [...playersInRound];
+      for (let m = 0; m < playersPerRound / 4; m++) {
+        if (remaining.length < 4) break;
+        remaining.sort((a, b) => {
+          const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+          return diff !== 0 ? diff : (Math.random() - 0.5);
+        });
+
+        const seed = remaining[0];
+        const candidates = remaining.slice(1);
+        const trios = listCombinationsOf3(candidates);
+        let bestGroup: Player[] = [seed, ...candidates.slice(0, 3)];
+        let bestPenalty = Number.POSITIVE_INFINITY;
+
+        trios.forEach((trio) => {
+          const group = [seed, ...trio];
+          const pairwisePenalty = group.reduce((sum, playerA, i) => {
+            for (let j = i + 1; j < group.length; j++) {
+              const playerB = group[j];
+              const interactions =
+                getPairCount(partnerCounts, playerA, playerB) * 16 +
+                getPairCount(opponentCounts, playerA, playerB) * 6;
+              sum += interactions;
+              if (
+                lastPartnerByPlayer[playerA.id] === playerB.id ||
+                lastPartnerByPlayer[playerB.id] === playerA.id
+              ) {
+                sum += 30;
+              }
+            }
+            return sum;
+          }, 0);
+
+          if (pairwisePenalty < bestPenalty) {
+            bestPenalty = pairwisePenalty;
+            bestGroup = group;
+          }
+        });
+
+        const { teamA, teamB } = evaluateSplitPenalty(bestGroup);
+        const [p1, p2] = teamA;
+        const [p3, p4] = teamB;
+        roundMatches.push({
+          id: `r${roundId}-m${m + 1}`,
+          court: m + 1,
+          roundId,
+          status: 'pending',
+          teamA: { players: [p1, p2], score: 0 },
+          teamB: { players: [p3, p4], score: 0 }
+        });
+
+        [p1, p2, p3, p4].forEach((player) => {
+          playerMatchCounts[player.id] = (playerMatchCounts[player.id] || 0) + 1;
+        });
+        incrementPairCount(partnerCounts, p1, p2);
+        incrementPairCount(partnerCounts, p3, p4);
+        incrementPairCount(opponentCounts, p1, p3);
+        incrementPairCount(opponentCounts, p1, p4);
+        incrementPairCount(opponentCounts, p2, p3);
+        incrementPairCount(opponentCounts, p2, p4);
+        lastPartnerByPlayer[p1.id] = p2.id;
+        lastPartnerByPlayer[p2.id] = p1.id;
+        lastPartnerByPlayer[p3.id] = p4.id;
+        lastPartnerByPlayer[p4.id] = p3.id;
+
+        const groupIds = new Set(bestGroup.map((player) => player.id));
+        const nextRemaining = remaining.filter((player) => !groupIds.has(player.id));
+        remaining.splice(0, remaining.length, ...nextRemaining);
+      }
+    }
+
+    nextRounds.push({
+      id: roundId,
+      matches: roundMatches,
+      playersBye
+    });
+  }
+
+  return nextRounds;
+};
+
 const hashStringToInt = (value: string) => {
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
@@ -234,6 +512,162 @@ const normalizeHistoryTournament = (rawItem: TournamentHistory): TournamentHisto
   };
 };
 
+type CompletedMatchHistoryItem = {
+  id: string;
+  tournament: TournamentHistory;
+  roundId: number;
+  match: Match;
+};
+
+type CompletedMatchHistoryCardProps = {
+  key?: React.Key;
+  item: CompletedMatchHistoryItem;
+  onClick?: () => void;
+  showTournamentMeta?: boolean;
+};
+
+type TournamentHistoryCardProps = {
+  key?: React.Key;
+  tournament: TournamentHistory;
+  onClick: () => void;
+};
+
+const getTournamentDateMs = (tournament: TournamentHistory) => {
+  const rawDate = tournament.date instanceof Date ? tournament.date : new Date(tournament.date);
+  return Number.isNaN(rawDate.getTime()) ? 0 : rawDate.getTime();
+};
+
+const sortTournamentsByNewest = (tournaments: TournamentHistory[]) => (
+  [...tournaments].sort((a, b) => getTournamentDateMs(b) - getTournamentDateMs(a))
+);
+
+const buildCompletedMatchHistoryItems = (
+  tournaments: TournamentHistory[],
+  limit: number = Number.MAX_SAFE_INTEGER
+): CompletedMatchHistoryItem[] => {
+  const sortedTournaments = [...tournaments].sort((a, b) => getTournamentDateMs(b) - getTournamentDateMs(a));
+  const items: CompletedMatchHistoryItem[] = [];
+
+  for (const tournament of sortedTournaments) {
+    const rounds = [...(tournament.rounds || [])].sort((a, b) => b.id - a.id);
+    for (const round of rounds) {
+      const matches = (round.matches || []).filter((match) => match.status !== 'pending');
+      for (const match of matches) {
+        items.push({
+          id: `${tournament.id}-${round.id}-${match.id}`,
+          tournament,
+          roundId: round.id,
+          match
+        });
+        if (items.length >= limit) return items;
+      }
+    }
+  }
+
+  return items;
+};
+
+const CompletedMatchHistoryCard = ({
+  item,
+  onClick,
+  showTournamentMeta = true
+}: CompletedMatchHistoryCardProps) => {
+  const content = (
+    <>
+      <div className="flex justify-between items-start gap-3 mb-3">
+        <div className="min-w-0">
+          <span className="text-[10px] font-bold text-ios-gray uppercase tracking-wider mb-1 block">
+            {item.tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+          </span>
+          <h4 className="text-[16px] font-bold text-on-surface leading-tight truncate">
+            {showTournamentMeta ? item.tournament.name : `Ronde ${item.roundId} • Lapangan ${item.match.court}`}
+          </h4>
+          {showTournamentMeta && (
+            <span className="text-[12px] font-medium text-ios-gray truncate block">
+              Ronde {item.roundId} • Lapangan {item.match.court}
+            </span>
+          )}
+        </div>
+        {onClick && (
+          <div className="bg-surface p-1.5 rounded-full shrink-0">
+            <ChevronRight size={17} className="text-ios-gray" />
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold text-ios-gray uppercase tracking-wide mb-1">Team A</p>
+          <p className="text-sm font-semibold text-on-surface truncate">
+            {item.match.teamA.players.map((p) => p.name.split(' ')[0]).join(' / ')}
+          </p>
+        </div>
+        <div className="text-[20px] font-display font-black italic tracking-tighter whitespace-nowrap">
+          <span className="text-primary">{item.match.teamA.score}</span>
+          <span className="text-ios-gray/30 mx-1">-</span>
+          <span className="text-on-surface">{item.match.teamB.score}</span>
+        </div>
+        <div className="min-w-0 text-right">
+          <p className="text-[11px] font-bold text-ios-gray uppercase tracking-wide mb-1">Team B</p>
+          <p className="text-sm font-semibold text-on-surface truncate">
+            {item.match.teamB.players.map((p) => p.name.split(' ')[0]).join(' / ')}
+          </p>
+        </div>
+      </div>
+    </>
+  );
+
+  if (!onClick) {
+    return (
+      <div className="w-full bg-white rounded-[20px] p-4 text-left shadow-sm border border-ios-gray/10">
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={onClick}
+      className="w-full bg-white rounded-[20px] p-4 text-left shadow-sm border border-ios-gray/10 tap-target"
+    >
+      {content}
+    </button>
+  );
+};
+
+const TournamentHistoryCard = ({
+  tournament,
+  onClick
+}: TournamentHistoryCardProps) => (
+  <button
+    onClick={onClick}
+    className="w-full bg-white rounded-[20px] p-4 text-left shadow-sm border border-ios-gray/10 tap-target"
+  >
+    <div className="flex justify-between items-start gap-3">
+      <div className="min-w-0">
+        <span className="text-[10px] font-bold text-ios-gray uppercase tracking-wider mb-1 block">
+          {tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+        </span>
+        <h4 className="text-[17px] font-bold text-on-surface leading-tight truncate">{tournament.name}</h4>
+      </div>
+      <div className="bg-surface p-1.5 rounded-full shrink-0">
+        <ChevronRight size={18} className="text-ios-gray" />
+      </div>
+    </div>
+    <div className="mt-3 flex flex-wrap gap-2">
+      <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-primary/10 bg-primary/5 text-[11px] font-bold text-primary">
+        Ronde {tournament.numRounds}
+      </span>
+      <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-ios-gray/10 bg-ios-gray/5 text-[11px] font-bold text-ios-gray">
+        {tournament.format}
+      </span>
+      <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-ios-gray/10 bg-ios-gray/5 text-[11px] font-bold text-ios-gray">
+        {tournament.numPlayers} Pemain
+      </span>
+    </div>
+  </button>
+);
+
 const RankBadge = ({ mmr, size = 'md', showLabel = true }: { mmr: number, size?: 'sm' | 'md' | 'lg', showLabel?: boolean }) => {
   const rank = getRankInfo(mmr);
   const Icon = rank.icon;
@@ -261,6 +695,53 @@ const getTournamentStorageKey = (uid: string) => `fom_play_active_tournament_${u
 const getTournamentHistoryStorageKey = (uid: string) => `fom_play_tournament_history_${uid}`;
 const getTournamentShareStorageKey = (uid: string, startedAt?: number) => `fom_play_share_id_${uid}_${startedAt || 'none'}`;
 const DEFAULT_PLAYER_SEED_NAMES = new Set(INITIAL_PLAYERS.map((p) => p.name.toLowerCase()));
+const FALLBACK_MATCH_BACKGROUND = '/mockups/active-v2/images/match-01.jpg';
+const MATCH_BACKGROUND_POOLS: Record<MatchFormat, string[]> = {
+  Americano: [
+    '/mockups/active-v2/images/Americano-01.jpg',
+    '/mockups/active-v2/images/Americano-02.jpg',
+    '/mockups/active-v2/images/Americano-03.jpg',
+    '/mockups/active-v2/images/Americano-04.jpg',
+    '/mockups/active-v2/images/americano-06.jpg'
+  ],
+  Mexicano: [
+    '/mockups/active-v2/images/Mexicano-01.jpg',
+    '/mockups/active-v2/images/Mexicano-02.jpg',
+    '/mockups/active-v2/images/Mexicano-03.jpg',
+    '/mockups/active-v2/images/mexicano-04.jpg',
+    '/mockups/active-v2/images/mexicano-05.jpg',
+    '/mockups/active-v2/images/mexicano-06.jpg',
+    '/mockups/active-v2/images/mexicano-07.jpg'
+  ],
+  'Match Play': [
+    '/mockups/active-v2/images/match-01.jpg',
+    '/mockups/active-v2/images/Match-02.jpg',
+    '/mockups/active-v2/images/Match-03.jpg',
+    '/mockups/active-v2/images/match-04.jpg',
+    '/mockups/active-v2/images/match-05.jpg',
+    '/mockups/active-v2/images/match-06.jpg',
+    '/mockups/active-v2/images/Match-07.jpg',
+    '/mockups/active-v2/images/match-08.jpg'
+  ]
+};
+
+const getMatchBackgroundPool = (format: MatchFormat) => {
+  const pool = MATCH_BACKGROUND_POOLS[format] || [];
+  return pool.length > 0 ? pool : [FALLBACK_MATCH_BACKGROUND];
+};
+
+const getRandomMatchBackground = (format: MatchFormat) => {
+  const pool = getMatchBackgroundPool(format);
+  return pool[Math.floor(Math.random() * pool.length)];
+};
+
+const resolveMatchBackground = (format: MatchFormat, selectedBackgroundId?: string | null) => {
+  const pool = getMatchBackgroundPool(format);
+  if (selectedBackgroundId && pool.includes(selectedBackgroundId)) {
+    return selectedBackgroundId;
+  }
+  return pool[0] || FALLBACK_MATCH_BACKGROUND;
+};
 
 const isLegacySeedPlayers = (players: Player[] | null | undefined) => {
   if (!players || players.length === 0) return false;
@@ -287,7 +768,15 @@ const getInitialSharedContext = () => {
 const getInitialE2EScenario = () => {
   const params = new URLSearchParams(window.location.search);
   const scenario = params.get('e2e');
-  return scenario === 'finished-flow' ? scenario : null;
+  if (scenario === 'finished-flow' || scenario === 'background-flow') return scenario;
+  return null;
+};
+
+const detectIOSDevice = () => {
+  const ua = window.navigator.userAgent.toLowerCase();
+  const isiPhoneOrIPad = /iphone|ipad|ipod/.test(ua);
+  const isiPadOSDesktop = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  return isiPhoneOrIPad || isiPadOSDesktop;
 };
 
 const InstallAppButton = ({
@@ -302,12 +791,7 @@ const InstallAppButton = ({
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
 
-  const isIos = useMemo(() => {
-    const ua = window.navigator.userAgent.toLowerCase();
-    const isiPhoneOrIPad = /iphone|ipad|ipod/.test(ua);
-    const isiPadOSDesktop = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
-    return isiPhoneOrIPad || isiPadOSDesktop;
-  }, []);
+  const isIos = useMemo(() => detectIOSDevice(), []);
 
   useEffect(() => {
     const checkStandalone = () => {
@@ -427,7 +911,7 @@ const BottomNav = ({
   return (
     <nav
       className="fixed inset-x-0 z-50 px-4"
-      style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)' }}
+      style={{ bottom: 'calc(var(--app-safe-bottom, 0px) + var(--app-bottom-nav-gap, 14px))' }}
     >
       <div className="mx-auto w-full max-w-md rounded-full border border-white/70 bg-white/68 backdrop-blur-2xl supports-[backdrop-filter]:bg-white/58 px-2 py-2 shadow-[0_10px_28px_rgba(17,24,39,0.10)]">
         <div className="flex items-center justify-between gap-1">
@@ -502,6 +986,9 @@ const LoginScreen = () => {
     else if (err.code === 'auth/operation-not-allowed') setError('Metode daftar Email/Password belum aktif di Firebase Console.');
     else if (err.code === 'auth/network-request-failed') setError('Koneksi internet bermasalah. Coba lagi.');
     else if (err.code === 'auth/too-many-requests') setError('Terlalu banyak percobaan. Tunggu sebentar lalu coba lagi.');
+    else if (err.code === 'auth/popup-blocked') setError('Popup login diblokir browser. Mengalihkan ke login Google...');
+    else if (err.code === 'auth/popup-closed-by-user') setError('Login Google dibatalkan sebelum selesai.');
+    else if (err.code === 'auth/unauthorized-domain') setError('Domain belum diizinkan untuk Google login di Firebase.');
     else setError('Terjadi kesalahan. Silakan coba lagi.');
   };
 
@@ -559,22 +1046,63 @@ const LoginScreen = () => {
   };
 
   const handleGoogleLogin = async () => {
+    const prepareRedirectAuth = async () => {
+      if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((registration) => registration.unregister()));
+      } catch (swErr) {
+        console.warn('Service worker cleanup before auth redirect failed:', swErr);
+      }
+    };
+
     setError('');
     setLoading(true);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const user = result.user;
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      if (!userDoc.exists()) {
-        await setDoc(doc(db, 'users', user.uid), {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          photoURL: user.photoURL,
-          createdAt: serverTimestamp(),
-        });
+      const isLocalDevHost =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+      const isMobileOrStandalone =
+        typeof window !== 'undefined' &&
+        (window.matchMedia('(display-mode: standalone)').matches ||
+          /iPhone|iPad|iPod|Android/i.test(window.navigator.userAgent));
+
+      if (isLocalDevHost) {
+        await signInWithPopup(auth, googleProvider);
+        return;
       }
+
+      if (isMobileOrStandalone) {
+        await prepareRedirectAuth();
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+
+      await signInWithPopup(auth, googleProvider);
     } catch (err) {
+      const authCode = (err as { code?: string })?.code;
+      if (
+        authCode === 'auth/popup-blocked' ||
+        authCode === 'auth/cancelled-popup-request' ||
+        authCode === 'auth/operation-not-supported-in-this-environment'
+      ) {
+        if (
+          typeof window !== 'undefined' &&
+          (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ) {
+          setError('Popup login diblokir di localhost. Izinkan popup untuk localhost:3000 lalu coba lagi.');
+          return;
+        }
+        try {
+          await prepareRedirectAuth();
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          handleAuthError(redirectErr);
+          return;
+        }
+      }
+
       handleAuthError(err);
     } finally {
       setLoading(false);
@@ -631,7 +1159,13 @@ const LoginScreen = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-white">
+    <div
+      className="min-h-screen flex flex-col items-center justify-start px-6 bg-white"
+      style={{
+        paddingTop: 'calc(var(--app-safe-top, 0px) + 20px)',
+        paddingBottom: 'calc(var(--app-safe-bottom, 0px) + 24px)'
+      }}
+    >
       <div className="w-full max-w-sm space-y-8">
         <header className="text-center space-y-6">
           <div className="flex justify-center">
@@ -862,29 +1396,30 @@ const DashboardScreen = ({
   tournament,
   onContinueMatch,
   onNotifications,
-  onViewHistory,
+  onOpenHistoryList,
+  onOpenHistoryMatch,
   unreadCount,
   tournaments,
-  user,
-  addNotification
+  user
 }: {
   onStartMatch: () => void,
   onViewRank: () => void,
   tournament: Tournament,
   onContinueMatch: () => void,
   onNotifications: () => void,
-  onViewHistory: (t: TournamentHistory) => void,
+  onOpenHistoryList: () => void,
+  onOpenHistoryMatch: (t: TournamentHistory) => void,
   unreadCount: number,
   tournaments: TournamentHistory[],
-  user: any,
-  addNotification: (title: string, message: string, type: AppNotification['type']) => void
+  user: any
 }) => {
   const activeRound = tournament.rounds?.find(r => r && r.matches && r.matches.some(m => m && m.status === 'active'));
   const activeMatches = activeRound ? activeRound.matches.filter(m => m && m.status === 'active') : [];
+  const recentTournaments = useMemo(() => sortTournamentsByNewest(tournaments).slice(0, 5), [tournaments]);
 
   return (
     <div className="pb-32">
-      <header className="ios-blur sticky top-0 w-full z-50 flex items-center px-4 h-14 border-b border-ios-gray/10">
+      <header className="ios-blur sticky top-0 w-full z-50 flex items-center px-4 h-14 border-b-0">
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
             <Logo className="h-8 w-auto" />
@@ -1018,63 +1553,29 @@ const DashboardScreen = ({
 
         <section className="mb-10">
           <div
-            onClick={() => {
-              if (tournaments.length > 0) {
-                onViewHistory(tournaments[0]);
-              } else {
-                addNotification('Riwayat', 'Belum ada riwayat turnamen untuk ditampilkan.', 'system');
-              }
-            }}
+            onClick={onOpenHistoryList}
             className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
           >
             <h2 className="text-xl font-bold tracking-tight">Riwayat Terakhir</h2>
             <button
               className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline"
             >
-              Buka Riwayat
+              Lihat Semua
             </button>
           </div>
           <div className="px-5 flex flex-col gap-4">
-            {tournaments.length === 0 ? (
+            {recentTournaments.length === 0 ? (
               <div className="bg-white border border-ios-gray/10 rounded-[20px] p-8 text-center shadow-sm">
                 <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-                <p className="text-ios-gray font-medium">Belum ada riwayat turnamen.</p>
+                <p className="text-ios-gray font-medium">Belum ada riwayat pertandingan.</p>
               </div>
             ) : (
-              tournaments.slice(0, 5).map((item) => (
-                <button
+              recentTournaments.map((item) => (
+                <TournamentHistoryCard
                   key={item.id}
-                  onClick={() => onViewHistory(item)}
-                  className="w-full bg-white rounded-[20px] p-4 text-left shadow-sm border border-ios-gray/10 tap-target flex flex-col gap-3"
-                >
-                  <div className="flex justify-between items-start">
-                    <div className="flex flex-col min-w-0">
-                      <span className="text-[10px] font-bold text-ios-gray uppercase tracking-wider mb-1">
-                        {item.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
-                      </span>
-                      <h4 className="text-[17px] font-bold text-on-surface leading-tight truncate">{item.name}</h4>
-                    </div>
-                    <div className="bg-surface p-1.5 rounded-full">
-                      <ChevronRight size={18} className="text-ios-gray" />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center bg-primary/5 px-3 py-2 rounded-xl gap-2 border border-primary/10">
-                      <Zap size={16} className="text-primary" />
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-bold text-primary uppercase leading-none mb-0.5">Rounds</span>
-                        <span className="text-xs font-bold leading-none">{item.numRounds}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center bg-ios-gray/5 px-3 py-2 rounded-xl gap-2 border border-ios-gray/10">
-                      <Users size={16} className="text-ios-gray" />
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-bold text-ios-gray uppercase leading-none mb-0.5">Pemain</span>
-                        <span className="text-xs font-bold leading-none">{item.numPlayers}</span>
-                      </div>
-                    </div>
-                  </div>
-                </button>
+                  tournament={item}
+                  onClick={() => onOpenHistoryMatch(item)}
+                />
               ))
             )}
           </div>
@@ -1695,6 +2196,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
       courts,
       totalPoints: points,
       players: selectedPlayers,
+      inactivePlayerIds: [],
       numRounds,
       venueName: venueName.trim(),
       location: location.trim(),
@@ -1759,7 +2261,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     <div className="pb-32 bg-white min-h-screen">
       <nav
         className="ios-blur sticky top-0 z-50 w-full"
-        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+        style={{ paddingTop: 'var(--app-safe-top, 0px)' }}
       >
         <div className="flex justify-between items-center w-full px-4 h-14">
           <div className="flex items-center gap-2">
@@ -2334,11 +2836,115 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   );
 };
 
-const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
+const MatchBackgroundPickerScreen = ({
+  tournament,
+  selectedBackgroundId,
+  onSelectBackground,
+  onBack,
+  onSkip,
+  onContinue
+}: {
+  tournament: Tournament,
+  selectedBackgroundId: string | null,
+  onSelectBackground: (backgroundId: string) => void,
+  onBack: () => void,
+  onSkip: () => void,
+  onContinue: () => void
+}) => {
+  const backgroundOptions = useMemo(() => getMatchBackgroundPool(tournament.format), [tournament.format]);
+
+  return (
+    <div className="bg-white min-h-screen pb-36">
+      <nav
+        className="ios-blur sticky top-0 z-50 w-full"
+        style={{ paddingTop: 'var(--app-safe-top, 0px)' }}
+      >
+        <div className="flex justify-between items-center w-full px-4 h-14">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="tap-target p-2 -ml-2">
+              <ChevronLeft size={24} className="text-primary" />
+            </button>
+            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Pilih Background</h1>
+          </div>
+          <button
+            onClick={onSkip}
+            className="font-bold tap-target px-2 text-primary transition-colors"
+          >
+            Lewati
+          </button>
+        </div>
+      </nav>
+
+      <main className="max-w-md mx-auto px-4 py-6 space-y-4">
+        <section className="space-y-1">
+          <p className="text-[15px] font-semibold text-on-surface">Pilih dari koleksi aplikasi</p>
+          <p className="text-[12px] text-ios-gray">Background akan ditampilkan di Preview Pertandingan.</p>
+        </section>
+
+        <section className="grid grid-cols-2 gap-3">
+          {backgroundOptions.map((backgroundId, index) => {
+            const isSelected = backgroundId === selectedBackgroundId;
+            return (
+              <button
+                key={backgroundId}
+                onClick={() => onSelectBackground(backgroundId)}
+                className={cn(
+                  "relative overflow-hidden rounded-2xl border tap-target transition-all",
+                  isSelected
+                    ? "border-primary ring-2 ring-primary/30 shadow-lg shadow-primary/15"
+                    : "border-ios-gray/15"
+                )}
+              >
+                <img
+                  src={backgroundId}
+                  alt={`Background ${index + 1}`}
+                  className="w-full aspect-[4/5] object-cover"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <div className="absolute inset-0 bg-black/20 pointer-events-none" />
+                {isSelected && (
+                  <div className="absolute right-2 top-2 w-7 h-7 rounded-full bg-primary text-white flex items-center justify-center shadow-md shadow-primary/30">
+                    <Check size={16} />
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </section>
+      </main>
+
+      <div className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-ios-gray/10">
+        <div
+          className="max-w-md mx-auto px-4 py-3 space-y-2"
+          style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }}
+        >
+          <button
+            onClick={onContinue}
+            disabled={!selectedBackgroundId}
+            className="w-full h-12 bg-primary text-white rounded-2xl font-bold text-[15px] shadow-lg shadow-primary/20 disabled:opacity-40 disabled:shadow-none disabled:active:scale-100 tap-target transition-all"
+          >
+            Lanjut ke Preview
+          </button>
+          <button
+            onClick={onSkip}
+            className="w-full h-11 rounded-2xl border border-ios-gray/15 text-ios-gray font-semibold text-[14px] tap-target"
+          >
+            Lewati (Random)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundId }: {
   onBack: () => void,
   onConfirm: () => void,
-  tournament: Tournament
+  tournament: Tournament,
+  selectedBackgroundId?: string | null
 }) => {
+  const previewBackground = resolveMatchBackground(tournament.format, selectedBackgroundId);
   const previewTheme =
     tournament.format === 'Americano'
       ? {
@@ -2381,14 +2987,22 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
   return (
     <div className="relative min-h-screen overflow-hidden pb-10">
       <div className="absolute inset-0 pointer-events-none z-0">
-        <div className={cn('absolute inset-0', previewTheme.page)} />
+        <img
+          src={previewBackground}
+          alt="Preview background"
+          className="absolute inset-0 w-full h-full object-cover"
+          loading="eager"
+          decoding="async"
+        />
+        <div className="absolute inset-0 bg-black/30" />
+        <div className={cn('absolute inset-0', previewTheme.page, 'opacity-55')} />
         <div className={cn('absolute -left-24 -top-12 w-[560px] h-[250px] rounded-[999px] border-[16px] rotate-[10deg]', previewTheme.lineA)} />
         <div className={cn('absolute -right-28 bottom-6 w-[560px] h-[250px] rounded-[999px] border-[14px] -rotate-[8deg]', previewTheme.lineB)} />
       </div>
 
       <header
         className="ios-blur fixed top-0 inset-x-0 z-50 bg-white/85"
-        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+        style={{ paddingTop: 'var(--app-safe-top, 0px)' }}
       >
         <div className="flex justify-between items-center px-4 h-14 w-full max-w-lg mx-auto">
           <div className="flex items-center gap-2">
@@ -2408,7 +3022,7 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament }: {
 
       <main
         className="relative z-10 pb-10 max-w-lg mx-auto px-4 space-y-4"
-        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 74px)' }}
+        style={{ paddingTop: 'calc(var(--app-safe-top, 0px) + 74px)' }}
       >
         <section className="bg-white/92 backdrop-blur-sm rounded-2xl border border-white/70 shadow-[0_8px_24px_rgba(17,24,39,0.06)] p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
@@ -2519,6 +3133,9 @@ const MatchActiveScreen = ({
   onUpdateScore,
   onNextRound,
   onUpdateRounds,
+  onUpdateActivePlayers,
+  onDeleteRoundsFrom,
+  needsRegenerateFromRound,
   onOpenStandings,
   onSwapPlayer,
   onUpdateMatchPlayScore,
@@ -2533,6 +3150,9 @@ const MatchActiveScreen = ({
   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void,
   onNextRound: () => void,
   onUpdateRounds: (numRounds: number) => boolean,
+  onUpdateActivePlayers: (activePlayerIds: string[]) => void,
+  onDeleteRoundsFrom: (roundId: number) => void,
+  needsRegenerateFromRound: number | null,
   onOpenStandings: () => void,
   onSwapPlayer: (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => void,
   onUpdateMatchPlayScore: (matchId: string, team: 'A' | 'B') => void,
@@ -2546,6 +3166,10 @@ const MatchActiveScreen = ({
   const [isRoundEditorOpen, setIsRoundEditorOpen] = useState(false);
   const [roundEditValue, setRoundEditValue] = useState('');
   const [roundEditError, setRoundEditError] = useState('');
+  const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+  const [isActivePlayersEditorOpen, setIsActivePlayersEditorOpen] = useState(false);
+  const [isRoundResetSelectorOpen, setIsRoundResetSelectorOpen] = useState(false);
+  const [draftActivePlayerIds, setDraftActivePlayerIds] = useState<Set<string>>(new Set());
   const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
   const [nowMs, setNowMs] = useState(Date.now());
   const [modalBottomOffset, setModalBottomOffset] = useState(88);
@@ -2613,10 +3237,18 @@ const MatchActiveScreen = ({
   const hasActiveTournament = currentRoundIndex !== -1;
   const hasTournamentData = tournament.rounds.length > 0;
   const shouldShowActiveMatchScreen = hasTournamentData;
+  const inactivePlayerIds = useMemo(
+    () => sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds),
+    [tournament.players, tournament.inactivePlayerIds]
+  );
+  const inactivePlayerIdSet = useMemo(() => new Set(inactivePlayerIds), [inactivePlayerIds]);
+  const activePlayerCount = useMemo(
+    () => tournament.players.filter((player) => !inactivePlayerIdSet.has(player.id)).length,
+    [tournament.players, inactivePlayerIdSet]
+  );
   const activeRound = currentRoundIndex !== -1 ? (tournament.rounds[currentRoundIndex] ?? null) : null;
   const activeRoundId = activeRound?.id ?? null;
   const isLastRound = currentRoundIndex !== -1 && currentRoundIndex >= (tournament.numRounds - 1);
-  const isTournamentEnded = tournament.rounds.length > 0 && tournament.rounds.every(r => r.matches.every(m => m.status === 'completed'));
   const totalElapsed = formatDurationFromMs(
     getTournamentElapsedMs(
       tournament.rounds,
@@ -2692,6 +3324,11 @@ const MatchActiveScreen = ({
   const locationDateLabel = placeLabel ? `${placeLabel} | ${gameDateLabel}` : gameDateLabel;
   const completedRounds = tournament.rounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
   const totalRounds = Math.max(tournament.numRounds || 0, tournament.rounds.length);
+  const isTournamentEnded = totalRounds > 0 && completedRounds >= totalRounds;
+  const roundIdsForReset = useMemo(
+    () => tournament.rounds.map((round) => round.id).filter((roundId) => roundId > 1).sort((a, b) => b - a),
+    [tournament.rounds]
+  );
   const infoTheme =
     tournament.format === 'Americano'
       ? {
@@ -2784,36 +3421,38 @@ const MatchActiveScreen = ({
     onUpdateMatchPlayScore(scoringMatchId, team);
   };
 
+  const setScorePair = (scoreA: number, scoreB: number) => {
+    if (!scoringMatch) return;
+    onUpdateScore(scoringMatch.id, 'A', Math.max(0, scoreA));
+    onUpdateScore(scoringMatch.id, 'B', Math.max(0, scoreB));
+    setScoringMatchId(prev => prev ?? null);
+  };
+
   const handleScoreUpdate = (team: 'A' | 'B', delta: number) => {
     if (!scoringMatch) return;
     const currentScore = team === 'A' ? scoringMatch.teamA.score : scoringMatch.teamB.score;
     const newScore = Math.max(0, Math.min(tournament.totalPoints, currentScore + delta));
-    const otherTeamScore = tournament.totalPoints - newScore;
-
-    onUpdateScore(scoringMatch.id, team, newScore);
-    onUpdateScore(scoringMatch.id, team === 'A' ? 'B' : 'A', otherTeamScore);
-
-    setScoringMatchId(prev => {
-      if (!prev) return null;
-      return prev; // No need to update local state since we use useMemo now
-    });
+    const otherTeamScore = Math.max(0, tournament.totalPoints - newScore);
+    if (team === 'A') {
+      setScorePair(newScore, otherTeamScore);
+      return;
+    }
+    setScorePair(otherTeamScore, newScore);
   };
 
   const setExactScore = (team: 'A' | 'B', score: number) => {
     if (!scoringMatch) return;
     const safeScore = Math.max(0, Math.min(tournament.totalPoints, score));
-    const otherTeamScore = tournament.totalPoints - safeScore;
-
-    onUpdateScore(scoringMatch.id, team, safeScore);
-    onUpdateScore(scoringMatch.id, team === 'A' ? 'B' : 'A', otherTeamScore);
-
-    setScoringMatchId(prev => {
-      if (!prev) return null;
-      return prev; // No need to update local state since we use useMemo now
-    });
+    const otherTeamScore = Math.max(0, tournament.totalPoints - safeScore);
+    if (team === 'A') {
+      setScorePair(safeScore, otherTeamScore);
+      return;
+    }
+    setScorePair(otherTeamScore, safeScore);
   };
 
   const handleOpenRoundEditor = () => {
+    setIsActionMenuOpen(false);
     setRoundEditValue(String(tournament.numRounds || 1));
     setRoundEditError('');
     setIsRoundEditorOpen(true);
@@ -2831,6 +3470,64 @@ const MatchActiveScreen = ({
       return;
     }
     setIsRoundEditorOpen(false);
+  };
+
+  const handleOpenActivePlayersEditor = () => {
+    setIsActionMenuOpen(false);
+    const activeIds = tournament.players
+      .filter((player) => !inactivePlayerIdSet.has(player.id))
+      .map((player) => player.id);
+    setDraftActivePlayerIds(new Set(activeIds));
+    setIsActivePlayersEditorOpen(true);
+  };
+
+  const handleOpenRoundResetSelector = () => {
+    setIsActionMenuOpen(false);
+    if (roundIdsForReset.length === 0) {
+      window.alert('Belum ada ronde yang bisa diulang.');
+      return;
+    }
+    setIsRoundResetSelectorOpen(true);
+  };
+
+  const handleDeleteRoundsFromSelector = (roundId: number) => {
+    const shouldDelete = window.confirm(`Hapus ronde ${roundId} dan semua ronde setelahnya?`);
+    if (!shouldDelete) return;
+    onDeleteRoundsFrom(roundId);
+    setIsRoundResetSelectorOpen(false);
+  };
+
+  const toggleDraftActivePlayer = (playerId: string) => {
+    setDraftActivePlayerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(playerId)) next.delete(playerId);
+      else next.add(playerId);
+      return next;
+    });
+  };
+
+  const handleSaveActivePlayers = () => {
+    const nextActiveIds = tournament.players
+      .map((player) => player.id)
+      .filter((playerId) => draftActivePlayerIds.has(playerId));
+    const currentActiveIds = tournament.players
+      .map((player) => player.id)
+      .filter((playerId) => !inactivePlayerIdSet.has(playerId));
+    const hasChanges = (
+      nextActiveIds.length !== currentActiveIds.length ||
+      nextActiveIds.some((playerId, idx) => playerId !== currentActiveIds[idx])
+    );
+
+    if (!hasChanges) {
+      setIsActivePlayersEditorOpen(false);
+      return;
+    }
+
+    const shouldSave = window.confirm('Perubahan berlaku mulai ronde berikutnya. Simpan?');
+    if (!shouldSave) return;
+
+    onUpdateActivePlayers(nextActiveIds);
+    setIsActivePlayersEditorOpen(false);
   };
 
   const getRoundDuration = (round: Round) => {
@@ -2908,9 +3605,9 @@ const MatchActiveScreen = ({
 
       <header
         className="relative z-20 bg-transparent border-b border-transparent"
-        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+        style={{ paddingTop: 'var(--app-safe-top, 0px)' }}
       >
-        <div className="max-w-lg mx-auto h-14 px-5 relative flex items-center justify-between">
+        <div className="max-w-lg mx-auto h-11 px-5 relative flex items-center justify-between">
           <div className="shrink-0">
             <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", accentTheme.solid, accentTheme.solidShadow)}>
               {!isTournamentEnded && (
@@ -2986,7 +3683,7 @@ const MatchActiveScreen = ({
             </div>
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Player</p>
-              <p className="text-[12px] font-semibold text-white">{tournament.players.length}</p>
+              <p className="text-[12px] font-semibold text-white">{activePlayerCount}/{tournament.players.length}</p>
             </div>
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lapangan</p>
@@ -3011,14 +3708,16 @@ const MatchActiveScreen = ({
               </button>
             </p>
             {!isReadOnly && (
-              <button
-                type="button"
-                onClick={handleOpenRoundEditor}
-                className="relative z-10 shrink-0 h-7 px-0 bg-transparent border-0 text-white text-[11px] font-bold inline-flex items-center gap-1.5 tap-target"
-              >
-                <Edit3 size={12} />
-                Ubah ronde
-              </button>
+              <div className="relative z-10 shrink-0 h-8 inline-flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setIsActionMenuOpen(true)}
+                  className="h-8 w-8 rounded-full bg-white/12 border border-white/35 text-white inline-flex items-center justify-center tap-target"
+                  aria-label="Pengaturan pertandingan"
+                >
+                  <Settings size={15} />
+                </button>
+              </div>
             )}
           </div>
         </section>
@@ -3043,6 +3742,19 @@ const MatchActiveScreen = ({
           </button>
         </section>
 
+        {!isReadOnly && needsRegenerateFromRound !== null && (
+          <section className="-mt-2">
+            <div className="w-full rounded-2xl px-4 py-3 border border-amber-200 bg-amber-50/95 backdrop-blur-md flex items-center gap-3">
+              <div className="min-w-0 flex items-start gap-2.5">
+                <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-[12px] leading-snug text-amber-900 font-medium">
+                  Skor ronde lama berubah. Buka menu aksi lalu pilih ulang ronde dari {needsRegenerateFromRound}+.
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
+
         {tournament.rounds.map((round) => {
           const isActive = activeRoundId !== null && round.id === activeRoundId;
           const isCollapsed = collapsedRounds.has(round.id);
@@ -3051,25 +3763,27 @@ const MatchActiveScreen = ({
           return (
             <div key={round.id} className="mb-4">
               <section className="bg-white/78 backdrop-blur-sm p-4 rounded-[20px] shadow-sm border border-white/45">
-                <button
-                  type="button"
-                  onClick={() => toggleRound(round.id)}
-                  className="w-full flex items-center justify-between gap-3 mb-1.5 tap-target text-left"
-                  aria-label={isCollapsed ? `Buka ronde ${round.id}` : `Tutup ronde ${round.id}`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", accentTheme.headingStrong)}>
-                      Ronde {round.id}
+                <div className="flex items-center gap-2 mb-1.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleRound(round.id)}
+                    className="flex-1 flex items-center justify-between gap-3 tap-target text-left"
+                    aria-label={isCollapsed ? `Buka ronde ${round.id}` : `Tutup ronde ${round.id}`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", accentTheme.headingStrong)}>
+                        Ronde {round.id}
+                      </span>
+                      <span className="w-1 h-1 rounded-full bg-ios-gray/40" />
+                      <span className="text-[11px] leading-none font-semibold uppercase tracking-[0.06em] tabular-nums text-ios-gray/60">
+                        {roundDuration}
+                      </span>
+                    </div>
+                    <span className="p-1 text-ios-gray/65">
+                      <ChevronRight size={22} className={cn("transition-transform", !isCollapsed && "rotate-90")} />
                     </span>
-                    <span className="w-1 h-1 rounded-full bg-ios-gray/40" />
-                    <span className="text-[11px] leading-none font-semibold uppercase tracking-[0.06em] tabular-nums text-ios-gray/60">
-                      {roundDuration}
-                    </span>
-                  </div>
-                  <span className="p-1 text-ios-gray/65">
-                    <ChevronRight size={22} className={cn("transition-transform", !isCollapsed && "rotate-90")} />
-                  </span>
-                </button>
+                  </button>
+                </div>
 
                 <AnimatePresence>
                   {!isCollapsed && (
@@ -3083,93 +3797,104 @@ const MatchActiveScreen = ({
                       <div className="space-y-3.5">
                         {round.matches.map((match, i) => (
                           <div key={match.id}>
-                            <div className="flex justify-start mb-3">
-                              <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
-                                Lapangan {match.court}
-                              </span>
-                            </div>
-
-                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                              <div className="flex flex-col items-center gap-1 min-w-0">
-                                <div className="flex -space-x-3">
-                                  {match.teamA.players.map((p, idx) => (
-                                    <div
-                                      key={idx}
-                                      onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: idx, currentPlayer: p })}
-                                      className={cn(
-                                        "w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 flex items-center justify-center text-[10px] font-bold",
-                                        isActive && "cursor-pointer tap-target"
-                                      )}
-                                    >
-                                      {p.initials}
-                                    </div>
-                                  ))}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: 0, currentPlayer: match.teamA.players[0] })}
-                                  className={cn(
-                                    "bg-transparent border-0 p-0 text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]",
-                                    isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
-                                  )}
-                                  disabled={!isActive || isReadOnly || !match.teamA.players[0]}
-                                >
-                                  {match.teamA.players.map(p => p.name.split(' ')[0]).join(' & ')}
-                                </button>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => isActive && !isReadOnly && setScoringMatchId(match.id)}
-                                disabled={!isActive || isReadOnly}
-                                className={cn(
-                                  "flex flex-col items-center min-w-[86px] rounded-xl px-2 py-1 transition-colors",
-                                  isActive && !isReadOnly
-                                    ? cn("cursor-pointer tap-target", accentTheme.bgSoftHover)
-                                    : "cursor-default"
-                                )}
-                              >
-                                <div className="text-[31px] leading-none font-display font-black tracking-tight tabular-nums">
-                                  <span className={accentTheme.text}>{match.teamA.score}</span>
-                                  <span className="text-ios-gray/30 mx-1">-</span>
-                                  <span className="text-on-surface">{match.teamB.score}</span>
-                                </div>
-                                <span className="text-[9px] font-bold text-ios-gray/80 tracking-[0.11em]">
-                                  SKOR
-                                  {tournament.format === 'Match Play' && (
-                                    <span className="ml-1 normal-case tracking-normal text-[10px]">
-                                      ({match.pointsA || '0'}-{match.pointsB || '0'})
+                            {(() => {
+                              const canEditCompletedScore =
+                                !isReadOnly &&
+                                match.status === 'completed' &&
+                                tournament.format !== 'Match Play';
+                              const canEditScore = !isReadOnly && (isActive || canEditCompletedScore);
+                              return (
+                                <>
+                                  <div className="flex justify-start mb-3">
+                                    <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
+                                      Lapangan {match.court}
                                     </span>
-                                  )}
-                                </span>
-                              </button>
-                              <div className="flex flex-col items-center gap-1 min-w-0">
-                                <div className="flex -space-x-3">
-                                  {match.teamB.players.map((p, idx) => (
-                                    <div
-                                      key={idx}
-                                      onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: idx, currentPlayer: p })}
+                                  </div>
+
+                                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                                    <div className="flex flex-col items-center gap-1 min-w-0">
+                                      <div className="flex -space-x-3">
+                                        {match.teamA.players.map((p, idx) => (
+                                          <div
+                                            key={idx}
+                                            onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: idx, currentPlayer: p })}
+                                            className={cn(
+                                              "w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 flex items-center justify-center text-[10px] font-bold",
+                                              isActive && "cursor-pointer tap-target"
+                                            )}
+                                          >
+                                            {p.initials}
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'A', playerIndex: 0, currentPlayer: match.teamA.players[0] })}
+                                        className={cn(
+                                          "bg-transparent border-0 p-0 text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]",
+                                          isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
+                                        )}
+                                        disabled={!isActive || isReadOnly || !match.teamA.players[0]}
+                                      >
+                                        {match.teamA.players.map(p => p.name.split(' ')[0]).join(' & ')}
+                                      </button>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => canEditScore && setScoringMatchId(match.id)}
+                                      disabled={!canEditScore}
                                       className={cn(
-                                        "w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 flex items-center justify-center text-[10px] font-bold",
-                                        isActive && "cursor-pointer tap-target"
+                                        "flex flex-col items-center min-w-[86px] rounded-xl px-2 py-1 transition-colors",
+                                        canEditScore
+                                          ? cn("cursor-pointer tap-target", accentTheme.bgSoftHover)
+                                          : "cursor-default"
                                       )}
                                     >
-                                      {p.initials}
+                                      <div className="text-[31px] leading-none font-display font-black tracking-tight tabular-nums">
+                                        <span className={accentTheme.text}>{match.teamA.score}</span>
+                                        <span className="text-ios-gray/30 mx-1">-</span>
+                                        <span className="text-on-surface">{match.teamB.score}</span>
+                                      </div>
+                                      <span className="text-[9px] font-bold text-ios-gray/80 tracking-[0.11em]">
+                                        SKOR
+                                        {tournament.format === 'Match Play' && (
+                                          <span className="ml-1 normal-case tracking-normal text-[10px]">
+                                            ({match.pointsA || '0'}-{match.pointsB || '0'})
+                                          </span>
+                                        )}
+                                      </span>
+                                    </button>
+                                    <div className="flex flex-col items-center gap-1 min-w-0">
+                                      <div className="flex -space-x-3">
+                                        {match.teamB.players.map((p, idx) => (
+                                          <div
+                                            key={idx}
+                                            onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: idx, currentPlayer: p })}
+                                            className={cn(
+                                              "w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 flex items-center justify-center text-[10px] font-bold",
+                                              isActive && "cursor-pointer tap-target"
+                                            )}
+                                          >
+                                            {p.initials}
+                                          </div>
+                                        ))}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: 0, currentPlayer: match.teamB.players[0] })}
+                                        className={cn(
+                                          "bg-transparent border-0 p-0 text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]",
+                                          isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
+                                        )}
+                                        disabled={!isActive || isReadOnly || !match.teamB.players[0]}
+                                      >
+                                        {match.teamB.players.map(p => p.name.split(' ')[0]).join(' & ')}
+                                      </button>
                                     </div>
-                                  ))}
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => isActive && !isReadOnly && setSwappingPlayer({ matchId: match.id, team: 'B', playerIndex: 0, currentPlayer: match.teamB.players[0] })}
-                                  className={cn(
-                                    "bg-transparent border-0 p-0 text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]",
-                                    isActive && !isReadOnly ? "cursor-pointer tap-target" : "cursor-default"
-                                  )}
-                                  disabled={!isActive || isReadOnly || !match.teamB.players[0]}
-                                >
-                                  {match.teamB.players.map(p => p.name.split(' ')[0]).join(' & ')}
-                                </button>
-                              </div>
-                            </div>
+                                  </div>
+                                </>
+                              );
+                            })()}
 
                             {i < round.matches.length - 1 && <div className="my-3.5 h-px bg-ios-gray/10" />}
                           </div>
@@ -3208,12 +3933,239 @@ const MatchActiveScreen = ({
         )}
       </main>
 
-      {/* Score Popup Modal */}
+      <AnimatePresence>
+        {isActionMenuOpen && !isReadOnly && (
+          <div
+            className="fixed inset-0 z-[140] flex items-end justify-center px-4 pt-4 sm:items-center"
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + var(--app-safe-bottom, 0px))` }}
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsActionMenuOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-white rounded-[28px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
+                <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Ubah Pertandingan</h3>
+                <button
+                  onClick={() => setIsActionMenuOpen(false)}
+                  className="p-2 bg-ios-gray/10 rounded-full tap-target"
+                  aria-label="Tutup menu aksi"
+                >
+                  <X size={18} className="text-on-surface" />
+                </button>
+              </div>
+
+              <div className="p-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={handleOpenRoundEditor}
+                  className="w-full h-12 px-4 rounded-xl border border-ios-gray/15 text-on-surface text-[14px] font-semibold text-left inline-flex items-center gap-3 tap-target"
+                >
+                  <Edit3 size={16} className="text-primary" />
+                  Edit ronde
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenActivePlayersEditor}
+                  className="w-full h-12 px-4 rounded-xl border border-ios-gray/15 text-on-surface text-[14px] font-semibold text-left inline-flex items-center gap-3 tap-target"
+                >
+                  <Users size={16} className="text-primary" />
+                  Pemain aktif
+                </button>
+                <button
+                  type="button"
+                  onClick={handleOpenRoundResetSelector}
+                  className={cn(
+                    "w-full h-12 px-4 rounded-xl border text-[14px] font-semibold text-left inline-flex items-center gap-3 tap-target",
+                    roundIdsForReset.length > 0
+                      ? "border-red-200 text-red-600 bg-red-50/60"
+                      : "border-ios-gray/15 text-ios-gray bg-ios-gray/5"
+                  )}
+                  disabled={roundIdsForReset.length === 0}
+                >
+                  <RefreshCw size={16} />
+                  Hapus / ulang ronde
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isRoundResetSelectorOpen && !isReadOnly && (
+          <div
+            className="fixed inset-0 z-[135] flex items-end justify-center px-4 pt-4 sm:items-center"
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + var(--app-safe-bottom, 0px))` }}
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsRoundResetSelectorOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-white rounded-[28px] shadow-2xl overflow-hidden flex flex-col"
+              style={{ maxHeight: `calc(100dvh - ${modalBottomOffset + 28}px)` }}
+            >
+              <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Ulang Ronde</h3>
+                  <p className="text-[12px] text-ios-gray font-medium">Pilih ronde yang akan dihapus beserta ronde setelahnya.</p>
+                </div>
+                <button
+                  onClick={() => setIsRoundResetSelectorOpen(false)}
+                  className="p-2 bg-ios-gray/10 rounded-full tap-target"
+                  aria-label="Tutup ulang ronde"
+                >
+                  <X size={18} className="text-on-surface" />
+                </button>
+              </div>
+
+              <div className="p-5 pt-4 space-y-2 overflow-y-auto">
+                {needsRegenerateFromRound !== null && roundIdsForReset.includes(needsRegenerateFromRound) && (
+                  <div className="mb-1 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[11px] font-semibold text-amber-800">
+                    Rekomendasi: mulai dari ronde {needsRegenerateFromRound}+.
+                  </div>
+                )}
+                {roundIdsForReset.map((roundId) => (
+                  <button
+                    key={roundId}
+                    type="button"
+                    onClick={() => handleDeleteRoundsFromSelector(roundId)}
+                    className={cn(
+                      "w-full rounded-xl border px-3 py-3 text-left tap-target",
+                      needsRegenerateFromRound === roundId
+                        ? "border-amber-300 bg-amber-50"
+                        : "border-ios-gray/15 bg-white hover:bg-ios-gray/5"
+                    )}
+                  >
+                    <p className="text-[14px] font-semibold text-on-surface">Mulai dari ronde {roundId}</p>
+                    <p className="text-[11px] text-ios-gray">Ronde {roundId} sampai ronde terakhir akan dihapus.</p>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isActivePlayersEditorOpen && (
+          <div
+            className="fixed inset-0 z-[130] flex items-end justify-center px-4 pt-4 sm:items-center"
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + var(--app-safe-bottom, 0px))` }}
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsActivePlayersEditorOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-white rounded-[28px] shadow-2xl overflow-hidden flex flex-col"
+              style={{ maxHeight: `calc(100dvh - ${modalBottomOffset + 28}px)` }}
+            >
+              <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Pemain Aktif</h3>
+                  <p className="text-[12px] text-ios-gray font-medium">{draftActivePlayerIds.size}/{tournament.players.length} aktif</p>
+                </div>
+                <button
+                  onClick={() => setIsActivePlayersEditorOpen(false)}
+                  className="p-2 bg-ios-gray/10 rounded-full tap-target"
+                >
+                  <X size={18} className="text-on-surface" />
+                </button>
+              </div>
+
+              <div className="px-5 pt-4 pb-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDraftActivePlayerIds(new Set(tournament.players.map((player) => player.id)))}
+                  className="h-8 px-3 rounded-lg border border-primary/20 bg-primary/5 text-[11px] font-bold text-primary tap-target"
+                >
+                  Pilih semua
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDraftActivePlayerIds(new Set())}
+                  className="h-8 px-3 rounded-lg border border-ios-gray/20 bg-ios-gray/5 text-[11px] font-bold text-ios-gray tap-target"
+                >
+                  Kosongkan
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-1.5">
+                {tournament.players.map((player) => {
+                  const isChecked = draftActivePlayerIds.has(player.id);
+                  return (
+                    <button
+                      key={player.id}
+                      type="button"
+                      onClick={() => toggleDraftActivePlayer(player.id)}
+                      className={cn(
+                        "w-full h-12 flex items-center justify-between gap-3 px-3.5 rounded-xl border text-left tap-target transition-colors",
+                        isChecked
+                          ? "border-primary/25 bg-primary/5"
+                          : "border-ios-gray/12 bg-white hover:bg-ios-gray/5"
+                      )}
+                    >
+                      <span className="min-w-0 text-[13px] font-semibold text-on-surface truncate">
+                        {player.name}
+                      </span>
+                      <span className={cn(
+                        "w-5 h-5 rounded-md border flex items-center justify-center shrink-0",
+                        isChecked ? "bg-primary border-primary text-white" : "bg-white border-ios-gray/35 text-transparent"
+                      )}>
+                        <Check size={13} />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="p-5 pt-0 grid grid-cols-2 gap-2.5">
+                <button
+                  onClick={() => setIsActivePlayersEditorOpen(false)}
+                  className="h-11 rounded-xl border border-ios-gray/20 text-[14px] font-semibold text-ios-gray tap-target"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleSaveActivePlayers}
+                  className="h-11 rounded-xl bg-primary text-white text-[14px] font-bold shadow-[0_8px_18px_rgba(230,94,20,0.24)] tap-target"
+                >
+                  Simpan
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal Popup */}
       <AnimatePresence>
         {isRoundEditorOpen && (
           <div
             className="fixed inset-0 z-[120] flex items-end justify-center px-4 pt-4 sm:items-center"
-            style={{ paddingBottom: `calc(${modalBottomOffset}px + env(safe-area-inset-bottom, 0px))` }}
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + var(--app-safe-bottom, 0px))` }}
           >
             <motion.div
               initial={{ opacity: 0 }}
@@ -3283,7 +4235,7 @@ const MatchActiveScreen = ({
         {swappingPlayer && (
           <div
             className="fixed inset-0 z-[110] flex items-end justify-center px-4 pt-4 sm:items-center"
-            style={{ paddingBottom: `calc(${modalBottomOffset}px + env(safe-area-inset-bottom, 0px))` }}
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + var(--app-safe-bottom, 0px))` }}
           >
             <motion.div
               initial={{ opacity: 0 }}
@@ -3355,7 +4307,7 @@ const MatchActiveScreen = ({
         {scoringMatch && (
           <div
             className="fixed inset-0 z-[100] flex items-end justify-center px-4 pt-4 sm:items-center"
-            style={{ paddingBottom: `calc(${modalBottomOffset}px + env(safe-area-inset-bottom, 0px))` }}
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + var(--app-safe-bottom, 0px))` }}
           >
             <motion.div
               initial={{ opacity: 0 }}
@@ -3486,8 +4438,7 @@ const MatchActiveScreen = ({
                 <div className="mt-5 grid grid-cols-2 gap-2.5">
                   <button
                     onClick={() => {
-                      setExactScore('A', 0);
-                      setExactScore('B', 0);
+                      setScorePair(0, 0);
                     }}
                     className="py-3 bg-ios-gray/5 text-ios-gray font-bold text-sm rounded-xl tap-target active:bg-ios-gray/10 transition-colors"
                   >
@@ -3538,11 +4489,10 @@ const KlasemenScreen = ({
   const detectedCourts = Math.max(1, ...tournamentRounds.flatMap(r => r.matches.map(m => m.court || 1)));
   const courtsCount = configuredCourts || detectedCourts;
   const completedRounds = tournamentRounds.filter(r => r.matches.every(m => m.status === 'completed')).length;
+  const totalRounds = Math.max(tournament.numRounds || 0, tournamentRounds.length);
   const totalMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.length, 0);
   const completedMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.filter(m => m.status === 'completed').length, 0);
-  const isTournamentEnded = tournamentRounds.length > 0
-    ? tournamentRounds.every(r => r.matches.every(m => m.status === 'completed'))
-    : true;
+  const isTournamentEnded = totalRounds > 0 ? completedRounds >= totalRounds : true;
   const completionPercent = totalMatches > 0 ? Math.min(100, Math.round((completedMatches / totalMatches) * 100)) : 0;
   const dateLabel = 'date' in tournament && tournament.date
     ? tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -3776,9 +4726,9 @@ const KlasemenScreen = ({
 
       <header
         className="relative z-20 bg-transparent border-b border-transparent"
-        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+        style={{ paddingTop: 'var(--app-safe-top, 0px)' }}
       >
-        <div className="max-w-lg mx-auto h-14 px-5 relative flex items-center justify-between">
+        <div className="max-w-lg mx-auto h-11 px-5 relative flex items-center justify-between">
           <div className="shrink-0">
             <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
               {!isTournamentEnded && (
@@ -3813,7 +4763,7 @@ const KlasemenScreen = ({
         className="relative z-10 px-5 space-y-6 max-w-lg mx-auto"
         style={{
           paddingTop: '16px',
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'
+          paddingBottom: 'calc(var(--app-safe-bottom, 0px) + 16px)'
         }}
       >
         {isSharedViewer && (
@@ -3849,7 +4799,7 @@ const KlasemenScreen = ({
             </div>
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
               <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Ronde</p>
-              <p className="text-[12px] font-semibold text-white">{completedRounds}/{tournamentRounds.length || 0}</p>
+              <p className="text-[12px] font-semibold text-white">{completedRounds}/{totalRounds || 0}</p>
             </div>
           </div>
 
@@ -4045,6 +4995,50 @@ const NotificationsScreen = ({ notifications, onMarkAsRead, onClearAll, onBack }
     </div>
   );
 };
+
+const HistoryScreen = ({
+  tournaments,
+  onBack,
+  onOpenTournament
+}: {
+  tournaments: TournamentHistory[];
+  onBack: () => void;
+  onOpenTournament: (tournament: TournamentHistory) => void;
+}) => {
+  const sortedTournaments = useMemo(() => sortTournamentsByNewest(tournaments), [tournaments]);
+
+  return (
+    <div className="bg-white min-h-screen pb-32">
+      <header className="ios-blur sticky top-0 w-full z-50 flex items-center justify-between px-4 h-14 border-b border-ios-gray/10">
+        <button onClick={onBack} className="text-primary flex items-center -ml-2 tap-target p-2">
+          <ChevronLeft size={24} />
+        </button>
+        <h1 className="font-bold text-[17px] tracking-tight">Riwayat Pertandingan</h1>
+        <div className="w-10" />
+      </header>
+
+      <main className="pt-6 px-5 max-w-lg mx-auto">
+        {sortedTournaments.length === 0 ? (
+          <div className="bg-white border border-ios-gray/10 rounded-[20px] p-8 text-center shadow-sm">
+            <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
+            <p className="text-ios-gray font-medium">Belum ada riwayat pertandingan.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {sortedTournaments.map((item) => (
+              <TournamentHistoryCard
+                key={item.id}
+                tournament={item}
+                onClick={() => onOpenTournament(item)}
+              />
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
 const HistoryDetailScreen = ({
   tournament,
   onBack,
@@ -4056,19 +5050,10 @@ const HistoryDetailScreen = ({
   onViewFinalStandings: () => void,
   onViewMatchDetails: () => void
 }) => {
-  const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
-
-  const toggleRound = (roundId: number) => {
-    setCollapsedRounds(prev => {
-      const next = new Set(prev);
-      if (next.has(roundId)) {
-        next.delete(roundId);
-      } else {
-        next.add(roundId);
-      }
-      return next;
-    });
-  };
+  const completedMatches = useMemo(
+    () => buildCompletedMatchHistoryItems([tournament]),
+    [tournament]
+  );
 
   return (
     <div className="bg-white min-h-screen pb-32">
@@ -4115,90 +5100,41 @@ const HistoryDetailScreen = ({
           </div>
         </div>
 
-        {tournament.rounds?.map((round) => {
-          const isCollapsed = collapsedRounds.has(round.id);
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[13px] font-bold uppercase tracking-wide text-ios-gray">Pertandingan Selesai</h3>
+            <span className="text-[12px] font-bold text-ios-gray">{completedMatches.length} Match</span>
+          </div>
 
-          return (
-            <div key={round.id} className="space-y-4">
-              <button
-                onClick={() => toggleRound(round.id)}
-                className="w-full flex justify-between items-center group"
-              >
-                <div className="flex flex-col items-start">
-                  <span className="text-[12px] font-bold uppercase tracking-wide text-ios-gray">
-                    Ronde {round.id}
-                  </span>
-                </div>
-                <div className={cn(
-                  "p-2 rounded-full bg-ios-gray/5 text-ios-gray transition-all",
-                  !isCollapsed && "rotate-180"
-                )}>
-                  <ChevronRight size={18} />
-                </div>
-              </button>
-
-              <AnimatePresence>
-                {!isCollapsed && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="bg-white rounded-[20px] shadow-sm overflow-hidden border border-ios-gray/10 mb-4">
-                      {round.matches.map((match, i) => (
-                        <div key={match.id} className={cn("p-5", i < round.matches.length - 1 && "border-b border-surface")}>
-                          <div className="text-[11px] font-semibold text-ios-gray uppercase tracking-widest mb-4">LAPANGAN {match.court}</div>
-                          <div className="grid grid-cols-[1fr_24px_1fr] items-center gap-4">
-                            <div className="flex flex-col items-center gap-2">
-                              <div className="flex -space-x-2">
-                                {match.teamA.players.map((p, idx) => (
-                                  <div key={idx} className="w-10 h-10 rounded-full ring-2 ring-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold">
-                                    {p.initials}
-                                  </div>
-                                ))}
-                              </div>
-                              <span className="text-[13px] font-bold text-center truncate w-full">
-                                {match.teamA.players.map(p => p.name.split(' ')[0]).join(' / ')}
-                              </span>
-                              <div className="text-2xl font-display font-black text-primary">{match.teamA.score}</div>
-                            </div>
-                            <div className="text-[10px] font-black text-ios-gray/20">VS</div>
-                            <div className="flex flex-col items-center gap-2">
-                              <div className="flex -space-x-2">
-                                {match.teamB.players.map((p, idx) => (
-                                  <div key={idx} className="w-10 h-10 rounded-full ring-2 ring-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold">
-                                    {p.initials}
-                                  </div>
-                                ))}
-                              </div>
-                              <span className="text-[13px] font-bold text-ios-gray text-center truncate w-full">
-                                {match.teamB.players.map(p => p.name.split(' ')[0]).join(' / ')}
-                              </span>
-                              <div className="text-2xl font-display font-black text-on-surface">{match.teamB.score}</div>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+          {completedMatches.length === 0 ? (
+            <div className="bg-white rounded-[20px] p-6 text-center shadow-sm border border-ios-gray/10">
+              <p className="text-ios-gray font-medium">Belum ada pertandingan selesai di riwayat ini.</p>
             </div>
-          );
-        })}
+          ) : (
+            <div className="space-y-3">
+              {completedMatches.map((item) => (
+                <CompletedMatchHistoryCard
+                  key={item.id}
+                  item={item}
+                  showTournamentMeta={false}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );
 };
 
-const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUser, onViewHistory, addNotification, onFriends }: {
+const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUser, onOpenHistoryMatch, onOpenHistoryList, addNotification, onFriends }: {
   onLogout: () => void,
   onRequestPermission: () => void,
   user: any,
   tournaments: TournamentHistory[],
   setUser: React.Dispatch<React.SetStateAction<any>>,
-  onViewHistory: (t: TournamentHistory) => void,
+  onOpenHistoryMatch: (t: TournamentHistory) => void,
+  onOpenHistoryList: () => void,
   addNotification: (title: string, message: string, type: AppNotification['type']) => void,
   onFriends: () => void
 }) => {
@@ -4318,6 +5254,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
 
   const tier = getTier(stats.matches);
   const status = getStatus(stats.winRate, stats.matches);
+  const recentTournaments = useMemo(() => sortTournamentsByNewest(tournaments).slice(0, 3), [tournaments]);
 
   return (
     <div className="pb-32 bg-white min-h-screen">
@@ -4600,13 +5537,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
         {/* Recent Matches */}
         <section className="mb-10">
           <div
-            onClick={() => {
-              if (tournaments.length > 0) {
-                onViewHistory(tournaments[0]);
-              } else {
-                addNotification('Riwayat', 'Belum ada riwayat turnamen untuk ditampilkan.', 'system');
-              }
-            }}
+            onClick={onOpenHistoryList}
             className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
           >
             <h2 className="text-xl font-bold tracking-tight">Turnamen Terakhir</h2>
@@ -4617,37 +5548,18 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
             </button>
           </div>
           <div className="px-5 flex flex-col gap-4">
-            {tournaments.length === 0 ? (
+            {recentTournaments.length === 0 ? (
               <div className="bg-white border border-ios-gray/10 rounded-2xl p-8 text-center shadow-sm">
                 <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-                <p className="text-ios-gray font-medium">Belum ada turnamen.</p>
+                <p className="text-ios-gray font-medium">Belum ada riwayat pertandingan.</p>
               </div>
             ) : (
-              tournaments.slice(0, 3).map((item) => (
-                <button
+              recentTournaments.map((item) => (
+                <TournamentHistoryCard
                   key={item.id}
-                  onClick={() => onViewHistory(item)}
-                  className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm flex items-center justify-between tap-target text-left"
-                >
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className={cn(
-                      "w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black text-xs shrink-0 bg-primary/10 text-primary"
-                    )}>
-                      <Award size={20} className="mb-0.5" />
-                      <span>FINISH</span>
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-[10px] font-bold text-ios-gray uppercase tracking-wider mb-0.5 block">
-                        {item.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-                      </span>
-                      <h4 className="text-[15px] font-bold text-on-surface leading-tight truncate">{item.name}</h4>
-                      <span className="text-[12px] font-medium text-ios-gray truncate block">{item.format} • {item.numPlayers} Pemain</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <ChevronRight size={20} className="text-ios-gray/30" />
-                  </div>
-                </button>
+                  tournament={item}
+                  onClick={() => onOpenHistoryMatch(item)}
+                />
               ))
             )}
           </div>
@@ -5375,6 +6287,7 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
 export default function App() {
   const initialSharedContext = getInitialSharedContext();
   const initialE2EScenario = getInitialE2EScenario();
+  const isIOSDevice = useMemo(() => detectIOSDevice(), []);
   const isMockupV3 = useMemo(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -5437,6 +6350,34 @@ export default function App() {
       location: 'Jakarta Selatan, DKI Jakarta'
     };
   }, [initialE2EScenario]);
+  const e2eBackgroundPlayers = useMemo<Player[]>(() => {
+    if (initialE2EScenario !== 'background-flow') return [];
+    return Array.from({ length: 4 }).map((_, idx) => ({
+      id: `e2e-bg-p${idx + 1}`,
+      name: `BG Player ${idx + 1}`,
+      rating: 3.5 + (idx * 0.1),
+      initials: `B${idx + 1}`,
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+    }));
+  }, [initialE2EScenario]);
+  const e2eBackgroundTournament = useMemo<Tournament | null>(() => {
+    if (initialE2EScenario !== 'background-flow') return null;
+    return {
+      id: 'e2e-background-flow',
+      name: 'E2E Background Flow',
+      format: 'Match Play',
+      criteria: 'Matches Won',
+      scoringType: 'Advantage',
+      courts: 1,
+      totalPoints: 0,
+      players: e2eBackgroundPlayers,
+      inactivePlayerIds: [],
+      rounds: [],
+      numRounds: 1,
+      venueName: 'E2E Court',
+      location: 'Jakarta Selatan'
+    };
+  }, [e2eBackgroundPlayers, initialE2EScenario]);
   const [screen, setScreen] = useState<Screen>(initialSharedContext.isShared ? initialSharedContext.targetView : 'login');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -5454,15 +6395,69 @@ export default function App() {
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
   const [klasemenBackScreen, setKlasemenBackScreen] = useState<'dashboard' | 'active' | 'history-detail'>('dashboard');
   const [activeScreenTournament, setActiveScreenTournament] = useState<Tournament | null>(null);
-  const [activeBackScreen, setActiveBackScreen] = useState<'dashboard' | 'history-detail' | 'klasemen'>('dashboard');
+  const [activeBackScreen, setActiveBackScreen] = useState<'dashboard' | 'history-detail' | 'klasemen' | 'history' | 'profile'>('dashboard');
+  const [historyBackScreen, setHistoryBackScreen] = useState<'dashboard' | 'profile'>('dashboard');
   const [friendsEntrySource, setFriendsEntrySource] = useState<'profile' | 'settings'>('profile');
+  const [draftMatchBackgroundId, setDraftMatchBackgroundId] = useState<string | null>(null);
   const [activeSaveState, setActiveSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [needsRegenerateFromRound, setNeedsRegenerateFromRound] = useState<number | null>(null);
   const shareToastTimeoutRef = useRef<number | null>(null);
   const activeSaveTimeoutRef = useRef<number | null>(null);
   const isAuthResolvedRef = useRef(false);
   const isHandlingPopStateRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; ts: number } | null>(null);
   const lastFriendPickerSummaryRef = useRef('');
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const isStandalonePwa =
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(display-mode: standalone)').matches ||
+        (window.navigator as Navigator & { standalone?: boolean }).standalone === true);
+    root.classList.toggle('platform-ios', isIOSDevice);
+    root.style.setProperty('--app-safe-top', isIOSDevice ? 'env(safe-area-inset-top, 0px)' : '0px');
+    root.style.setProperty('--app-safe-bottom', isIOSDevice ? 'env(safe-area-inset-bottom, 0px)' : '0px');
+    root.style.setProperty('--app-bottom-nav-gap', isIOSDevice ? (isStandalonePwa ? '4px' : '14px') : '0px');
+  }, [isIOSDevice]);
+
+  useEffect(() => {
+    trackPageView(screen, getScreenRoute(screen));
+  }, [screen]);
+
+  useEffect(() => {
+    void syncAnalyticsUser(user?.uid || null);
+  }, [user?.uid]);
+
+  useEffect(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      const tracked = resolveTrackableButton(event.target);
+      if (!tracked) return;
+      trackButtonClick({
+        screen,
+        route: getScreenRoute(screen),
+        buttonName: tracked.buttonName,
+        buttonText: tracked.buttonText
+      });
+    };
+
+    document.addEventListener('click', handleDocumentClick, true);
+    return () => document.removeEventListener('click', handleDocumentClick, true);
+  }, [screen]);
+
+  useEffect(() => {
+    const resetScroll = () => {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+      if (document.scrollingElement) {
+        document.scrollingElement.scrollTop = 0;
+      }
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    };
+
+    resetScroll();
+    const rafId = window.requestAnimationFrame(resetScroll);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [screen, selectedHistory?.id, selectedKlasemenTournament?.id, activeScreenTournament?.id]);
 
   useEffect(() => {
     const getSystemBarColor = () => {
@@ -5474,7 +6469,7 @@ export default function App() {
         if (visualTournament?.format === 'Mexicano') return '#2b160d';
         return '#0f1e3a';
       }
-      return '#f7f7fa';
+      return '#ffffff';
     };
 
     const systemBarColor = getSystemBarColor();
@@ -5515,7 +6510,23 @@ export default function App() {
       return;
     }
 
-    if (initialE2EScenario === 'finished-flow') {
+    if (initialE2EScenario === 'background-flow' && e2eBackgroundTournament) {
+      setIsSharedViewer(false);
+      setSharedMatchId(null);
+      setIsSharedDataReady(true);
+      setUser({ uid: 'e2e-user', displayName: 'E2E User', mmr: 1500 });
+      setIsLoggedIn(true);
+      setIsAuthChecked(true);
+      setTournaments([]);
+      setSelectedHistory(null);
+      setAllPlayers(e2eBackgroundPlayers);
+      setTournament(e2eBackgroundTournament);
+      setDraftMatchBackgroundId(null);
+      setScreen('settings');
+      return;
+    }
+
+    if (initialE2EScenario === 'finished-flow' || initialE2EScenario === 'background-flow') {
       setIsAuthChecked(true);
       return;
     }
@@ -5625,6 +6636,7 @@ export default function App() {
         } else {
           setUser(null);
           setIsLoggedIn(false);
+          setDraftMatchBackgroundId(null);
           setAllPlayers([]);
           if (!isSharedViewer) {
             setTournament(INITIAL_TOURNAMENT);
@@ -5642,7 +6654,14 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, [e2eFinishedHistory, initialE2EScenario, isSharedViewer, sharedTargetScreen]);
+  }, [
+    e2eBackgroundPlayers,
+    e2eBackgroundTournament,
+    e2eFinishedHistory,
+    initialE2EScenario,
+    isSharedViewer,
+    sharedTargetScreen
+  ]);
 
   useEffect(() => {
     if (!isAuthResolvedRef.current) return;
@@ -6023,6 +7042,16 @@ export default function App() {
     setScreen('active');
   };
 
+  const handleOpenHistoryTournament = (
+    history: TournamentHistory,
+    backScreen: 'dashboard' | 'history' | 'profile'
+  ) => {
+    setSelectedHistory(history);
+    setActiveScreenTournament(buildReadOnlyTournamentFromHistory(history));
+    setActiveBackScreen(backScreen);
+    setScreen('active');
+  };
+
   const handleOpenActiveFromStandings = () => {
     const standingsTournament = selectedKlasemenTournament || tournament;
     if (isSharedViewer) {
@@ -6042,7 +7071,8 @@ export default function App() {
     if ('numPlayers' in standingsTournament) {
       setActiveScreenTournament(buildReadOnlyTournamentFromHistory(standingsTournament as TournamentHistory));
     } else {
-      setActiveScreenTournament(standingsTournament as Tournament);
+      // Returning from live standings should keep the editable active match context.
+      setActiveScreenTournament(null);
     }
     setActiveBackScreen('klasemen');
     setScreen('active');
@@ -6144,6 +7174,9 @@ export default function App() {
   const handleGenerateTournament = (settings: Tournament) => {
     const now = Date.now();
     const players = [...settings.players].filter(p => !!p);
+    const sanitizedInactivePlayerIds = sanitizeInactivePlayerIds(players, settings.inactivePlayerIds);
+    const inactivePlayerIdSet = new Set(sanitizedInactivePlayerIds);
+    const activePlayers = players.filter((player) => !inactivePlayerIdSet.has(player.id));
     const rounds: Round[] = [];
     const numRounds = settings.numRounds;
     const playersPerMatch = 4;
@@ -6155,7 +7188,7 @@ export default function App() {
       const partnerCounts: Record<string, Record<string, number>> = {};
       const opponentCounts: Record<string, Record<string, number>> = {};
       const lastPartnerByPlayer: Record<string, string | null> = {};
-      players.forEach(p => {
+      activePlayers.forEach(p => {
         if (p && p.id) {
           playerMatchCounts[p.id] = 0;
           partnerCounts[p.id] = {};
@@ -6228,13 +7261,13 @@ export default function App() {
 
       for (let r = 1; r <= numRounds; r++) {
         // Prioritize players with fewer matches, randomize tie-break
-        const sortedPlayers = [...players].sort((a, b) => {
+        const sortedPlayers = [...activePlayers].sort((a, b) => {
           if (!a || !b) return 0;
           const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
           return diff !== 0 ? diff : (Math.random() - 0.5);
         });
         const roundMatches: Match[] = [];
-        const playersNeeded = Math.min(Math.floor(players.length / 4) * 4, maxMatchesPerRound * 4);
+        const playersNeeded = Math.min(Math.floor(activePlayers.length / 4) * 4, maxMatchesPerRound * 4);
         const playersInRound = sortedPlayers.slice(0, playersNeeded);
         const playersBye = sortedPlayers.slice(playersNeeded);
 
@@ -6309,9 +7342,9 @@ export default function App() {
       }
     } else if (settings.format === 'Mexicano') {
       // Only generate the first round for Mexicano
-      const shuffled = [...players].sort(() => Math.random() - 0.5);
+      const shuffled = [...activePlayers].sort(() => Math.random() - 0.5);
       const roundMatches: Match[] = [];
-      const playersNeeded = Math.min(Math.floor(players.length / 4) * 4, maxMatchesPerRound * 4);
+      const playersNeeded = Math.min(Math.floor(activePlayers.length / 4) * 4, maxMatchesPerRound * 4);
       const playersInRound = shuffled.slice(0, playersNeeded);
       const playersBye = shuffled.slice(playersNeeded);
 
@@ -6334,9 +7367,9 @@ export default function App() {
       });
     } else if (settings.format === 'Match Play') {
       // Match Play (Traditional Sets/Games)
-      const shuffled = [...players].sort(() => Math.random() - 0.5);
+      const shuffled = [...activePlayers].sort(() => Math.random() - 0.5);
       const roundMatches: Match[] = [];
-      const playersNeeded = Math.min(Math.floor(players.length / 4) * 4, maxMatchesPerRound * 4);
+      const playersNeeded = Math.min(Math.floor(activePlayers.length / 4) * 4, maxMatchesPerRound * 4);
       const playersInRound = shuffled.slice(0, playersNeeded);
       const playersBye = shuffled.slice(playersNeeded);
 
@@ -6364,9 +7397,18 @@ export default function App() {
 
     setSharedMatchId(null);
     const tournamentId = settings.id || `tm_${Math.random().toString(36).slice(2, 10)}`;
-    setTournament({ ...settings, id: tournamentId, rounds, startedAt: now, endedAt: undefined });
-    // Navigate immediately so user never feels "stuck" on settings after tapping Generate.
-    setScreen('preview');
+    setTournament({
+      ...settings,
+      id: tournamentId,
+      inactivePlayerIds: sanitizedInactivePlayerIds,
+      rounds,
+      startedAt: now,
+      endedAt: undefined
+    });
+    setDraftMatchBackgroundId(null);
+    setNeedsRegenerateFromRound(null);
+    // Navigate to background picker before preview.
+    setScreen('background-picker');
     addNotification('Turnamen Dimulai!', `Turnamen ${settings.name} telah dibuat dengan ${settings.players.length} pemain.`, 'tournament');
 
     // Send notifications to friends/players
@@ -6390,6 +7432,12 @@ export default function App() {
         }
       });
     }
+  };
+
+  const handleSkipMatchBackground = () => {
+    const randomBackgroundId = getRandomMatchBackground(tournament.format);
+    setDraftMatchBackgroundId(randomBackgroundId);
+    setScreen('preview');
   };
 
   const upsertPlayerFromFriend = (friend: Friend) => {
@@ -6447,33 +7495,221 @@ export default function App() {
     }
   };
 
+  const handleDeleteRoundsFrom = (roundId: number) => {
+    const safeRoundId = Math.max(2, Math.floor(roundId || 0));
+    const now = Date.now();
+    const hasAnyDeletion = (tournament.rounds || []).some((round) => round.id >= safeRoundId);
+    if (!hasAnyDeletion) return;
+
+    setTournament((prev) => {
+      if (!prev.rounds || prev.rounds.length === 0) return prev;
+
+      const keptRounds = prev.rounds
+        .filter((round) => round.id < safeRoundId)
+        .map((round) => ({
+          ...round,
+          playersBye: [...(round.playersBye || [])],
+          matches: round.matches.map((match) => ({
+            ...match,
+            teamA: { ...match.teamA, players: [...match.teamA.players] },
+            teamB: { ...match.teamB, players: [...match.teamB.players] }
+          }))
+        }));
+
+      if (keptRounds.length === prev.rounds.length) return prev;
+
+      let normalizedRounds = keptRounds;
+      const activeIdx = normalizedRounds.findIndex((round) => round.matches.some((match) => match.status === 'active'));
+      if (activeIdx === -1 && normalizedRounds.length > 0) {
+        const lastIdx = normalizedRounds.length - 1;
+        normalizedRounds = normalizedRounds.map((round, idx) => ({
+          ...round,
+          matches: round.matches.map((match) => {
+            if (idx === lastIdx) {
+              return {
+                ...match,
+                status: 'active' as const,
+                startedAt: match.startedAt || now
+              };
+            }
+            return {
+              ...match,
+              status: 'completed' as const,
+              duration: match.duration || (match.startedAt ? formatDurationFromMs(now - match.startedAt) : '00:00')
+            };
+          })
+        }));
+      }
+
+      const nextTournament: Tournament = {
+        ...prev,
+        rounds: normalizedRounds,
+        endedAt: undefined
+      };
+
+      if (nextTournament.format === 'Americano') {
+        return {
+          ...nextTournament,
+          rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds)
+        };
+      }
+
+      return nextTournament;
+    });
+
+    setNeedsRegenerateFromRound(null);
+    addNotification(
+      'Ronde Dihapus',
+      `Ronde ${safeRoundId} dan seterusnya dihapus. Silakan generate ulang dari skor terbaru.`,
+      'system'
+    );
+  };
+
   const handleUpdateScore = (matchId: string, team: 'A' | 'B', score: number) => {
+    let shouldInvalidateFutureRounds = false;
+    let invalidateFromRoundId: number | null = null;
     setTournament(prev => {
+      const editedRoundIndex = prev.rounds.findIndex((round) => round.matches.some((match) => match.id === matchId));
+      const activeRoundIndex = prev.rounds.findIndex((round) => round.matches.some((match) => match.status === 'active'));
+      const canInvalidateFutureRounds = (
+        editedRoundIndex !== -1 &&
+        activeRoundIndex !== -1 &&
+        editedRoundIndex < activeRoundIndex &&
+        prev.format !== 'Match Play'
+      );
+      let updatedMatchIsValidForStanding = false;
+
       const newRounds = prev.rounds.map(round => ({
         ...round,
         matches: round.matches.map(match => {
           if (match.id === matchId) {
+            const nextScoreA = team === 'A' ? score : match.teamA.score;
+            const nextScoreB = team === 'B' ? score : match.teamB.score;
+            updatedMatchIsValidForStanding = (
+              nextScoreA + nextScoreB === prev.totalPoints &&
+              (nextScoreA > 0 || nextScoreB > 0)
+            );
             return {
               ...match,
-              teamA: { ...match.teamA, score: team === 'A' ? score : match.teamA.score },
-              teamB: { ...match.teamB, score: team === 'B' ? score : match.teamB.score }
+              teamA: { ...match.teamA, score: nextScoreA },
+              teamB: { ...match.teamB, score: nextScoreB }
             };
           }
           return match;
         })
       }));
+
+      if (canInvalidateFutureRounds && updatedMatchIsValidForStanding) {
+        shouldInvalidateFutureRounds = true;
+        invalidateFromRoundId = editedRoundIndex + 2;
+      }
+
       return { ...prev, rounds: newRounds };
     });
+
+    if (shouldInvalidateFutureRounds && invalidateFromRoundId !== null) {
+      const nextFlag = needsRegenerateFromRound === null
+        ? invalidateFromRoundId
+        : Math.min(needsRegenerateFromRound, invalidateFromRoundId);
+
+      if (nextFlag !== needsRegenerateFromRound) {
+        setNeedsRegenerateFromRound(nextFlag);
+        addNotification(
+          'Jadwal Perlu Regenerate',
+          `Skor ronde lama diubah. Hapus ronde ${nextFlag}+ lalu generate ulang.`,
+          'system'
+        );
+      }
+    }
+  };
+
+  const handleUpdateActivePlayers = (activePlayerIds: string[]) => {
+    const knownIds = new Set((tournament.players || []).map((player) => player.id));
+    const requestedActiveIds = Array.from(new Set(activePlayerIds.filter((id) => knownIds.has(id))));
+    const requestedActiveSet = new Set(requestedActiveIds);
+    const nextInactivePlayerIds = (tournament.players || [])
+      .map((player) => player.id)
+      .filter((playerId) => !requestedActiveSet.has(playerId));
+    const currentInactivePlayerIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
+    const hasChanges = (
+      nextInactivePlayerIds.length !== currentInactivePlayerIds.length ||
+      nextInactivePlayerIds.some((playerId, idx) => playerId !== currentInactivePlayerIds[idx])
+    );
+
+    if (!hasChanges) return;
+
+    setTournament((prev) => {
+      const sanitizedInactive = sanitizeInactivePlayerIds(prev.players || [], nextInactivePlayerIds);
+      const nextTournament = {
+        ...prev,
+        inactivePlayerIds: sanitizedInactive
+      };
+
+      if (prev.format === 'Americano' && prev.rounds.length > 0) {
+        return {
+          ...nextTournament,
+          rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds)
+        };
+      }
+
+      return nextTournament;
+    });
+
+    addNotification(
+      'Pemain Aktif Diperbarui',
+      'Perubahan disimpan dan akan berlaku mulai ronde berikutnya.',
+      'system'
+    );
   };
 
   const handleNextRound = () => {
     const now = Date.now();
     if (!tournament.rounds) return;
-    const currentRoundIndex = tournament.rounds.findIndex(r => r && r.matches && r.matches.some(m => m && m.status === 'active'));
+    if (needsRegenerateFromRound !== null) {
+      addNotification(
+        'Perlu Generate Ulang',
+        `Hapus ronde ${needsRegenerateFromRound}+ dulu sebelum lanjut ke ronde berikutnya.`,
+        'system'
+      );
+      return;
+    }
+    const activePlayers = getActivePlayersFromTournament(tournament);
+    const activeRoundIndex = tournament.rounds.findIndex(r => r && r.matches && r.matches.some(m => m && m.status === 'active'));
+    const latestLockedRoundIndex = tournament.rounds.reduce((latestIdx, round, idx) => {
+      const hasPlayedMatch = (round.matches || []).some((match) => match.status !== 'pending');
+      return hasPlayedMatch ? idx : latestIdx;
+    }, -1);
+    const currentRoundIndex = activeRoundIndex !== -1 ? activeRoundIndex : latestLockedRoundIndex;
     if (currentRoundIndex === -1) return;
+    const activeRound = tournament.rounds[currentRoundIndex];
+    if (tournament.format !== 'Match Play' && activeRound) {
+      const incompleteMatches = activeRound.matches.filter((match) => (
+        (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
+      ));
+      if (incompleteMatches.length > 0) {
+        const proceed = window.confirm(
+          `${incompleteMatches.length} match di ronde aktif belum isi skor lengkap. Lanjut ke ronde berikutnya sekarang?\n\nKamu tetap bisa edit skor ronde ini, lalu hapus ronde baru untuk generate ulang.`
+        );
+        if (!proceed) return;
+        addNotification(
+          'Lanjut Tanpa Skor Lengkap',
+          `Ronde dilanjutkan dengan ${incompleteMatches.length} match belum lengkap.`,
+          'system'
+        );
+      }
+    }
     const nextRoundId = currentRoundIndex + 2;
     const isConfiguredLastRound = currentRoundIndex >= (tournament.numRounds - 1);
+    if (!isConfiguredLastRound && activePlayers.length < 4) {
+      addNotification(
+        'Pemain Aktif Kurang',
+        'Minimal 4 pemain aktif untuk lanjut ke ronde berikutnya.',
+        'system'
+      );
+      return;
+    }
     const hasPreGeneratedNextRound = Boolean(tournament.rounds[currentRoundIndex + 1]);
+    const shouldFinishBecauseNoPreparedRound = tournament.format === 'Americano' && !hasPreGeneratedNextRound;
     const finalizedRounds = tournament.rounds.map((round, idx) => {
       if (idx !== currentRoundIndex) return round;
       return {
@@ -6486,7 +7722,7 @@ export default function App() {
       };
     });
 
-    if (isConfiguredLastRound || (tournament.format !== 'Mexicano' && !hasPreGeneratedNextRound)) {
+    if (isConfiguredLastRound || shouldFinishBecauseNoPreparedRound) {
       // Tournament finished - mark last round as completed
       setTournament(prev => ({ ...prev, rounds: finalizedRounds, endedAt: now }));
       addNotification('Turnamen Selesai!', `Selamat kepada para pemenang turnamen ${tournament.name}!`, 'achievement');
@@ -6590,8 +7826,6 @@ export default function App() {
         rounds: finalizedRounds,
         endedAt: now
       });
-      setKlasemenBackScreen('dashboard');
-      setScreen('klasemen');
       return;
     }
 
@@ -6600,7 +7834,7 @@ export default function App() {
       // 1) Balance total match count first (fair play opportunity)
       // 2) Then apply Mexicano ranking rules (W / Points + Diff)
       const playerStatsMap: Record<string, { id: string, w: number, pointsDiff: number, totalPoints: number, matchCount: number }> = {};
-      tournament.players.forEach(p => {
+      activePlayers.forEach(p => {
         playerStatsMap[p.id] = { id: p.id, w: 0, pointsDiff: 0, totalPoints: 0, matchCount: 0 };
       });
 
@@ -6613,6 +7847,7 @@ export default function App() {
             const scoreB = match.teamB.score;
             match.teamA.players.forEach(p => {
               const s = playerStatsMap[p.id];
+              if (!s) return;
               s.totalPoints += scoreA;
               s.pointsDiff += (scoreA - scoreB);
               if (scoreA > scoreB) s.w++;
@@ -6620,6 +7855,7 @@ export default function App() {
             });
             match.teamB.players.forEach(p => {
               const s = playerStatsMap[p.id];
+              if (!s) return;
               s.totalPoints += scoreB;
               s.pointsDiff += (scoreB - scoreA);
               if (scoreB > scoreA) s.w++;
@@ -6641,9 +7877,10 @@ export default function App() {
         return 0;
       };
 
-      const sortedByFairnessThenStanding = [...tournament.players].sort((a, b) => {
+      const sortedByFairnessThenStanding = [...activePlayers].sort((a, b) => {
         const statsA = playerStatsMap[a.id];
         const statsB = playerStatsMap[b.id];
+        if (!statsA || !statsB) return 0;
 
         // Priority #1: players with fewer matches must be selected first
         if (statsA.matchCount !== statsB.matchCount) return statsA.matchCount - statsB.matchCount;
@@ -6657,7 +7894,7 @@ export default function App() {
       });
 
       const roundMatches: Match[] = [];
-      const playersNeeded = Math.min(Math.floor(sortedByFairnessThenStanding.length / 4) * 4, tournament.courts * 4);
+      const playersNeeded = Math.min(Math.floor(activePlayers.length / 4) * 4, tournament.courts * 4);
       const selectedPlayers = sortedByFairnessThenStanding.slice(0, playersNeeded);
       const playersBye = sortedByFairnessThenStanding.slice(playersNeeded);
 
@@ -6667,6 +7904,7 @@ export default function App() {
         if (standingDiff !== 0) return standingDiff;
         const statsA = playerStatsMap[a.id];
         const statsB = playerStatsMap[b.id];
+        if (!statsA || !statsB) return 0;
         if (statsA.matchCount !== statsB.matchCount) return statsA.matchCount - statsB.matchCount;
         return Math.random() - 0.5;
       });
@@ -6711,11 +7949,11 @@ export default function App() {
           matches: roundMatches,
           playersBye
         });
-        return { ...prev, rounds: newRounds };
+        return { ...prev, rounds: newRounds, endedAt: undefined };
       });
     } else if (tournament.format === 'Match Play') {
       // Generate next round for Match Play (randomized like Americano but with tennis scoring)
-      const shuffled = [...tournament.players].sort(() => Math.random() - 0.5);
+      const shuffled = [...activePlayers].sort(() => Math.random() - 0.5);
       const roundMatches: Match[] = [];
       const playersNeeded = Math.min(Math.floor(shuffled.length / 4) * 4, tournament.courts * 4);
       const playersInRound = shuffled.slice(0, playersNeeded);
@@ -6755,10 +7993,10 @@ export default function App() {
           matches: roundMatches,
           playersBye
         });
-        return { ...prev, rounds: newRounds };
+        return { ...prev, rounds: newRounds, endedAt: undefined };
       });
     } else {
-      // Americano or Match Play (pre-generated or simple next)
+      // Americano uses pending rounds (kept in sync with current active roster)
       setTournament(prev => {
         const newRounds = prev.rounds.map((round, idx) => {
           if (idx === currentRoundIndex) {
@@ -6776,7 +8014,7 @@ export default function App() {
           }
           return round;
         });
-        return { ...prev, rounds: newRounds };
+        return { ...prev, rounds: newRounds, endedAt: undefined };
       });
     }
     addNotification('Ronde Baru!', `Ronde ${nextRoundId} telah dimulai. Cek jadwal pertandingan Anda.`, 'match');
@@ -6786,8 +8024,11 @@ export default function App() {
     const safeRequested = Number.isFinite(requestedRounds) ? Math.floor(requestedRounds) : NaN;
     if (!Number.isFinite(safeRequested) || safeRequested < 1) return false;
 
-    const currentRoundIndex = tournament.rounds.findIndex(r => r.matches.some(m => m.status === 'active'));
-    const minAllowedRounds = Math.max(1, currentRoundIndex + 1);
+    const latestLockedRoundIndex = tournament.rounds.reduce((latestIdx, round, idx) => {
+      const hasPlayedMatch = (round.matches || []).some((match) => match.status !== 'pending');
+      return hasPlayedMatch ? idx : latestIdx;
+    }, -1);
+    const minAllowedRounds = Math.max(1, latestLockedRoundIndex + 1);
     const nextNumRounds = Math.max(minAllowedRounds, Math.min(50, safeRequested));
 
     setTournament(prev => {
@@ -6796,162 +8037,28 @@ export default function App() {
       if (nextNumRounds < nextRounds.length) {
         // Only trim future rounds; active/completed rounds are protected by minAllowedRounds.
         nextRounds = nextRounds.slice(0, nextNumRounds);
-      } else if (nextNumRounds > nextRounds.length && prev.format === 'Americano') {
-        // Americano needs pre-generated rounds so "Ronde Berikutnya" can continue seamlessly.
-        const playerMatchCounts: Record<string, number> = {};
-        const partnerCounts: Record<string, Record<string, number>> = {};
-        const opponentCounts: Record<string, Record<string, number>> = {};
-        const lastPartnerByPlayer: Record<string, string | null> = {};
-        prev.players.forEach((p) => {
-          playerMatchCounts[p.id] = 0;
-          partnerCounts[p.id] = {};
-          opponentCounts[p.id] = {};
-          lastPartnerByPlayer[p.id] = null;
-        });
-
-        const getPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => map[a.id]?.[b.id] || 0;
-        const incrementPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
-          map[a.id] ??= {};
-          map[b.id] ??= {};
-          map[a.id][b.id] = (map[a.id][b.id] || 0) + 1;
-          map[b.id][a.id] = (map[b.id][a.id] || 0) + 1;
-        };
-        const listCombinationsOf3 = (arr: Player[]) => {
-          const combos: Player[][] = [];
-          for (let i = 0; i < arr.length; i++) {
-            for (let j = i + 1; j < arr.length; j++) {
-              for (let k = j + 1; k < arr.length; k++) combos.push([arr[i], arr[j], arr[k]]);
-            }
-          }
-          return combos;
-        };
-        const evaluateSplitPenalty = (group: Player[]) => {
-          const splits: [number, number, number, number][] = [[0, 1, 2, 3], [0, 2, 1, 3], [0, 3, 1, 2]];
-          let best = {
-            penalty: Number.POSITIVE_INFINITY,
-            teamA: [group[0], group[1]] as [Player, Player],
-            teamB: [group[2], group[3]] as [Player, Player]
-          };
-          for (const [a1, a2, b1, b2] of splits) {
-            const teamA: [Player, Player] = [group[a1], group[a2]];
-            const teamB: [Player, Player] = [group[b1], group[b2]];
-            const partnerPenaltyA = getPairCount(partnerCounts, teamA[0], teamA[1]) * 100 + (lastPartnerByPlayer[teamA[0].id] === teamA[1].id ? 180 : 0);
-            const partnerPenaltyB = getPairCount(partnerCounts, teamB[0], teamB[1]) * 100 + (lastPartnerByPlayer[teamB[0].id] === teamB[1].id ? 180 : 0);
-            const opponentPenalty =
-              getPairCount(opponentCounts, teamA[0], teamB[0]) * 12 +
-              getPairCount(opponentCounts, teamA[0], teamB[1]) * 12 +
-              getPairCount(opponentCounts, teamA[1], teamB[0]) * 12 +
-              getPairCount(opponentCounts, teamA[1], teamB[1]) * 12;
-            const penalty = partnerPenaltyA + partnerPenaltyB + opponentPenalty;
-            if (penalty < best.penalty) best = { penalty, teamA, teamB };
-          }
-          return best;
-        };
-
-        nextRounds.forEach((round) => {
-          round.matches.forEach((match) => {
-            const [p1, p2] = match.teamA.players;
-            const [p3, p4] = match.teamB.players;
-            if (!p1 || !p2 || !p3 || !p4) return;
-            [p1, p2, p3, p4].forEach((p) => {
-              if (playerMatchCounts[p.id] === undefined) return;
-              playerMatchCounts[p.id]++;
-            });
-            incrementPairCount(partnerCounts, p1, p2);
-            incrementPairCount(partnerCounts, p3, p4);
-            incrementPairCount(opponentCounts, p1, p3);
-            incrementPairCount(opponentCounts, p1, p4);
-            incrementPairCount(opponentCounts, p2, p3);
-            incrementPairCount(opponentCounts, p2, p4);
-            lastPartnerByPlayer[p1.id] = p2.id;
-            lastPartnerByPlayer[p2.id] = p1.id;
-            lastPartnerByPlayer[p3.id] = p4.id;
-            lastPartnerByPlayer[p4.id] = p3.id;
-          });
-        });
-
-        const playersPerRound = Math.min(Math.floor(prev.players.length / 4) * 4, prev.courts * 4);
-        while (nextRounds.length < nextNumRounds) {
-          const roundId = nextRounds.length + 1;
-          const sortedPlayers = [...prev.players].sort((a, b) => {
-            const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
-            return diff !== 0 ? diff : (Math.random() - 0.5);
-          });
-          const playersInRound = sortedPlayers.slice(0, playersPerRound);
-          const playersBye = sortedPlayers.slice(playersPerRound);
-          const remaining = [...playersInRound];
-          const roundMatches: Match[] = [];
-
-          for (let m = 0; m < playersPerRound / 4; m++) {
-            if (remaining.length < 4) break;
-            remaining.sort((a, b) => {
-              const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
-              return diff !== 0 ? diff : (Math.random() - 0.5);
-            });
-            const seed = remaining[0];
-            const candidates = remaining.slice(1);
-            const trios = listCombinationsOf3(candidates);
-            let bestGroup: Player[] = [seed, ...candidates.slice(0, 3)];
-            let bestPenalty = Number.POSITIVE_INFINITY;
-            trios.forEach((trio) => {
-              const group = [seed, ...trio];
-              const pairwisePenalty = group.reduce((sum, a, i) => {
-                for (let j = i + 1; j < group.length; j++) {
-                  const b = group[j];
-                  const interactions = getPairCount(partnerCounts, a, b) * 16 + getPairCount(opponentCounts, a, b) * 6;
-                  sum += interactions;
-                  if (lastPartnerByPlayer[a.id] === b.id || lastPartnerByPlayer[b.id] === a.id) sum += 30;
-                }
-                return sum;
-              }, 0);
-              if (pairwisePenalty < bestPenalty) {
-                bestPenalty = pairwisePenalty;
-                bestGroup = group;
-              }
-            });
-
-            const { teamA, teamB } = evaluateSplitPenalty(bestGroup);
-            const [p1, p2] = teamA;
-            const [p3, p4] = teamB;
-            roundMatches.push({
-              id: `r${roundId}-m${m + 1}`,
-              court: m + 1,
-              roundId,
-              status: 'pending',
-              teamA: { players: [p1, p2], score: 0 },
-              teamB: { players: [p3, p4], score: 0 }
-            });
-            [p1, p2, p3, p4].forEach((p) => {
-              playerMatchCounts[p.id] = (playerMatchCounts[p.id] || 0) + 1;
-            });
-            incrementPairCount(partnerCounts, p1, p2);
-            incrementPairCount(partnerCounts, p3, p4);
-            incrementPairCount(opponentCounts, p1, p3);
-            incrementPairCount(opponentCounts, p1, p4);
-            incrementPairCount(opponentCounts, p2, p3);
-            incrementPairCount(opponentCounts, p2, p4);
-            lastPartnerByPlayer[p1.id] = p2.id;
-            lastPartnerByPlayer[p2.id] = p1.id;
-            lastPartnerByPlayer[p3.id] = p4.id;
-            lastPartnerByPlayer[p4.id] = p3.id;
-
-            const groupIds = new Set(bestGroup.map((p) => p.id));
-            const nextRemaining = remaining.filter((p) => !groupIds.has(p.id));
-            remaining.splice(0, remaining.length, ...nextRemaining);
-          }
-
-          nextRounds.push({
-            id: roundId,
-            matches: roundMatches,
-            playersBye
-          });
-        }
       }
+
+      if (prev.format === 'Americano') {
+        const nextTournament = {
+          ...prev,
+          inactivePlayerIds: sanitizeInactivePlayerIds(prev.players || [], prev.inactivePlayerIds)
+        };
+        nextRounds = rebuildAmericanoFutureRounds(nextTournament, nextNumRounds);
+      }
+
+      const completedRoundCount = nextRounds.filter((round) => (
+        (round.matches || []).length > 0 &&
+        round.matches.every((match) => match.status === 'completed')
+      )).length;
+      const effectiveTotalRounds = Math.max(nextNumRounds, nextRounds.length);
+      const shouldRemainEnded = effectiveTotalRounds > 0 && completedRoundCount >= effectiveTotalRounds;
 
       return {
         ...prev,
         numRounds: nextNumRounds,
-        rounds: nextRounds
+        rounds: nextRounds,
+        endedAt: shouldRemainEnded ? prev.endedAt : undefined
       };
     });
 
@@ -7165,6 +8272,9 @@ export default function App() {
         onUpdateScore={() => { }}
         onNextRound={() => { }}
         onUpdateRounds={() => false}
+        onUpdateActivePlayers={() => { }}
+        onDeleteRoundsFrom={() => { }}
+        needsRegenerateFromRound={null}
         onOpenStandings={() => { }}
         onSwapPlayer={() => { }}
         onUpdateMatchPlayScore={() => { }}
@@ -7190,7 +8300,10 @@ export default function App() {
         {screen === 'login' && <LoginScreen onLogin={handleLogin} />}
         {screen === 'dashboard' && (
           <DashboardScreen
-            onStartMatch={() => setScreen('settings')}
+            onStartMatch={() => {
+              setDraftMatchBackgroundId(null);
+              setScreen('settings');
+            }}
             onViewRank={() => setScreen('rank-discovery')}
             tournament={tournament}
             onContinueMatch={() => {
@@ -7199,14 +8312,14 @@ export default function App() {
               setScreen('active');
             }}
             onNotifications={() => setScreen('notifications')}
-            onViewHistory={(t) => {
-              setSelectedHistory(t);
-              setScreen('history-detail');
+            onOpenHistoryList={() => {
+              setHistoryBackScreen('dashboard');
+              setScreen('history');
             }}
+            onOpenHistoryMatch={(t) => handleOpenHistoryTournament(t, 'dashboard')}
             unreadCount={notifications.filter(n => !n.read).length}
             tournaments={tournaments}
             user={user}
-            addNotification={addNotification}
           />
         )}
         {screen === 'leaderboard' && (
@@ -7236,6 +8349,13 @@ export default function App() {
             onViewMatchDetails={handleOpenHistoryMatchDetails}
           />
         )}
+        {screen === 'history' && (
+          <HistoryScreen
+            tournaments={tournaments}
+            onBack={() => setScreen(historyBackScreen)}
+            onOpenTournament={(t) => handleOpenHistoryTournament(t, 'history')}
+          />
+        )}
         {screen === 'settings' && (
           <MatchSettingsScreen
             onBack={() => setScreen('dashboard')}
@@ -7260,15 +8380,29 @@ export default function App() {
             currentUser={user}
           />
         )}
+        {screen === 'background-picker' && (
+          <MatchBackgroundPickerScreen
+            tournament={tournament}
+            selectedBackgroundId={draftMatchBackgroundId}
+            onSelectBackground={setDraftMatchBackgroundId}
+            onBack={() => setScreen('settings')}
+            onSkip={handleSkipMatchBackground}
+            onContinue={() => {
+              if (!draftMatchBackgroundId) return;
+              setScreen('preview');
+            }}
+          />
+        )}
         {screen === 'preview' && (
           <MatchPreviewScreen
-            onBack={() => setScreen('settings')}
+            onBack={() => setScreen('background-picker')}
             onConfirm={() => {
               setActiveScreenTournament(null);
               setActiveBackScreen('dashboard');
               setScreen('active');
             }}
             tournament={tournament}
+            selectedBackgroundId={draftMatchBackgroundId}
           />
         )}
         {screen === 'active' && (
@@ -7278,17 +8412,31 @@ export default function App() {
                 setScreen('history-detail');
                 return;
               }
+              if (activeBackScreen === 'history') {
+                setScreen('history');
+                return;
+              }
+              if (activeBackScreen === 'profile') {
+                setScreen('profile');
+                return;
+              }
               if (activeBackScreen === 'klasemen') {
                 setScreen('klasemen');
                 return;
               }
               setScreen('dashboard');
             }}
-            onStartNewMatch={() => setScreen('settings')}
+            onStartNewMatch={() => {
+              setDraftMatchBackgroundId(null);
+              setScreen('settings');
+            }}
             tournament={activeScreenTournament || tournament}
             onUpdateScore={handleUpdateScore}
             onNextRound={handleNextRound}
             onUpdateRounds={handleUpdateRounds}
+            onUpdateActivePlayers={handleUpdateActivePlayers}
+            onDeleteRoundsFrom={handleDeleteRoundsFrom}
+            needsRegenerateFromRound={needsRegenerateFromRound}
             onOpenStandings={handleOpenLiveStandings}
             onSwapPlayer={handleSwapPlayer}
             onUpdateMatchPlayScore={handleUpdateMatchPlayScore}
@@ -7328,9 +8476,10 @@ export default function App() {
             user={user}
             tournaments={tournaments}
             setUser={setUser}
-            onViewHistory={(t) => {
-              setSelectedHistory(t);
-              setScreen('history-detail');
+            onOpenHistoryMatch={(t) => handleOpenHistoryTournament(t, 'profile')}
+            onOpenHistoryList={() => {
+              setHistoryBackScreen('profile');
+              setScreen('history');
             }}
             addNotification={addNotification}
             onFriends={() => {
@@ -7366,7 +8515,7 @@ export default function App() {
         )}
       </div>
 
-      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'preview' && screen !== 'history-detail' && screen !== 'rank-discovery' && screen !== 'klasemen' && (
+      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'preview' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'klasemen' && (
         <BottomNav
           currentScreen={screen}
           setScreen={setScreen}
@@ -7382,7 +8531,8 @@ export default function App() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            className="fixed left-1/2 -translate-x-1/2 top-[calc(env(safe-area-inset-top,0px)+16px)] z-[140] pointer-events-none"
+            className="fixed left-1/2 -translate-x-1/2 z-[140] pointer-events-none"
+            style={{ top: 'calc(var(--app-safe-top, 0px) + 16px)' }}
           >
             <div className="px-3.5 py-2 rounded-full bg-black/80 text-white text-[12px] font-semibold shadow-xl backdrop-blur">
               {shareToast}

@@ -55,6 +55,7 @@ export interface Tournament {
   courts: number;
   totalPoints: number;
   players: Player[];
+  inactivePlayerIds?: string[];
   rounds: Round[];
   numRounds: number;
   venueName?: string;
@@ -126,7 +127,7 @@ export interface FriendRequest {
   resolvedAt?: any;
 }
 
-export type Screen = 'login' | 'dashboard' | 'settings' | 'preview' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
+export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'preview' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
 
 export interface AppNotification {
   id: string;
