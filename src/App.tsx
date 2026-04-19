@@ -1709,6 +1709,7 @@ const LoginScreen = () => {
 
 const DashboardScreen = ({
   onStartMatch,
+  onOpenRankingForMe,
   tournament,
   onContinueMatch,
   onNotifications,
@@ -1719,6 +1720,7 @@ const DashboardScreen = ({
   user
 }: {
   onStartMatch: () => void,
+  onOpenRankingForMe: () => void,
   tournament: Tournament,
   onContinueMatch: () => void,
   onNotifications: () => void,
@@ -1731,6 +1733,53 @@ const DashboardScreen = ({
   const activeRound = tournament.rounds?.find(r => r && r.matches && r.matches.some(m => m && m.status === 'active'));
   const activeMatches = activeRound ? activeRound.matches.filter(m => m && m.status === 'active') : [];
   const recentTournaments = useMemo(() => sortTournamentsByNewest(tournaments).slice(0, 5), [tournaments]);
+  const currentMmr = Number.isFinite(Number(user?.mmr)) ? Number(user.mmr) : 0;
+  const currentRank = getRankInfo(currentMmr);
+  const [mmrDelta7d, setMmrDelta7d] = useState(0);
+  const [isMmrDeltaLoading, setIsMmrDeltaLoading] = useState(false);
+  const mmrDeltaLabel = `${mmrDelta7d >= 0 ? '+' : ''}${mmrDelta7d.toLocaleString()} (7d)`;
+
+  useEffect(() => {
+    const uid = String(user?.uid || '').trim();
+    if (!uid) {
+      setMmrDelta7d(0);
+      setIsMmrDeltaLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    const loadMmrDelta7d = async () => {
+      setIsMmrDeltaLoading(true);
+      try {
+        const snapshot = await getDocs(
+          query(collection(db, PLAYER_MATCH_LEDGER_COLLECTION), where('uid', '==', uid))
+        );
+        const cutoffMs = Date.now() - (7 * 24 * 60 * 60 * 1000);
+        let delta = 0;
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() || {};
+          const playedAtMs = data?.playedAt?.toDate ? data.playedAt.toDate().getTime() : 0;
+          const createdAtMs = data?.createdAt?.toDate ? data.createdAt.toDate().getTime() : 0;
+          const referenceMs = playedAtMs || createdAtMs || 0;
+          if (referenceMs < cutoffMs) return;
+          const rowDelta = Number(data?.deltaMmr);
+          if (!Number.isFinite(rowDelta)) return;
+          delta += rowDelta;
+        });
+        if (!isCancelled) setMmrDelta7d(delta);
+      } catch (err) {
+        console.error('Error fetching 7-day MMR delta:', err);
+        if (!isCancelled) setMmrDelta7d(0);
+      } finally {
+        if (!isCancelled) setIsMmrDeltaLoading(false);
+      }
+    };
+
+    loadMmrDelta7d();
+    return () => {
+      isCancelled = true;
+    };
+  }, [user?.uid]);
 
   return (
     <div className="pb-32">
@@ -1759,49 +1808,76 @@ const DashboardScreen = ({
         </div>
       </header>
 
-      <main className="pt-6 max-w-2xl mx-auto">
-        <section className="px-5 mb-8">
-          <div className="flex justify-between items-start">
-            <div>
-              <h2 className="text-ios-gray text-[13px] font-semibold uppercase tracking-wide mb-1">Hi, {user?.displayName || 'Padel Player'}</h2>
-              <h1 className="text-[34px] leading-[41px] font-display font-bold tracking-tight text-on-surface">Ready For<br />Today's Win?</h1>
-            </div>
-            <div className="flex flex-col items-end gap-2">
-              <RankBadge mmr={user?.mmr || 0} size="lg" />
-            </div>
+      <main className="pt-3 max-w-2xl mx-auto px-4 space-y-6">
+        <section>
+          <div>
+            <h2 className="text-ios-gray text-[11px] font-semibold uppercase tracking-wide mb-0.5">
+              Hi, {user?.displayName || 'Padel Player'}
+            </h2>
+            <h1 className="text-[clamp(22px,5.9vw,28px)] leading-[1.12] font-display font-bold tracking-tight text-on-surface whitespace-nowrap">
+              Ready For Today&apos;s Win?
+            </h1>
+
+            <button
+              onClick={onOpenRankingForMe}
+              className="mt-2.5 w-full tap-target text-left"
+            >
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-2xl border border-primary/15 bg-primary/5 px-2.5 py-2 min-h-[78px] flex flex-col justify-center">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-primary">MMR</p>
+                  <div className="mt-1 inline-flex items-baseline gap-1.5 flex-wrap">
+                    <span className="text-[20px] leading-none font-display font-black tracking-tight text-on-surface">
+                      {currentMmr.toLocaleString()}
+                    </span>
+                    <span className="text-[11px] leading-none font-bold tracking-tight text-ios-gray">
+                      {isMmrDeltaLoading ? '...' : mmrDeltaLabel}
+                    </span>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-ios-gray/15 bg-ios-gray/5 px-2.5 py-2 min-h-[78px] flex flex-col justify-center">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-ios-gray">Rank</p>
+                  <div className="mt-1 inline-flex items-center gap-1.5">
+                    <currentRank.icon size={13} className="text-on-surface" />
+                    <span className="text-[20px] leading-none font-display font-black tracking-tight text-on-surface">
+                      {currentRank.name}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </button>
           </div>
         </section>
 
-        <section className="px-5 mb-10">
+        <section>
           <div
             onClick={onStartMatch}
-            className="w-full bg-primary text-white p-5 rounded-[18px] flex items-center justify-between tap-target cursor-pointer"
+            className="cta-shimmer w-full bg-primary text-white px-5 py-[17px] rounded-3xl flex items-center justify-between tap-target cursor-pointer shadow-[0_14px_24px_rgba(255,85,1,0.24)]"
           >
-            <div className="text-left">
-              <span className="block text-lg font-display font-bold tracking-tight">Start New Match</span>
-              <span className="text-sm font-medium opacity-80">Set scores and opponents</span>
+            <div className="text-left relative z-[1]">
+              <span className="block text-[20px] leading-tight font-display font-bold tracking-tight">Start New Match</span>
+              <span className="text-[12px] font-semibold opacity-85">Set scores and opponents</span>
             </div>
-            <PlusCircle size={32} />
+            <PlusCircle size={30} className="relative z-[1]" />
           </div>
         </section>
 
         {activeMatches.length > 0 && (
-          <section className="mb-10">
+          <section>
             <div
               onClick={onContinueMatch}
-              className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
+              className="flex justify-between items-center mb-3 cursor-pointer group"
             >
-              <h2 className="text-xl font-bold tracking-tight">Active Matches</h2>
-              <button className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline">View All</button>
+              <h2 className="text-[18px] font-bold tracking-tight text-on-surface">Active Matches</h2>
+              <button className="text-primary text-[12px] font-bold tap-target px-1.5 group-hover:underline">View All</button>
             </div>
-            <div className="flex overflow-x-auto gap-4 no-scrollbar px-5 pb-2 snap-x snap-mandatory">
+            <div className="flex overflow-x-auto gap-3 no-scrollbar pb-1.5 snap-x snap-mandatory">
               {activeMatches.map((match) => (
                 <div
                   key={match.id}
                   onClick={onContinueMatch}
                   className={cn(
-                    "bg-white p-5 rounded-[20px] shadow-sm border border-ios-gray/10 shrink-0 cursor-pointer tap-target snap-start",
-                    activeMatches.length === 1 ? "w-full" : "w-[84vw] max-w-[360px]"
+                    "bg-white p-4 rounded-3xl shadow-sm border border-ios-gray/10 shrink-0 cursor-pointer tap-target snap-start",
+                    activeMatches.length === 1 ? "w-full" : "w-[84vw] max-w-[356px]"
                   )}
                 >
                   <div className="flex justify-between items-start mb-4">
@@ -1849,7 +1925,7 @@ const DashboardScreen = ({
                     </div>
                   </div>
                   <div
-                    className="w-full bg-on-surface text-white py-3 rounded-[14px] font-bold text-sm flex items-center justify-center gap-2"
+                    className="w-full bg-on-surface text-white py-2.5 rounded-2xl font-bold text-[12px] flex items-center justify-center gap-2"
                   >
                     <span>Continue Scoring</span>
                     <ChevronRight size={16} />
@@ -1860,21 +1936,21 @@ const DashboardScreen = ({
           </section>
         )}
 
-        <section className="mb-10">
+        <section className="pb-2">
           <div
             onClick={onOpenHistoryList}
-            className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
+            className="flex justify-between items-center mb-3 cursor-pointer group"
           >
-            <h2 className="text-xl font-bold tracking-tight">Recent History</h2>
+            <h2 className="text-[18px] font-bold tracking-tight text-on-surface">Recent History</h2>
             <button
-              className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline"
+              className="text-primary text-[12px] font-bold tap-target px-1.5 group-hover:underline"
             >
               View All
             </button>
           </div>
-          <div className="px-5 flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
             {recentTournaments.length === 0 ? (
-              <div className="bg-white border border-ios-gray/10 rounded-[20px] p-8 text-center shadow-sm">
+              <div className="bg-white border border-ios-gray/10 rounded-3xl p-8 text-center shadow-sm">
                 <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
                 <p className="text-ios-gray font-medium">No match history yet.</p>
               </div>
@@ -6675,24 +6751,26 @@ const LeaderboardSummaryCards = ({
   const currentMatches = Number.isFinite(Number(currentUser?.totalMatches)) ? Number(currentUser.totalMatches) : 0;
 
   return (
-    <div className="grid grid-cols-3 gap-2.5 mb-4">
-      <div className="bg-white border border-ios-gray/10 rounded-2xl p-3 shadow-sm">
-        <p className="text-[10px] font-bold text-ios-gray uppercase tracking-wider">Your Rank</p>
-        <p className="text-xl leading-none mt-2 font-display font-black italic tracking-tight text-on-surface">
-          {currentRank ? `#${currentRank}` : '-'}
-        </p>
-      </div>
-      <div className="bg-white border border-ios-gray/10 rounded-2xl p-3 shadow-sm">
-        <p className="text-[10px] font-bold text-ios-gray uppercase tracking-wider">Your MMR</p>
-        <p className="text-xl leading-none mt-2 font-display font-black italic tracking-tight text-on-surface">
-          {currentMmr.toLocaleString()}
-        </p>
-      </div>
-      <div className="bg-white border border-ios-gray/10 rounded-2xl p-3 shadow-sm">
-        <p className="text-[10px] font-bold text-ios-gray uppercase tracking-wider">Matches</p>
-        <p className="text-xl leading-none mt-2 font-display font-black italic tracking-tight text-on-surface">
-          {currentMatches}
-        </p>
+    <div className="bg-white border border-ios-gray/10 rounded-2xl px-3 py-2.5 shadow-sm mb-3">
+      <div className="grid grid-cols-3 divide-x divide-ios-gray/10">
+        <div className="pr-2.5">
+          <p className="text-[9px] font-black text-ios-gray uppercase tracking-wider">Your Rank</p>
+          <p className="text-[20px] leading-tight mt-1 font-display font-black italic tracking-tight text-on-surface">
+            {currentRank ? `#${currentRank}` : '-'}
+          </p>
+        </div>
+        <div className="px-2.5">
+          <p className="text-[9px] font-black text-ios-gray uppercase tracking-wider">Your MMR</p>
+          <p className="text-[20px] leading-tight mt-1 font-display font-black italic tracking-tight text-on-surface">
+            {currentMmr.toLocaleString()}
+          </p>
+        </div>
+        <div className="pl-2.5">
+          <p className="text-[9px] font-black text-ios-gray uppercase tracking-wider">Matches</p>
+          <p className="text-[20px] leading-tight mt-1 font-display font-black italic tracking-tight text-on-surface">
+            {currentMatches}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -6701,11 +6779,13 @@ const LeaderboardSummaryCards = ({
 const LeaderboardUserRow = ({
   user,
   index,
-  isCurrentUser
+  isCurrentUser,
+  isHighlighted = false
 }: {
   user: any;
   index: number;
   isCurrentUser: boolean;
+  isHighlighted?: boolean;
 }) => {
   const rank = index + 1;
   const mmr = Number.isFinite(Number(user?.mmr)) ? Number(user.mmr) : 0;
@@ -6716,15 +6796,18 @@ const LeaderboardUserRow = ({
   const initials = getDisplayInitials(displayName);
   const rankText = `#${rank}`;
   const rankInfo = getRankInfo(mmr);
+  const rowId = user?.uid ? `leaderboard-user-${user.uid}` : undefined;
 
   return (
     <div
+      id={rowId}
       className={cn(
         'bg-white border border-ios-gray/10 rounded-2xl px-3 py-2.5 shadow-sm',
-        isCurrentUser && 'ring-2 ring-primary border-transparent'
+        isCurrentUser && 'ring-2 ring-primary border-transparent',
+        isHighlighted && 'bg-primary/5 border-primary/25'
       )}
     >
-      <div className="flex items-center gap-2.5">
+      <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-2.5">
         <div className={cn(
           'w-8 h-8 shrink-0 rounded-lg border flex items-center justify-center text-[12px] font-black tracking-tight',
           getLeaderboardPlacementStyles(rank)
@@ -6754,7 +6837,7 @@ const LeaderboardUserRow = ({
           </p>
         </div>
 
-        <div className="shrink-0 text-right">
+        <div className="shrink-0 text-right pl-1">
           <div className="inline-flex items-center justify-end gap-1">
             <rankInfo.icon size={12} className={rankInfo.text} />
             <span className={cn('text-[10px] font-black uppercase tracking-wider', rankInfo.text)}>
@@ -6782,7 +6865,7 @@ const LeaderboardHeaderSummary = ({
   const boardLabel = provinceFilter === ALL_PROVINCES_FILTER ? 'Global Board' : 'Province Board';
 
   return (
-    <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="mb-2.5 flex items-center justify-between gap-3">
       <div>
         <p className="text-[11px] font-bold text-ios-gray uppercase tracking-wider">{boardLabel}</p>
         <p className="text-[11px] font-semibold text-ios-gray mt-0.5">{showingLabel}</p>
@@ -6799,15 +6882,18 @@ const LeaderboardHeaderSummary = ({
 
 const LeaderboardScreen = ({
   currentUser,
-  onOpenRankDetails
+  onOpenRankDetails,
+  focusRequestId
 }: {
   currentUser: any,
-  onOpenRankDetails: () => void
+  onOpenRankDetails: () => void,
+  focusRequestId: number
 }) => {
   const [provinceFilter, setProvinceFilter] = useState(ALL_PROVINCES_FILTER);
   const [isRegionSelectorOpen, setIsRegionSelectorOpen] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [highlightedUid, setHighlightedUid] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -6823,6 +6909,26 @@ const LeaderboardScreen = ({
     };
     fetchUsers();
   }, []);
+
+  useEffect(() => {
+    if (!focusRequestId || loading) return;
+    const uid = String(currentUser?.uid || '').trim();
+    if (!uid) return;
+    const rowId = `leaderboard-user-${uid}`;
+    const scrollTimer = window.setTimeout(() => {
+      const row = document.getElementById(rowId);
+      if (!row) return;
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedUid(uid);
+    }, 120);
+    const highlightTimer = window.setTimeout(() => {
+      setHighlightedUid((prev) => (prev === uid ? null : prev));
+    }, 1700);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [focusRequestId, loading, users.length, currentUser?.uid]);
 
   const filteredUsers = provinceFilter === ALL_PROVINCES_FILTER
     ? users
@@ -6870,9 +6976,9 @@ const LeaderboardScreen = ({
         selectionMode="province"
       />
 
-      <main className="max-w-2xl mx-auto p-4">
+      <main className="max-w-2xl mx-auto p-3.5">
         {provinceFilter !== ALL_PROVINCES_FILTER && (
-          <div className="mb-3.5 px-3 py-2 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-between">
+          <div className="mb-2.5 px-3 py-2 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-primary">
               <MapPin size={13} />
               <span className="text-[11px] font-bold">{provinceFilter}</span>
@@ -6907,7 +7013,7 @@ const LeaderboardScreen = ({
             <p className="text-[12px] font-medium text-ios-gray mt-1">Only registered FOM accounts are shown.</p>
           </div>
         ) : (
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {rankedUsers.map((user, index) => {
               if (!user) return null;
               return (
@@ -6916,6 +7022,7 @@ const LeaderboardScreen = ({
                   user={user}
                   index={index}
                   isCurrentUser={user.uid === currentUser?.uid}
+                  isHighlighted={user.uid === highlightedUid}
                 />
               );
             })}
@@ -7042,6 +7149,7 @@ export default function App() {
   const [activeBackScreen, setActiveBackScreen] = useState<'dashboard' | 'history-detail' | 'klasemen' | 'history' | 'profile'>('dashboard');
   const [historyBackScreen, setHistoryBackScreen] = useState<'dashboard' | 'profile'>('dashboard');
   const [friendsEntrySource, setFriendsEntrySource] = useState<'profile' | 'settings'>('profile');
+  const [rankingFocusRequestId, setRankingFocusRequestId] = useState(0);
   const [draftMatchBackgroundId, setDraftMatchBackgroundId] = useState<string | null>(null);
   const [activeSaveState, setActiveSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const [needsRegenerateFromRound, setNeedsRegenerateFromRound] = useState<number | null>(null);
@@ -9070,6 +9178,10 @@ export default function App() {
               setDraftMatchBackgroundId(null);
               setScreen('settings');
             }}
+            onOpenRankingForMe={() => {
+              setRankingFocusRequestId((prev) => prev + 1);
+              setScreen('leaderboard');
+            }}
             tournament={tournament}
             onContinueMatch={() => {
               setActiveScreenTournament(null);
@@ -9091,6 +9203,7 @@ export default function App() {
           <LeaderboardScreen
             currentUser={user}
             onOpenRankDetails={() => setScreen('rank-discovery')}
+            focusRequestId={rankingFocusRequestId}
           />
         )}
         {screen === 'rank-discovery' && (
