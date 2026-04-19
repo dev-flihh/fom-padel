@@ -55,7 +55,7 @@ import {
   sendPasswordResetEmail,
   updateProfile
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp, collection, query, where, getDocs, orderBy, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, collection, query, where, getDocs, orderBy, onSnapshot, documentId } from 'firebase/firestore';
 
 const Logo = ({ className }: { className?: string }) => (
   <img
@@ -217,6 +217,54 @@ const sortUsersByMmrDesc = (users: any[]) => (
     return String(a?.displayName || '').localeCompare(String(b?.displayName || ''), 'id');
   })
 );
+
+const chunkArray = <T,>(list: T[], size: number): T[][] => {
+  if (size <= 0) return [list];
+  const chunks: T[][] = [];
+  for (let i = 0; i < list.length; i += size) {
+    chunks.push(list.slice(i, i + size));
+  }
+  return chunks;
+};
+
+const fetchPlayerStatsMapByUids = async (uids: string[]) => {
+  const uniqueUids = Array.from(new Set((uids || []).map((uid) => String(uid || '').trim()).filter(Boolean)));
+  const statsMap = new Map<string, any>();
+  if (uniqueUids.length === 0) return statsMap;
+
+  const batches = chunkArray(uniqueUids, 10);
+  await Promise.all(
+    batches.map(async (batch) => {
+      const statsQuery = query(
+        collection(db, PLAYER_STATS_COLLECTION),
+        where(documentId(), 'in', batch)
+      );
+      const snapshot = await getDocs(statsQuery);
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() || {};
+        const uid = typeof data?.uid === 'string' && data.uid.trim() ? data.uid.trim() : docSnap.id;
+        if (!uid) return;
+        statsMap.set(uid, data);
+      });
+    })
+  );
+
+  return statsMap;
+};
+
+const mergeFriendsWithLatestStats = async (friends: Friend[]) => {
+  if (!Array.isArray(friends) || friends.length === 0) return [];
+  const statsByUid = await fetchPlayerStatsMapByUids(friends.map((friend) => friend.uid));
+  return friends.map((friend) => {
+    const stats = statsByUid.get(friend.uid);
+    if (!stats) return friend;
+    const numericMmr = Number(stats?.mmr);
+    return {
+      ...friend,
+      mmr: Number.isFinite(numericMmr) ? Math.max(0, numericMmr) : (friend.mmr || 0)
+    };
+  });
+};
 
 const fetchLeaderboardUsersFromFirestore = async () => {
   try {
@@ -2085,8 +2133,13 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const fetched: Friend[] = [];
       snapshot.forEach((docSnap) => fetched.push(docSnap.data() as Friend));
-      setFriends(fetched);
-      setLoadingFriends(false);
+      mergeFriendsWithLatestStats(fetched)
+        .then((merged) => setFriends(merged))
+        .catch((err) => {
+          console.error('Error enriching friends stats for settings:', err);
+          setFriends(fetched);
+        })
+        .finally(() => setLoadingFriends(false));
     }, (err) => {
       console.error('Error fetching friends for settings:', err);
       setFriends([]);
@@ -5426,6 +5479,37 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
       console.error('Save profile error:', err);
     }
   };
+  const [ssotStats, setSsotStats] = useState<{
+    totalMatches?: number;
+    wins?: number;
+    losses?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const uid = user?.uid;
+    if (!uid) {
+      setSsotStats(null);
+      return;
+    }
+
+    const statsRef = doc(db, PLAYER_STATS_COLLECTION, uid);
+    const unsubscribe = onSnapshot(statsRef, (snapshot) => {
+      if (!snapshot.exists()) {
+        setSsotStats(null);
+        return;
+      }
+      const data = snapshot.data() || {};
+      setSsotStats({
+        totalMatches: Number(data?.totalMatches),
+        wins: Number(data?.wins),
+        losses: Number(data?.losses)
+      });
+    }, (err) => {
+      console.error('Profile stats sync error:', err);
+    });
+    return () => unsubscribe();
+  }, [user?.uid]);
+
   const stats = useMemo(() => {
     const uid = user?.uid;
     const displayName = (user?.displayName || '').trim().toLowerCase();
@@ -5491,23 +5575,36 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
       });
     });
 
-    const winRate = matches > 0 ? Math.round((won / matches) * 100) : 0;
+    const ssotTotalMatches = Number(ssotStats?.totalMatches);
+    const ssotWins = Number(ssotStats?.wins);
+    const ssotLosses = Number(ssotStats?.losses);
+    const resolvedMatches = Number.isFinite(ssotTotalMatches) && ssotTotalMatches >= 0
+      ? ssotTotalMatches
+      : matches;
+    const resolvedWon = Number.isFinite(ssotWins) && ssotWins >= 0
+      ? ssotWins
+      : won;
+    const resolvedLosses = Number.isFinite(ssotLosses) && ssotLosses >= 0
+      ? ssotLosses
+      : lost;
+    const resolvedDraw = Math.max(0, resolvedMatches - resolvedWon - resolvedLosses);
+    const winRate = resolvedMatches > 0 ? Math.round((resolvedWon / resolvedMatches) * 100) : 0;
     const winChangePercent = previousMonthWins > 0
       ? Math.round(((currentMonthWins - previousMonthWins) / previousMonthWins) * 100)
       : (currentMonthWins > 0 ? 100 : 0);
 
     return {
-      matches,
+      matches: resolvedMatches,
       winRate,
       points,
-      won,
-      lost,
-      draw,
+      won: resolvedWon,
+      lost: resolvedLosses,
+      draw: resolvedDraw,
       currentMonthWins,
       previousMonthWins,
       winChangePercent
     };
-  }, [tournaments, user?.uid, user?.displayName]);
+  }, [tournaments, user?.uid, user?.displayName, ssotStats?.totalMatches, ssotStats?.wins, ssotStats?.losses]);
 
   const getTier = (matches: number) => {
     if (matches >= 10) return { label: 'Silver Tier', color: 'bg-slate-400/10 text-slate-600' };
@@ -5973,8 +6070,13 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       snapshot.forEach((doc) => {
         fetchedFriends.push(doc.data() as Friend);
       });
-      setFriends(fetchedFriends);
-      setLoading(false);
+      mergeFriendsWithLatestStats(fetchedFriends)
+        .then((merged) => setFriends(merged))
+        .catch((err) => {
+          console.error('Error enriching friends stats:', err);
+          setFriends(fetchedFriends);
+        })
+        .finally(() => setLoading(false));
     }, (error) => {
       console.error('Friends snapshot error:', error);
       setFriends([]);
@@ -6040,8 +6142,14 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       if (acceptedToSync.length === 0) return;
 
       try {
+        const statsByUid = await fetchPlayerStatsMapByUids(acceptedToSync.map((item) => item.targetUid));
         await Promise.all(acceptedToSync.map(async ({ targetUid, payload }) => {
-          await setDoc(doc(db, 'users', uid, 'friends', targetUid), payload, { merge: true });
+          const latestStats = statsByUid.get(targetUid);
+          const latestMmr = Number(latestStats?.mmr);
+          await setDoc(doc(db, 'users', uid, 'friends', targetUid), {
+            ...payload,
+            mmr: Number.isFinite(latestMmr) ? Math.max(0, latestMmr) : payload.mmr
+          }, { merge: true });
           await setDoc(doc(db, 'users', uid, 'sentFriendRequests', targetUid), {
             senderSyncedAt: serverTimestamp(),
             updatedAt: serverTimestamp()
@@ -6083,8 +6191,19 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
           }
         });
       }
-      setSearchResults(results);
-      if (results.length === 0) {
+      const statsByUid = await fetchPlayerStatsMapByUids(results.map((result) => result.uid || ''));
+      const mergedResults = results.map((result) => {
+        const stats = statsByUid.get(result.uid || '');
+        if (!stats) return result;
+        const numericMmr = Number(stats?.mmr);
+        return {
+          ...result,
+          mmr: Number.isFinite(numericMmr) ? Math.max(0, numericMmr) : Number(result?.mmr || 0)
+        };
+      });
+
+      setSearchResults(mergedResults);
+      if (mergedResults.length === 0) {
         addNotification('Search', 'User not found.', 'system');
       }
     } catch (err) {
@@ -6165,12 +6284,21 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       };
 
       if (decision === 'accepted') {
+        const [requesterStatsDoc, currentStatsDoc] = await Promise.all([
+          getDoc(doc(db, PLAYER_STATS_COLLECTION, request.requesterUid)),
+          getDoc(doc(db, PLAYER_STATS_COLLECTION, uid))
+        ]);
+        const requesterStatsMmr = Number(requesterStatsDoc.exists() ? requesterStatsDoc.data()?.mmr : NaN);
+        const currentStatsMmr = Number(currentStatsDoc.exists() ? currentStatsDoc.data()?.mmr : NaN);
+
         const requesterFriendData: Friend = {
           uid: request.requesterUid,
           displayName: request.requesterDisplayName || 'Friends',
           photoURL: request.requesterPhotoURL || '',
           username: request.requesterUsername || '',
-          mmr: request.requesterMmr || 0,
+          mmr: Number.isFinite(requesterStatsMmr)
+            ? Math.max(0, requesterStatsMmr)
+            : (request.requesterMmr || 0),
           addedAt: serverTimestamp(),
           lastPlayedAt: null
         };
@@ -6180,7 +6308,9 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
           displayName: currentUser.displayName || auth.currentUser?.displayName || 'Player',
           photoURL: currentUser.photoURL || auth.currentUser?.photoURL || '',
           username: currentUser.username || '',
-          mmr: currentUser.mmr || 0,
+          mmr: Number.isFinite(currentStatsMmr)
+            ? Math.max(0, currentStatsMmr)
+            : (currentUser.mmr || 0),
           addedAt: serverTimestamp(),
           lastPlayedAt: null
         };
@@ -6826,6 +6956,36 @@ export default function App() {
   }, [user?.uid]);
 
   useEffect(() => {
+    const uid = user?.uid || auth.currentUser?.uid;
+    if (!uid) return;
+
+    const statsRef = doc(db, PLAYER_STATS_COLLECTION, uid);
+    const unsubscribe = onSnapshot(statsRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+      const stats = snapshot.data() || {};
+      const mmr = Number(stats?.mmr);
+      const totalMatches = Number(stats?.totalMatches);
+      const wins = Number(stats?.wins);
+      const losses = Number(stats?.losses);
+
+      setUser((prev: any) => {
+        if (!prev || prev.uid !== uid) return prev;
+        return {
+          ...prev,
+          ...(Number.isFinite(mmr) ? { mmr: Math.max(0, mmr) } : {}),
+          ...(Number.isFinite(totalMatches) && totalMatches >= 0 ? { totalMatches } : {}),
+          ...(Number.isFinite(wins) && wins >= 0 ? { wins } : {}),
+          ...(Number.isFinite(losses) && losses >= 0 ? { losses } : {})
+        };
+      });
+    }, (err) => {
+      console.error('player_stats live sync error:', err);
+    });
+
+    return () => unsubscribe();
+  }, [user?.uid]);
+
+  useEffect(() => {
     const handleDocumentClick = (event: MouseEvent) => {
       const tracked = resolveTrackableButton(event.target);
       if (!tracked) return;
@@ -6963,11 +7123,20 @@ export default function App() {
 
           // Fetch user data from Firestore
           const userDocRef = doc(db, 'users', firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
+          const userStatsRef = doc(db, PLAYER_STATS_COLLECTION, firebaseUser.uid);
+          const [userDoc, userStatsDoc] = await Promise.all([
+            getDoc(userDocRef),
+            getDoc(userStatsRef)
+          ]);
           if (userDoc.exists()) {
             const userData = userDoc.data();
+            const userStatsData = userStatsDoc.exists() ? (userStatsDoc.data() || {}) : {};
             const existingMmr = Number(userData?.mmr);
             const existingTotalMatches = Number(userData?.totalMatches);
+            const statsMmr = Number(userStatsData?.mmr);
+            const statsTotalMatches = Number(userStatsData?.totalMatches);
+            const statsWins = Number(userStatsData?.wins);
+            const statsLosses = Number(userStatsData?.losses);
             const locationActivity = userData?.locationActivity;
             const totalLocationActivity = locationActivity && typeof locationActivity === 'object'
               ? Object.values(locationActivity).reduce<number>((total, count) => {
@@ -6983,12 +7152,18 @@ export default function App() {
 
             const normalizedUserData: Record<string, any> = {
               ...userData,
-              mmr: shouldNormalizeLegacyInitialMmr
-                ? 0
-                : (Number.isFinite(existingMmr) ? existingMmr : 0),
-              totalMatches: Number.isFinite(existingTotalMatches) && existingTotalMatches >= 0
-                ? existingTotalMatches
-                : 0
+              mmr: Number.isFinite(statsMmr)
+                ? Math.max(0, statsMmr)
+                : (shouldNormalizeLegacyInitialMmr
+                  ? 0
+                  : (Number.isFinite(existingMmr) ? existingMmr : 0)),
+              totalMatches: Number.isFinite(statsTotalMatches) && statsTotalMatches >= 0
+                ? statsTotalMatches
+                : (Number.isFinite(existingTotalMatches) && existingTotalMatches >= 0
+                  ? existingTotalMatches
+                  : 0),
+              wins: Number.isFinite(statsWins) && statsWins >= 0 ? statsWins : Number(userData?.wins || 0),
+              losses: Number.isFinite(statsLosses) && statsLosses >= 0 ? statsLosses : Number(userData?.losses || 0)
             };
 
             const needsBackfill =
