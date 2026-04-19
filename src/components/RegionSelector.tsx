@@ -9,14 +9,17 @@ interface RegionSelectorProps {
   onClose: () => void;
   onSelect: (region: string) => void;
   currentValue?: string;
+  selectionMode?: 'province' | 'city';
 }
 
 export const RegionSelector: React.FC<RegionSelectorProps> = ({
   isOpen,
   onClose,
   onSelect,
-  currentValue
+  currentValue,
+  selectionMode = 'city'
 }) => {
+  const isProvinceOnly = selectionMode === 'province';
   const [step, setStep] = useState<'province' | 'city'>('province');
   const [selectedProvince, setSelectedProvince] = useState<Province | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -36,6 +39,17 @@ export const RegionSelector: React.FC<RegionSelectorProps> = ({
   }, [selectedProvince, searchQuery]);
 
   const handleProvinceSelect = (province: Province) => {
+    if (isProvinceOnly) {
+      onSelect(province.name);
+      onClose();
+      setTimeout(() => {
+        setStep('province');
+        setSelectedProvince(null);
+        setSearchQuery('');
+      }, 300);
+      return;
+    }
+
     setSelectedProvince(province);
     setStep('city');
     setSearchQuery('');
@@ -78,7 +92,7 @@ export const RegionSelector: React.FC<RegionSelectorProps> = ({
             <header className="px-6 pt-6 pb-4 border-b border-ios-gray/10">
               <div className="flex justify-between items-center mb-4">
                 <div className="flex items-center gap-2">
-                  {step === 'city' && (
+                  {step === 'city' && !isProvinceOnly && (
                     <button onClick={handleBack} className="p-2 -ml-2 tap-target">
                       <ChevronLeft size={20} />
                     </button>
@@ -114,7 +128,16 @@ export const RegionSelector: React.FC<RegionSelectorProps> = ({
                       className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-ios-gray/5 tap-target transition-colors group"
                     >
                       <span className="font-bold text-on-surface">{p.name}</span>
-                      <ChevronRight size={18} className="text-ios-gray group-hover:text-primary transition-colors" />
+                      {isProvinceOnly ? (
+                        <div className={cn(
+                          "w-6 h-6 rounded-full border border-ios-gray/20 flex items-center justify-center transition-all",
+                          currentValue === p.name && "border-primary bg-primary/5"
+                        )}>
+                          <div className={cn("w-2 h-2 rounded-full", currentValue === p.name ? "bg-primary" : "bg-transparent")} />
+                        </div>
+                      ) : (
+                        <ChevronRight size={18} className="text-ios-gray group-hover:text-primary transition-colors" />
+                      )}
                     </button>
                   ))}
                   {filteredProvinces.length === 0 && (
@@ -150,7 +173,9 @@ export const RegionSelector: React.FC<RegionSelectorProps> = ({
             
             <div className="p-6 bg-ios-gray/5 border-t border-ios-gray/10">
               <p className="text-[10px] text-ios-gray font-bold text-center uppercase tracking-widest">
-                {step === 'province' ? 'Pilih provinsi asal Anda' : 'Pilih kota/kabupaten spesifik'}
+                {step === 'province'
+                  ? 'Pilih provinsi'
+                  : 'Pilih kota/kabupaten spesifik'}
               </p>
             </div>
           </motion.div>

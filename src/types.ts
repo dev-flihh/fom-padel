@@ -140,7 +140,7 @@ export interface FriendRequest {
   resolvedAt?: any;
 }
 
-export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'global-ranking' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
+export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
 
 export interface AppNotification {
   id: string;

@@ -31,13 +31,13 @@ import {
   TrendingUp,
   Calendar,
   Star,
-  MessageCircle,
   Instagram,
   RefreshCw,
   Mail,
   Download,
   Building2,
   AlertTriangle,
+  Globe,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus, CourtChange } from './types';
@@ -1709,7 +1709,6 @@ const LoginScreen = () => {
 
 const DashboardScreen = ({
   onStartMatch,
-  onViewRank,
   tournament,
   onContinueMatch,
   onNotifications,
@@ -1720,7 +1719,6 @@ const DashboardScreen = ({
   user
 }: {
   onStartMatch: () => void,
-  onViewRank: () => void,
   tournament: Tournament,
   onContinueMatch: () => void,
   onNotifications: () => void,
@@ -1770,12 +1768,6 @@ const DashboardScreen = ({
             </div>
             <div className="flex flex-col items-end gap-2">
               <RankBadge mmr={user?.mmr || 0} size="lg" />
-              <button
-                onClick={onViewRank}
-                className="text-[10px] font-bold text-primary uppercase tracking-widest bg-primary/5 px-2 py-1 rounded-lg tap-target active:scale-95 transition-transform"
-              >
-                View Rank Details
-              </button>
             </div>
           </div>
         </section>
@@ -6638,8 +6630,181 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
   );
 };
 
-const LeaderboardScreen = ({ currentUser, onChallenge, onOpenGlobalRanking }: { currentUser: any, onChallenge: (user: any) => void, onOpenGlobalRanking: () => void }) => {
-  const [region, setRegion] = useState('All Regions');
+const getLeaderboardPlacementStyles = (rank: number) => {
+  if (rank === 1) return 'bg-yellow-400/15 text-yellow-700 border-yellow-400/30';
+  if (rank === 2) return 'bg-slate-300/30 text-slate-700 border-slate-300/50';
+  if (rank === 3) return 'bg-orange-400/15 text-orange-700 border-orange-400/30';
+  return 'bg-ios-gray/10 text-ios-gray border-ios-gray/15';
+};
+
+const ALL_PROVINCES_FILTER = 'All Provinces';
+
+const toProvinceName = (location: string | null | undefined): string => {
+  if (!location || typeof location !== 'string') return '';
+  const segments = location
+    .split(',')
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length === 0) return '';
+  return segments[segments.length - 1];
+};
+
+const getDisplayInitials = (name: string | null | undefined): string => {
+  const safeName = String(name || '').trim();
+  if (!safeName) return 'PL';
+  const letters = safeName
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+  return letters || 'PL';
+};
+
+const LeaderboardSummaryCards = ({
+  rankedUsers,
+  currentUser
+}: {
+  rankedUsers: any[];
+  currentUser: any;
+}) => {
+  const currentRankIndex = rankedUsers.findIndex((u) => u?.uid === currentUser?.uid);
+  const currentRank = currentRankIndex >= 0 ? currentRankIndex + 1 : null;
+  const currentMmr = Number.isFinite(Number(currentUser?.mmr)) ? Number(currentUser.mmr) : 0;
+  const currentMatches = Number.isFinite(Number(currentUser?.totalMatches)) ? Number(currentUser.totalMatches) : 0;
+
+  return (
+    <div className="grid grid-cols-3 gap-2.5 mb-4">
+      <div className="bg-white border border-ios-gray/10 rounded-2xl p-3 shadow-sm">
+        <p className="text-[10px] font-bold text-ios-gray uppercase tracking-wider">Your Rank</p>
+        <p className="text-xl leading-none mt-2 font-display font-black italic tracking-tight text-on-surface">
+          {currentRank ? `#${currentRank}` : '-'}
+        </p>
+      </div>
+      <div className="bg-white border border-ios-gray/10 rounded-2xl p-3 shadow-sm">
+        <p className="text-[10px] font-bold text-ios-gray uppercase tracking-wider">Your MMR</p>
+        <p className="text-xl leading-none mt-2 font-display font-black italic tracking-tight text-on-surface">
+          {currentMmr.toLocaleString()}
+        </p>
+      </div>
+      <div className="bg-white border border-ios-gray/10 rounded-2xl p-3 shadow-sm">
+        <p className="text-[10px] font-bold text-ios-gray uppercase tracking-wider">Matches</p>
+        <p className="text-xl leading-none mt-2 font-display font-black italic tracking-tight text-on-surface">
+          {currentMatches}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+const LeaderboardUserRow = ({
+  user,
+  index,
+  isCurrentUser
+}: {
+  user: any;
+  index: number;
+  isCurrentUser: boolean;
+}) => {
+  const rank = index + 1;
+  const mmr = Number.isFinite(Number(user?.mmr)) ? Number(user.mmr) : 0;
+  const totalMatches = Number.isFinite(Number(user?.totalMatches)) ? Number(user.totalMatches) : 0;
+  const matchesLabel = totalMatches === 1 ? '1 Match' : `${totalMatches} Matches`;
+  const areaLabel = toProvinceName(user?.region || user?.homeBase) || 'Unknown';
+  const displayName = String(user?.displayName || 'Player');
+  const initials = getDisplayInitials(displayName);
+  const rankText = `#${rank}`;
+  const rankInfo = getRankInfo(mmr);
+
+  return (
+    <div
+      className={cn(
+        'bg-white border border-ios-gray/10 rounded-2xl px-3 py-2.5 shadow-sm',
+        isCurrentUser && 'ring-2 ring-primary border-transparent'
+      )}
+    >
+      <div className="flex items-center gap-2.5">
+        <div className={cn(
+          'w-8 h-8 shrink-0 rounded-lg border flex items-center justify-center text-[12px] font-black tracking-tight',
+          getLeaderboardPlacementStyles(rank)
+        )}>
+          {rankText}
+        </div>
+
+        <div className="w-10 h-10 rounded-full bg-ios-gray/10 border border-ios-gray/10 overflow-hidden flex items-center justify-center shrink-0">
+          {user.photoURL ? (
+            <img src={user.photoURL} alt={displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+          ) : (
+            <span className="text-[11px] font-bold text-ios-gray tracking-tight">{initials}</span>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <h4 className="font-bold text-[14px] leading-tight text-on-surface truncate">{displayName}</h4>
+            {isCurrentUser && (
+              <span className="text-[9px] font-black uppercase tracking-wider bg-primary/10 text-primary px-1.5 py-0.5 rounded-md">
+                You
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] font-semibold text-ios-gray mt-0.5 truncate">
+            {areaLabel} • {matchesLabel}
+          </p>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <div className="inline-flex items-center justify-end gap-1">
+            <rankInfo.icon size={12} className={rankInfo.text} />
+            <span className={cn('text-[10px] font-black uppercase tracking-wider', rankInfo.text)}>
+              {rankInfo.name}
+            </span>
+          </div>
+          <p className="text-[15px] leading-tight font-display font-black italic tracking-tight text-on-surface mt-0.5">
+            {mmr.toLocaleString()} <span className="text-[10px] font-black not-italic tracking-wider text-ios-gray">MMR</span>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const LeaderboardHeaderSummary = ({
+  provinceFilter,
+  showingLabel,
+  onOpenRankDetails
+}: {
+  provinceFilter: string;
+  showingLabel: string;
+  onOpenRankDetails: () => void;
+}) => {
+  const boardLabel = provinceFilter === ALL_PROVINCES_FILTER ? 'Global Board' : 'Province Board';
+
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3">
+      <div>
+        <p className="text-[11px] font-bold text-ios-gray uppercase tracking-wider">{boardLabel}</p>
+        <p className="text-[11px] font-semibold text-ios-gray mt-0.5">{showingLabel}</p>
+      </div>
+      <button
+        onClick={onOpenRankDetails}
+        className="h-8 px-3 rounded-full bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider tap-target border border-primary/20 shrink-0"
+      >
+        View Rank Details
+      </button>
+    </div>
+  );
+};
+
+const LeaderboardScreen = ({
+  currentUser,
+  onOpenRankDetails
+}: {
+  currentUser: any,
+  onOpenRankDetails: () => void
+}) => {
+  const [provinceFilter, setProvinceFilter] = useState(ALL_PROVINCES_FILTER);
   const [isRegionSelectorOpen, setIsRegionSelectorOpen] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -6659,62 +6824,81 @@ const LeaderboardScreen = ({ currentUser, onChallenge, onOpenGlobalRanking }: { 
     fetchUsers();
   }, []);
 
-  const filteredUsers = region === 'All Regions'
+  const filteredUsers = provinceFilter === ALL_PROVINCES_FILTER
     ? users
-    : users.filter(u => u.region === region);
+    : users.filter((u) => toProvinceName(u?.region || u?.homeBase) === provinceFilter);
   const rankedUsers = useMemo(() => sortUsersByMmrDesc(filteredUsers), [filteredUsers]);
+  const showingLabel = `${rankedUsers.length} ${rankedUsers.length === 1 ? 'Player' : 'Players'}`;
 
   return (
     <div className="min-h-screen bg-surface pb-32">
       <header className="ios-blur sticky top-0 w-full z-50 px-4 h-14 border-b border-ios-gray/10 flex items-center justify-between">
-        <div className="flex items-center justify-between w-full gap-2">
-          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Leaderboard</h1>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onOpenGlobalRanking}
-              className="bg-white text-primary px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-primary/20 tap-target"
-            >
-              Global
-            </button>
-            <button
-              onClick={() => setIsRegionSelectorOpen(true)}
-              className="bg-primary/10 text-primary px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 tap-target"
-            >
-              <MapPin size={14} />
-              {region === 'All Regions' ? 'Filter' : region.split(',')[0]}
-            </button>
-          </div>
+        <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Ranking</h1>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setProvinceFilter(ALL_PROVINCES_FILTER)}
+            className={cn(
+              "h-8 px-3.5 rounded-full text-[10px] font-black uppercase tracking-wider tap-target flex items-center gap-1.5 border",
+              provinceFilter === ALL_PROVINCES_FILTER
+                ? "bg-primary/10 border-primary/25 text-primary"
+                : "bg-white border-ios-gray/20 text-on-surface"
+            )}
+          >
+            <Globe size={13} className="text-primary" />
+            Global
+          </button>
+          <button
+            onClick={() => setIsRegionSelectorOpen(true)}
+            className={cn(
+              "h-8 px-3.5 rounded-full text-[10px] font-black uppercase tracking-wider tap-target flex items-center gap-1.5 border",
+              provinceFilter === ALL_PROVINCES_FILTER
+                ? "bg-white border-ios-gray/20 text-on-surface"
+                : "bg-primary/10 border-primary/25 text-primary"
+            )}
+          >
+            <MapPin size={13} />
+            {provinceFilter === ALL_PROVINCES_FILTER ? 'Province' : provinceFilter}
+          </button>
         </div>
       </header>
 
       <RegionSelector
         isOpen={isRegionSelectorOpen}
         onClose={() => setIsRegionSelectorOpen(false)}
-        onSelect={(r) => setRegion(r)}
-        currentValue={region}
+        onSelect={(value) => setProvinceFilter(value)}
+        currentValue={provinceFilter === ALL_PROVINCES_FILTER ? '' : provinceFilter}
+        selectionMode="province"
       />
 
       <main className="max-w-2xl mx-auto p-4">
-        {region !== 'All Regions' && (
-          <div className="flex items-center justify-between bg-primary/5 px-4 py-2 rounded-2xl mb-4 border border-primary/10">
-            <div className="flex items-center gap-2">
-              <MapPin size={14} className="text-primary" />
-              <span className="text-xs font-bold text-primary">{region}</span>
+        {provinceFilter !== ALL_PROVINCES_FILTER && (
+          <div className="mb-3.5 px-3 py-2 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-between">
+            <div className="flex items-center gap-1.5 text-primary">
+              <MapPin size={13} />
+              <span className="text-[11px] font-bold">{provinceFilter}</span>
             </div>
             <button
-              onClick={() => setRegion('All Regions')}
-              className="text-[10px] font-black text-primary uppercase tracking-widest bg-white px-2 py-1 rounded-lg border border-primary/20"
+              onClick={() => setProvinceFilter(ALL_PROVINCES_FILTER)}
+              className="text-[10px] font-black uppercase tracking-wider text-primary bg-white border border-primary/20 rounded-lg px-2 py-1 tap-target"
             >
               Reset
             </button>
           </div>
         )}
+
+        <LeaderboardSummaryCards rankedUsers={rankedUsers} currentUser={currentUser} />
+        <LeaderboardHeaderSummary
+          provinceFilter={provinceFilter}
+          showingLabel={showingLabel}
+          onOpenRankDetails={onOpenRankDetails}
+        />
+
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
             <RefreshCw className="animate-spin text-primary" size={32} />
-            <p className="text-ios-gray font-bold text-sm">Loading leaderboard...</p>
+            <p className="text-ios-gray font-bold text-sm">Loading ranking...</p>
           </div>
-        ) : filteredUsers.length === 0 ? (
+        ) : rankedUsers.length === 0 ? (
           <div className="bg-white border border-ios-gray/10 rounded-2xl p-8 text-center shadow-sm">
             <div className="w-16 h-16 bg-ios-gray/5 rounded-full mx-auto mb-3 flex items-center justify-center">
               <Users size={28} className="text-ios-gray/25" />
@@ -6723,178 +6907,16 @@ const LeaderboardScreen = ({ currentUser, onChallenge, onOpenGlobalRanking }: { 
             <p className="text-[12px] font-medium text-ios-gray mt-1">Only registered FOM accounts are shown.</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             {rankedUsers.map((user, index) => {
               if (!user) return null;
               return (
-                <div
+                <LeaderboardUserRow
                   key={user.uid}
-                  className={cn(
-                    "bg-white border border-ios-gray/10 rounded-2xl p-4 flex items-center justify-between shadow-sm transition-all",
-                    user.uid === currentUser?.uid && "ring-2 ring-primary border-transparent"
-                  )}
-                >
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="w-8 text-center font-display font-black italic text-ios-gray/40 text-lg">
-                      #{index + 1}
-                    </div>
-                    <div className="relative">
-                      <div className="w-12 h-12 rounded-xl bg-ios-gray/10 overflow-hidden flex items-center justify-center">
-                        {user.photoURL ? (
-                          <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          <User size={24} className="text-ios-gray/30" />
-                        )}
-                      </div>
-                      {index < 3 && (
-                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center border-2 border-white shadow-sm">
-                          <Star size={10} className="text-white fill-current" />
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="font-bold text-on-surface truncate flex items-center gap-2">
-                        {user.displayName}
-                        {user.uid === currentUser?.uid && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase">You</span>}
-                      </h4>
-                      <div className="flex items-center gap-2">
-                        <RankBadge mmr={user.mmr || 0} size="sm" />
-                        <span className="text-[10px] text-ios-gray font-bold">{user.region?.split(',')[0] || 'Jakarta'}</span>
-                        <span className="text-[10px] text-ios-gray font-bold">{user.totalMatches || 0} Match</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-end gap-2">
-                    <div className="text-right">
-                      <span className="text-lg font-display font-black italic tracking-tighter text-on-surface">{(user.mmr || 0).toLocaleString()}</span>
-                      <span className="text-[9px] font-bold text-ios-gray uppercase block leading-none">MMR</span>
-                    </div>
-                    {user.uid !== currentUser?.uid && (
-                      <button
-                        onClick={() => onChallenge(user)}
-                        className="bg-primary/5 text-primary p-1.5 rounded-lg tap-target hover:bg-primary/10 transition-colors"
-                      >
-                        <MessageCircle size={18} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
-    </div>
-  );
-};
-
-const GlobalRankingScreen = ({ currentUser, onChallenge, onBack }: { currentUser: any, onChallenge: (user: any) => void, onBack: () => void }) => {
-  const [users, setUsers] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchUsers = async () => {
-      setLoading(true);
-      try {
-        const fetchedUsers = await fetchLeaderboardUsersFromFirestore();
-        setUsers(fetchedUsers);
-      } catch (err) {
-        console.error('Error fetching global leaderboard:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchUsers();
-  }, []);
-
-  const rankedUsers = useMemo(() => sortUsersByMmrDesc(users), [users]);
-
-  return (
-    <div className="min-h-screen bg-surface pb-24">
-      <header className="ios-blur sticky top-0 w-full z-50 px-4 h-14 border-b border-ios-gray/10 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} className="tap-target p-1">
-            <ChevronLeft size={20} className="text-primary" />
-          </button>
-          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Global Ranking</h1>
-        </div>
-        <span className="text-[10px] font-black uppercase tracking-widest text-primary bg-primary/10 px-2.5 py-1 rounded-full">
-          {rankedUsers.length} Player
-        </span>
-      </header>
-
-      <main className="max-w-2xl mx-auto p-4">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <RefreshCw className="animate-spin text-primary" size={32} />
-            <p className="text-ios-gray font-bold text-sm">Loading global ranking...</p>
-          </div>
-        ) : rankedUsers.length === 0 ? (
-          <div className="bg-white border border-ios-gray/10 rounded-2xl p-8 text-center shadow-sm">
-            <div className="w-16 h-16 bg-ios-gray/5 rounded-full mx-auto mb-3 flex items-center justify-center">
-              <Users size={28} className="text-ios-gray/25" />
-            </div>
-            <p className="text-sm font-bold text-on-surface">No FOM Play players yet.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {rankedUsers.map((user, index) => {
-              if (!user) return null;
-              return (
-                <div
-                  key={user.uid}
-                  className={cn(
-                    "bg-white border border-ios-gray/10 rounded-2xl p-4 flex items-center justify-between shadow-sm transition-all",
-                    user.uid === currentUser?.uid && "ring-2 ring-primary border-transparent"
-                  )}
-                >
-                  <div className="flex items-center gap-4 min-w-0">
-                    <div className="w-8 text-center font-display font-black italic text-ios-gray/40 text-lg">
-                      #{index + 1}
-                    </div>
-                    <div className="relative">
-                      <div className="w-12 h-12 rounded-xl bg-ios-gray/10 overflow-hidden flex items-center justify-center">
-                        {user.photoURL ? (
-                          <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          <User size={24} className="text-ios-gray/30" />
-                        )}
-                      </div>
-                      {index < 3 && (
-                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center border-2 border-white shadow-sm">
-                          <Star size={10} className="text-white fill-current" />
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="font-bold text-on-surface truncate flex items-center gap-2">
-                        {user.displayName}
-                        {user.uid === currentUser?.uid && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase">You</span>}
-                      </h4>
-                      <div className="flex items-center gap-2">
-                        <RankBadge mmr={user.mmr || 0} size="sm" />
-                        <span className="text-[10px] text-ios-gray font-bold">{user.region?.split(',')[0] || 'Jakarta'}</span>
-                        <span className="text-[10px] text-ios-gray font-bold">{user.totalMatches || 0} Match</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col items-end gap-2">
-                    <div className="text-right">
-                      <span className="text-lg font-display font-black italic tracking-tighter text-on-surface">{(user.mmr || 0).toLocaleString()}</span>
-                      <span className="text-[9px] font-bold text-ios-gray uppercase block leading-none">MMR</span>
-                    </div>
-                    {user.uid !== currentUser?.uid && (
-                      <button
-                        onClick={() => onChallenge(user)}
-                        className="bg-primary/5 text-primary p-1.5 rounded-lg tap-target hover:bg-primary/10 transition-colors"
-                      >
-                        <MessageCircle size={18} />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                  user={user}
+                  index={index}
+                  isCurrentUser={user.uid === currentUser?.uid}
+                />
               );
             })}
           </div>
@@ -9048,7 +9070,6 @@ export default function App() {
               setDraftMatchBackgroundId(null);
               setScreen('settings');
             }}
-            onViewRank={() => setScreen('rank-discovery')}
             tournament={tournament}
             onContinueMatch={() => {
               setActiveScreenTournament(null);
@@ -9069,27 +9090,7 @@ export default function App() {
         {screen === 'leaderboard' && (
           <LeaderboardScreen
             currentUser={user}
-            onOpenGlobalRanking={() => setScreen('global-ranking')}
-            onChallenge={(targetUser) => {
-              addNotification(
-                'Challenge Sent!',
-                `You challenged ${targetUser.displayName} for a sparring match. Waiting for confirmation.`,
-                'system'
-              );
-            }}
-          />
-        )}
-        {screen === 'global-ranking' && (
-          <GlobalRankingScreen
-            currentUser={user}
-            onBack={() => setScreen('leaderboard')}
-            onChallenge={(targetUser) => {
-              addNotification(
-                'Challenge Sent!',
-                `You challenged ${targetUser.displayName} for a sparring match. Waiting for confirmation.`,
-                'system'
-              );
-            }}
+            onOpenRankDetails={() => setScreen('rank-discovery')}
           />
         )}
         {screen === 'rank-discovery' && (
@@ -9269,7 +9270,7 @@ export default function App() {
         )}
       </div>
 
-      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'global-ranking' && screen !== 'klasemen' && screen !== 'active' && (
+      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'klasemen' && screen !== 'active' && (
         <BottomNav
           currentScreen={screen}
           setScreen={setScreen}
