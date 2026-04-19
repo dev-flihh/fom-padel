@@ -195,8 +195,9 @@ const normalizeLeaderboardUser = (rawUser: any, fallbackUid: string) => {
 const isRegisteredFomUser = (rawUser: any) => {
   const uid = typeof rawUser?.uid === 'string' ? rawUser.uid.trim() : '';
   const displayName = typeof rawUser?.displayName === 'string' ? rawUser.displayName.trim() : '';
-  const normalizedDisplayName = displayName.toLowerCase();
-  const isPlaceholderName = normalizedDisplayName === 'player padel';
+  const normalizedDisplayName = displayName.toLowerCase().replace(/\s+/g, ' ').trim();
+  const blockedPlaceholderNames = new Set(['player padel', 'pemain padel']);
+  const isPlaceholderName = blockedPlaceholderNames.has(normalizedDisplayName);
   if (!uid || !displayName) return false;
   if (uid.startsWith(MANUAL_PLAYER_ID_PREFIX)) return false;
   if (isPlaceholderName) return false;
@@ -6669,8 +6670,8 @@ export default function App() {
         (window.navigator as Navigator & { standalone?: boolean }).standalone === true);
     root.classList.toggle('platform-ios', isIOSDevice);
     root.style.setProperty('--app-safe-top', isIOSDevice ? 'env(safe-area-inset-top, 0px)' : '0px');
-    root.style.setProperty('--app-safe-bottom', isIOSDevice ? 'env(safe-area-inset-bottom, 0px)' : '0px');
-    root.style.setProperty('--app-bottom-nav-gap', isIOSDevice ? (isStandalonePwa ? '4px' : '14px') : '0px');
+    root.style.setProperty('--app-safe-bottom', 'env(safe-area-inset-bottom, 0px)');
+    root.style.setProperty('--app-bottom-nav-gap', isIOSDevice ? (isStandalonePwa ? '4px' : '14px') : '10px');
   }, [isIOSDevice]);
 
   useEffect(() => {
