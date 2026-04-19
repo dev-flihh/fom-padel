@@ -2109,6 +2109,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   const [friends, setFriends] = useState<Friend[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [selectedCourtId, setSelectedCourtId] = useState<string | null>(null);
+  const [liveMmrByUid, setLiveMmrByUid] = useState<Record<string, number>>({});
   const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
   const [googlePlacesBlocked, setGooglePlacesBlocked] = useState(false);
   const [playerDataNotice, setPlayerDataNotice] = useState<{
@@ -2167,6 +2168,12 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   }, [friends]);
 
   const quickFriends = sortedFriends.slice(0, 8);
+  const resolveLiveMmr = (uid: string, fallback = 0) => {
+    const fromMap = liveMmrByUid[uid];
+    if (Number.isFinite(fromMap)) return Math.max(0, Number(fromMap));
+    const normalizedFallback = Number(fallback);
+    return Number.isFinite(normalizedFallback) ? Math.max(0, normalizedFallback) : 0;
+  };
   const normalizedAllPlayers = useMemo(() => dedupePlayersById(allPlayers || []), [allPlayers]);
   const playerDataIntegrity = useMemo(() => {
     const normalizedSelected = dedupePlayersById(selectedPlayers || []);
@@ -2245,6 +2252,51 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
 
   useEffect(() => {
     const uid = auth.currentUser?.uid || currentUser?.uid;
+    const targetUids = [
+      ...(uid ? [uid] : []),
+      ...friends.map((friend) => String(friend?.uid || '').trim()).filter(Boolean)
+    ];
+    const uniqueUids = Array.from(new Set(targetUids));
+    if (uniqueUids.length === 0) {
+      setLiveMmrByUid({});
+      return;
+    }
+
+    fetchPlayerStatsMapByUids(uniqueUids)
+      .then((statsByUid) => {
+        const next: Record<string, number> = {};
+        uniqueUids.forEach((targetUid) => {
+          const stats = statsByUid.get(targetUid);
+          const statsMmr = Number(stats?.mmr);
+          if (Number.isFinite(statsMmr)) next[targetUid] = Math.max(0, statsMmr);
+        });
+        setLiveMmrByUid(next);
+      })
+      .catch((err) => {
+        console.error('Error syncing live mmr for match settings:', err);
+      });
+  }, [currentUser?.uid, auth.currentUser?.uid, friends]);
+
+  useEffect(() => {
+    if (!liveMmrByUid || Object.keys(liveMmrByUid).length === 0) return;
+    setAllPlayers((prev) => {
+      let changed = false;
+      const next = prev.map((player) => {
+        const playerId = String(player?.id || '').trim();
+        if (!playerId || player?.source !== 'fom') return player;
+        const liveMmr = liveMmrByUid[playerId];
+        if (!Number.isFinite(liveMmr)) return player;
+        const normalizedLive = Math.max(0, Number(liveMmr));
+        if (Number(player?.rating || 0) === normalizedLive) return player;
+        changed = true;
+        return { ...player, rating: normalizedLive };
+      });
+      return changed ? next : prev;
+    });
+  }, [liveMmrByUid, setAllPlayers]);
+
+  useEffect(() => {
+    const uid = auth.currentUser?.uid || currentUser?.uid;
     if (!uid) return;
 
     const displayName = (currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Saya').trim();
@@ -2256,13 +2308,31 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
       .slice(0, 2)
       .toUpperCase() || 'ME';
 
+    const liveRating = resolveLiveMmr(uid, currentUser?.mmr || 0);
     setAllPlayers(prev => {
-      if (prev.some(p => p.id === uid)) return prev;
+      const existingIndex = prev.findIndex((p) => p.id === uid);
+      if (existingIndex >= 0) {
+        const existing = prev[existingIndex];
+        const shouldUpdate =
+          existing.name !== displayName ||
+          Number(existing.rating || 0) !== liveRating ||
+          (existing.avatar || '') !== (currentUser?.photoURL || '');
+        if (!shouldUpdate) return prev;
+        const next = [...prev];
+        next[existingIndex] = {
+          ...existing,
+          name: displayName,
+          rating: liveRating,
+          avatar: currentUser?.photoURL || existing.avatar || '',
+          source: 'fom'
+        };
+        return next;
+      }
       return [
         {
           id: uid,
           name: displayName,
-          rating: currentUser?.mmr || 0,
+          rating: liveRating,
           source: 'fom',
           avatar: currentUser?.photoURL || '',
           initials,
@@ -2271,7 +2341,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
         ...prev
       ];
     });
-  }, [allPlayers, currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, currentUser?.mmr, setAllPlayers]);
+  }, [currentUser?.uid, currentUser?.displayName, currentUser?.email, currentUser?.photoURL, currentUser?.mmr, setAllPlayers, liveMmrByUid]);
 
   useEffect(() => {
     setTournament((prev) => {
@@ -2479,7 +2549,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   const friendToPlayer = (friend: Friend): Player => ({
     id: friend.uid,
     name: friend.displayName,
-    rating: friend.mmr || 0,
+    rating: resolveLiveMmr(friend.uid, friend.mmr || 0),
     source: 'fom',
     avatar: friend.photoURL || '',
     initials: friend.displayName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase(),
@@ -2964,6 +3034,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
               <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
                 {quickFriends.map((friend) => {
                   const isSelected = selectedPlayers.some((p) => p.id === friend.uid);
+                  const friendMmr = resolveLiveMmr(friend.uid, friend.mmr || 0);
                   return (
                     <button
                       key={friend.uid}
@@ -2992,7 +3063,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                         <div className="min-w-0">
                           <p className="text-[12px] font-bold text-on-surface truncate">{friend.displayName}</p>
                           <p className="text-[10px] font-semibold text-ios-gray truncate">
-                            {friend.mmr > 0 ? getRankInfo(friend.mmr).name : 'No rank yet'}
+                            {friendMmr > 0 ? getRankInfo(friendMmr).name : 'No rank yet'}
                           </p>
                         </div>
                       </div>
