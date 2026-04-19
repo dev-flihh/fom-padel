@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: system-ui, -apple-system, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
-  --font-display: system-ui, -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   
   --color-surface: #F7F7FA;
   --color-surface-container: #FFFFFF;
@@ -24,6 +24,24 @@
     background-color: #F7F7FA;
   }
 
+  html.app-loading,
+  body.app-loading,
+  #root.app-loading {
+    background-color: #ff5501 !important;
+  }
+
+  body.app-loading::after {
+    content: "";
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(-1 * env(safe-area-inset-bottom, 0px) - 140px);
+    height: calc(env(safe-area-inset-bottom, 0px) + 220px);
+    background: #ff5501;
+    pointer-events: none;
+    z-index: 2147483647;
+  }
+
   * {
     -webkit-tap-highlight-color: transparent;
   }
@@ -35,6 +53,7 @@
     font-family: var(--font-sans);
     text-rendering: optimizeLegibility;
     overscroll-behavior-y: none;
+    min-height: 100dvh;
   }
 
   h1, h2, h3, h4 {
@@ -47,11 +66,18 @@
   }
 }
 
+@layer utilities {
+  .min-h-screen {
+    min-height: 100dvh;
+    min-height: -webkit-fill-available;
+  }
+}
+
 @layer components {
   .ios-blur {
     @apply backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
-    padding-top: env(safe-area-inset-top, 0px);
-    min-height: calc(56px + env(safe-area-inset-top, 0px));
+    padding-top: var(--app-safe-top, 0px);
+    min-height: calc(56px + var(--app-safe-top, 0px));
   }
   
   .ios-card {

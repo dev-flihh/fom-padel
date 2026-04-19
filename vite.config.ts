@@ -13,13 +13,18 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.png', 'apple-touch-icon.png'],
+        workbox: {
+          // Keep Firebase Auth reserved handler routes out of SPA fallback.
+          navigateFallbackDenylist: [/^\/__\//]
+        },
         manifest: {
           name: 'FOM Play',
           short_name: 'FOM Play',
           description: 'Padel Tournament & MMR System',
-          theme_color: '#f7f7fa',
-          background_color: '#f7f7fa',
+          theme_color: '#F86600',
+          background_color: '#F86600',
           display: 'standalone',
+          orientation: 'portrait',
           icons: [
             {
               src: '/icons/icon-192.png',

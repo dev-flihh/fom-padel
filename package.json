@@ -10,7 +10,8 @@
     "test:e2e": "playwright test",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "docs:sync:gdocs": "node scripts/sync-docs-to-gdocs.mjs"
+    "docs:sync:gdocs": "node scripts/sync-docs-to-gdocs.mjs",
+    "backfill:total-matches": "node scripts/backfill-total-matches.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

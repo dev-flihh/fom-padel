@@ -34,9 +34,7 @@ import {
   MessageCircle,
   Instagram,
   RefreshCw,
-  Phone,
   Mail,
-  ArrowRight,
   Download,
   Building2,
   AlertTriangle,
@@ -44,7 +42,7 @@ import {
 import { cn } from './lib/utils';
 import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus } from './types';
 import { INITIAL_PLAYERS, INITIAL_TOURNAMENT } from './constants';
-import { auth, db, googleProvider } from './firebase';
+import { auth, db, googleProvider, appleProvider } from './firebase';
 import { getScreenRoute, resolveTrackableButton, syncAnalyticsUser, trackButtonClick, trackPageView } from './analytics';
 import { RegionSelector } from './components/RegionSelector';
 import {
@@ -55,9 +53,6 @@ import {
   signInWithRedirect,
   signOut,
   sendPasswordResetEmail,
-  RecaptchaVerifier,
-  signInWithPhoneNumber,
-  ConfirmationResult,
   updateProfile
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp, collection, query, where, getDocs, orderBy, onSnapshot } from 'firebase/firestore';
@@ -124,14 +119,14 @@ const AppLoadingScreen = () => {
 // --- Constants & Helpers ---
 
 const RANK_TIERS: { name: RankTier, min: number, max: number, color: string, icon: any }[] = [
-  { name: 'Rookie', min: 0, max: 1000, color: 'bg-ios-gray/10 text-ios-gray', icon: Circle },
-  { name: 'Amateur', min: 1001, max: 2000, color: 'bg-orange-400/10 text-orange-600', icon: Zap },
-  { name: 'Challenger', min: 2001, max: 3000, color: 'bg-purple-500/10 text-purple-600', icon: TrendingUp },
-  { name: 'Elite', min: 3001, max: 4000, color: 'bg-blue-500/10 text-blue-600', icon: Award },
-  { name: 'Master', min: 4001, max: 5000, color: 'bg-emerald-500/10 text-emerald-600', icon: Star },
-  { name: 'Grandmaster', min: 5001, max: 6000, color: 'bg-red-500/10 text-red-600', icon: Zap },
-  { name: 'Legend', min: 6001, max: 7000, color: 'bg-yellow-400/10 text-yellow-600', icon: Trophy },
-  { name: 'Hall of Fame', min: 7001, max: Infinity, color: 'bg-primary/10 text-primary', icon: Award },
+  { name: 'Rookie', min: 0, max: 799, color: 'bg-ios-gray/10 text-ios-gray', icon: Circle },
+  { name: 'Amateur', min: 800, max: 1699, color: 'bg-orange-400/10 text-orange-600', icon: Zap },
+  { name: 'Challenger', min: 1700, max: 2899, color: 'bg-purple-500/10 text-purple-600', icon: TrendingUp },
+  { name: 'Elite', min: 2900, max: 4499, color: 'bg-blue-500/10 text-blue-600', icon: Award },
+  { name: 'Master', min: 4500, max: 6699, color: 'bg-emerald-500/10 text-emerald-600', icon: Star },
+  { name: 'Grandmaster', min: 6700, max: 9699, color: 'bg-red-500/10 text-red-600', icon: Zap },
+  { name: 'Legend', min: 9700, max: 13699, color: 'bg-yellow-400/10 text-yellow-600', icon: Trophy },
+  { name: 'Hall of Fame', min: 13700, max: Infinity, color: 'bg-primary/10 text-primary', icon: Award },
 ];
 
 const getRankInfo = (mmr: number) => {
@@ -139,6 +134,156 @@ const getRankInfo = (mmr: number) => {
   const nextRank = RANK_TIERS[RANK_TIERS.indexOf(rank) + 1];
   const progress = nextRank ? ((mmr - rank.min) / (nextRank.min - rank.min)) * 100 : 100;
   return { ...rank, progress, nextRank };
+};
+
+const MANUAL_PLAYER_ID_PREFIX = 'manual_';
+
+const isLikelyFirebaseUid = (value?: string | null) => /^[A-Za-z0-9_-]{20,}$/.test((value || '').trim());
+
+const normalizePlayerSource = (player: Player, currentUid?: string | null): Player => {
+  const id = (player?.id || '').trim();
+  if (!id) return player;
+  if (player.source === 'fom' || player.source === 'manual') return player;
+
+  const inferredSource: Player['source'] =
+    id.startsWith(MANUAL_PLAYER_ID_PREFIX)
+      ? 'manual'
+      : (currentUid && id === currentUid) || isLikelyFirebaseUid(id)
+        ? 'fom'
+        : 'manual';
+
+  return { ...player, source: inferredSource };
+};
+
+const isFomRegisteredPlayer = (player?: Player | null) => {
+  if (!player) return false;
+  if (player.source === 'fom') return true;
+  if (player.source === 'manual') return false;
+  if ((player.id || '').startsWith(MANUAL_PLAYER_ID_PREFIX)) return false;
+  return isLikelyFirebaseUid(player.id);
+};
+
+const normalizeLeaderboardUser = (rawUser: any, fallbackUid: string) => {
+  const normalizedUid = typeof rawUser?.uid === 'string' && rawUser.uid.trim()
+    ? rawUser.uid.trim()
+    : fallbackUid;
+  const normalizedMmr = Number.isFinite(Number(rawUser?.mmr)) ? Number(rawUser.mmr) : 0;
+  const normalizedTotalMatches = Number.isFinite(Number(rawUser?.totalMatches))
+    ? Math.max(0, Number(rawUser.totalMatches))
+    : 0;
+  const locationActivity = rawUser?.locationActivity;
+  const totalLocationActivity = locationActivity && typeof locationActivity === 'object'
+    ? Object.values(locationActivity).reduce((total, count) => {
+      const normalizedCount = Number(count);
+      if (!Number.isFinite(normalizedCount) || normalizedCount <= 0) return total;
+      return total + normalizedCount;
+    }, 0)
+    : 0;
+  const isLegacyInitialMmrWithoutActivity =
+    normalizedMmr === 500 &&
+    normalizedTotalMatches === 0 &&
+    totalLocationActivity === 0;
+
+  return {
+    ...rawUser,
+    uid: normalizedUid,
+    mmr: isLegacyInitialMmrWithoutActivity ? 0 : normalizedMmr,
+    totalMatches: normalizedTotalMatches
+  };
+};
+
+const isRegisteredFomUser = (rawUser: any) => {
+  const uid = typeof rawUser?.uid === 'string' ? rawUser.uid.trim() : '';
+  const displayName = typeof rawUser?.displayName === 'string' ? rawUser.displayName.trim() : '';
+  const normalizedDisplayName = displayName.toLowerCase();
+  const isPlaceholderName = normalizedDisplayName === 'player padel';
+  if (!uid || !displayName) return false;
+  if (uid.startsWith(MANUAL_PLAYER_ID_PREFIX)) return false;
+  if (isPlaceholderName) return false;
+  return true;
+};
+
+const sortUsersByMmrDesc = (users: any[]) => (
+  [...users].sort((a, b) => {
+    const mmrDiff = (Number(b?.mmr) || 0) - (Number(a?.mmr) || 0);
+    if (mmrDiff !== 0) return mmrDiff;
+
+    const matchDiff = (Number(b?.totalMatches) || 0) - (Number(a?.totalMatches) || 0);
+    if (matchDiff !== 0) return matchDiff;
+
+    return String(a?.displayName || '').localeCompare(String(b?.displayName || ''), 'id');
+  })
+);
+
+const fetchLeaderboardUsersFromFirestore = async () => {
+  const resolveTotalMatches = async (uid: string) => {
+    try {
+      const tournamentsQuery = query(collection(db, 'tournaments'), where('userId', '==', uid));
+      const tournamentsSnapshot = await getDocs(tournamentsQuery);
+      let totalMatches = 0;
+
+      tournamentsSnapshot.forEach((tournamentDoc) => {
+        const tournamentData = tournamentDoc.data();
+        const rounds = Array.isArray(tournamentData?.rounds) ? tournamentData.rounds : [];
+
+        rounds.forEach((round: any) => {
+          if (!Array.isArray(round?.matches)) return;
+          round.matches.forEach((match: any) => {
+            if (!match || match.status === 'pending') return;
+            totalMatches += 1;
+          });
+        });
+      });
+
+      return totalMatches;
+    } catch (matchErr) {
+      console.error(`Error deriving match count for user ${uid}:`, matchErr);
+      return 0;
+    }
+  };
+
+  const usersQuery = query(collection(db, 'users'), orderBy('mmr', 'desc'));
+  const usersSnapshot = await getDocs(usersQuery);
+  const fetchedUsers: any[] = [];
+  const usersNeedingMatchRecompute: any[] = [];
+
+  usersSnapshot.forEach((docSnap) => {
+    const rawUser = docSnap.data();
+    const normalizedUser = normalizeLeaderboardUser(rawUser, docSnap.id);
+    if (!isRegisteredFomUser(normalizedUser)) return;
+    fetchedUsers.push(normalizedUser);
+
+    const hasStoredTotalMatches = Number.isFinite(Number(rawUser?.totalMatches));
+    const numericStoredTotalMatches = hasStoredTotalMatches ? Number(rawUser.totalMatches) : 0;
+    const numericMmr = Number.isFinite(Number(normalizedUser?.mmr)) ? Number(normalizedUser.mmr) : 0;
+    const shouldRecomputeMatches = (
+      !hasStoredTotalMatches ||
+      numericStoredTotalMatches < 0 ||
+      (numericStoredTotalMatches === 0 && numericMmr > 0)
+    );
+
+    if (shouldRecomputeMatches) {
+      usersNeedingMatchRecompute.push(normalizedUser);
+    }
+  });
+
+  if (usersNeedingMatchRecompute.length > 0) {
+    const derivedMatches = await Promise.all(
+      usersNeedingMatchRecompute.map(async (leaderboardUser) => ({
+        uid: leaderboardUser.uid,
+        totalMatches: await resolveTotalMatches(leaderboardUser.uid)
+      }))
+    );
+    const derivedMatchMap = new Map(derivedMatches.map((item) => [item.uid, item.totalMatches]));
+    return sortUsersByMmrDesc(
+      fetchedUsers.map((leaderboardUser) => ({
+        ...leaderboardUser,
+        totalMatches: derivedMatchMap.get(leaderboardUser.uid) ?? leaderboardUser.totalMatches ?? 0
+      }))
+    );
+  }
+
+  return sortUsersByMmrDesc(fetchedUsers);
 };
 
 const calculateMMRChange = (isWin: boolean, scoreDiff: number, isUnderdog: boolean, isFavorite: boolean) => {
@@ -580,11 +725,11 @@ const CompletedMatchHistoryCard = ({
             {item.tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
           </span>
           <h4 className="text-[16px] font-bold text-on-surface leading-tight truncate">
-            {showTournamentMeta ? item.tournament.name : `Ronde ${item.roundId} • Lapangan ${item.match.court}`}
+            {showTournamentMeta ? item.tournament.name : `Round ${item.roundId} • Court ${item.match.court}`}
           </h4>
           {showTournamentMeta && (
             <span className="text-[12px] font-medium text-ios-gray truncate block">
-              Ronde {item.roundId} • Lapangan {item.match.court}
+              Round {item.roundId} • Court {item.match.court}
             </span>
           )}
         </div>
@@ -656,13 +801,13 @@ const TournamentHistoryCard = ({
     </div>
     <div className="mt-3 flex flex-wrap gap-2">
       <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-primary/10 bg-primary/5 text-[11px] font-bold text-primary">
-        Ronde {tournament.numRounds}
+        Round {tournament.numRounds}
       </span>
       <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-ios-gray/10 bg-ios-gray/5 text-[11px] font-bold text-ios-gray">
         {tournament.format}
       </span>
       <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-ios-gray/10 bg-ios-gray/5 text-[11px] font-bold text-ios-gray">
-        {tournament.numPlayers} Pemain
+        {tournament.numPlayers} Player
       </span>
     </div>
   </button>
@@ -786,7 +931,7 @@ const InstallAppButton = ({
 }: {
   className?: string;
   compact?: boolean;
-  variant?: 'pill' | 'minimal';
+  variant?: 'pill' | 'minimum';
 }) => {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -828,11 +973,11 @@ const InstallAppButton = ({
     }
 
     if (isIos) {
-      window.alert('Untuk iPhone/iPad: buka menu Share di Safari, lalu pilih "Add to Home Screen".');
+      window.alert('For iPhone/iPad: open the Share menu in Safari, then choose "Add to Home Screen".');
       return;
     }
 
-    window.alert('Buka menu browser (⋮), lalu pilih "Install app" atau "Add to Home screen".');
+    window.alert('Open your browser menu (⋮), then choose "Install app" or "Add to Home screen".');
   };
 
   if (isStandalone) return null;
@@ -877,36 +1022,31 @@ const BottomNav = ({
   hasActiveGame: boolean
 }) => {
   const tabs: { id: Screen, label: string, icon: any }[] = [
-    { id: 'dashboard', label: 'Beranda', icon: Home },
+    { id: 'dashboard', label: 'Home', icon: Home },
     { id: 'leaderboard', label: 'Ranking', icon: BarChart2 },
-    { id: 'active', label: 'Main', icon: Trophy },
-    { id: 'notifications', label: 'Notif', icon: Bell },
-    { id: 'profile', label: 'Profil', icon: User },
+    { id: 'active', label: 'Play', icon: Trophy },
+    { id: 'notifications', label: 'Alerts', icon: Bell },
+    { id: 'profile', label: 'Profile', icon: User },
   ];
-  const mainTheme =
-    hasActiveGame && currentFormat === 'Americano'
+  const mainTheme = currentFormat === 'Americano'
+    ? {
+      activeLive: "bg-[#18A486]/12 text-[#12806A] border border-[#18A486]/30",
+      activeIdle: "bg-[#18A486]/10 text-[#12806A] border border-[#18A486]/24",
+      idle: "bg-ios-gray/8 text-ios-gray"
+    }
+    : currentFormat === 'Mexicano'
       ? {
-        active: "bg-[#18A486]/12 text-[#12806A] border border-[#18A486]/30",
+        activeLive: "bg-primary/12 text-primary border border-primary/25",
+        activeIdle: "bg-primary/10 text-primary border border-primary/22",
         idle: "bg-ios-gray/8 text-ios-gray"
       }
-      : hasActiveGame && currentFormat === 'Mexicano'
-        ? {
-          active: "bg-primary/12 text-primary border border-primary/25",
-          idle: "bg-ios-gray/8 text-ios-gray"
-        }
-        : hasActiveGame && currentFormat === 'Match Play'
-          ? {
-            active: "bg-[#2F6FE4]/12 text-[#2F6FE4] border border-[#2F6FE4]/25",
-            idle: "bg-ios-gray/8 text-ios-gray"
-          }
-          : {
-            active: "bg-[#2F6FE4]/12 text-[#2F6FE4] border border-[#2F6FE4]/25",
-            idle: "bg-ios-gray/8 text-ios-gray"
-          };
+      : {
+        activeLive: "bg-[#2F6FE4]/12 text-[#2F6FE4] border border-[#2F6FE4]/25",
+        activeIdle: "bg-[#2F6FE4]/10 text-[#2F6FE4] border border-[#2F6FE4]/22",
+        idle: "bg-ios-gray/8 text-ios-gray"
+      };
 
-  const mainActiveClass = hasActiveGame
-    ? mainTheme.active
-    : "bg-primary/12 text-primary border border-primary/25";
+  const mainActiveClass = hasActiveGame ? mainTheme.activeLive : mainTheme.activeIdle;
 
   return (
     <nav
@@ -954,49 +1094,42 @@ const BottomNav = ({
 // --- Screens ---
 
 const LoginScreen = () => {
-  const [mode, setMode] = useState<'masuk' | 'daftar' | 'forgot' | 'otp'>('masuk');
+  const [mode, setMode] = useState<'masuk' | 'daftar' | 'forgot'>('masuk');
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
-  const recaptchaRef = useRef<HTMLDivElement>(null);
-  const [recaptchaVerifier, setRecaptchaVerifier] = useState<RecaptchaVerifier | null>(null);
-
-  useEffect(() => {
-    if (mode === 'otp' && !recaptchaVerifier && recaptchaRef.current) {
-      const verifier = new RecaptchaVerifier(auth, recaptchaRef.current, {
-        size: 'invisible',
-      });
-      setRecaptchaVerifier(verifier);
-    }
-  }, [mode, recaptchaVerifier]);
 
   const handleAuthError = (err: any) => {
     console.error(err);
-    if (err.code === 'auth/user-not-found') setError('Email tidak terdaftar.');
-    else if (err.code === 'auth/wrong-password') setError('Kata sandi salah.');
-    else if (err.code === 'auth/email-already-in-use') setError('Email sudah digunakan.');
-    else if (err.code === 'auth/invalid-email') setError('Format email tidak valid.');
-    else if (err.code === 'auth/weak-password') setError('Kata sandi terlalu lemah.');
-    else if (err.code === 'auth/operation-not-allowed') setError('Metode daftar Email/Password belum aktif di Firebase Console.');
-    else if (err.code === 'auth/network-request-failed') setError('Koneksi internet bermasalah. Coba lagi.');
-    else if (err.code === 'auth/too-many-requests') setError('Terlalu banyak percobaan. Tunggu sebentar lalu coba lagi.');
-    else if (err.code === 'auth/popup-blocked') setError('Popup login diblokir browser. Mengalihkan ke login Google...');
-    else if (err.code === 'auth/popup-closed-by-user') setError('Login Google dibatalkan sebelum selesai.');
-    else if (err.code === 'auth/unauthorized-domain') setError('Domain belum diizinkan untuk Google login di Firebase.');
-    else setError('Terjadi kesalahan. Silakan coba lagi.');
+    if (err.code === 'auth/user-not-found') setError('This email is not registered.');
+    else if (err.code === 'auth/wrong-password') setError('Incorrect password.');
+    else if (err.code === 'auth/email-already-in-use') setError('This email is already in use.');
+    else if (err.code === 'auth/invalid-email') setError('Please enter a valid email address.');
+    else if (err.code === 'auth/weak-password') setError('Password is too weak.');
+    else if (err.code === 'auth/operation-not-allowed') setError('This login method is not enabled in Firebase Console.');
+    else if (err.code === 'auth/network-request-failed') setError('Network issue detected. Please try again.');
+    else if (err.code === 'auth/too-many-requests') setError('Too many attempts. Please wait and try again.');
+    else if (err.code === 'auth/popup-blocked') setError('Login popup was blocked. Please allow popups and try again.');
+    else if (err.code === 'auth/popup-closed-by-user') setError('Login was canceled before completion.');
+    else if (err.code === 'auth/unauthorized-domain') setError('This domain is not authorized in Firebase Authentication.');
+    else if (err.code === 'auth/account-exists-with-different-credential') setError('This email is linked to another sign-in method.');
+    else setError('Something went wrong. Please try again.');
   };
 
   const handleLogin = async () => {
+    const sanitizedEmail = email.trim().toLowerCase();
+    if (!sanitizedEmail || !password) {
+      setError('Email and password are required.');
+      return;
+    }
+
     setError('');
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(auth, sanitizedEmail, password);
     } catch (err) {
       handleAuthError(err);
     } finally {
@@ -1009,15 +1142,15 @@ const LoginScreen = () => {
     const sanitizedEmail = email.trim().toLowerCase();
 
     if (!sanitizedName) {
-      setError('Nama lengkap wajib diisi.');
+      setError('Full name is required.');
       return;
     }
     if (!sanitizedEmail) {
-      setError('Email wajib diisi.');
+      setError('Email is required.');
       return;
     }
     if (password.length < 6) {
-      setError('Kata sandi minimal 6 karakter.');
+      setError('Password must be at least 6 characters.');
       return;
     }
 
@@ -1033,6 +1166,11 @@ const LoginScreen = () => {
           uid: userCredential.user.uid,
           email: userCredential.user.email || sanitizedEmail,
           displayName: sanitizedName,
+          mmr: 0,
+          totalMatches: 0,
+          region: 'Jakarta Selatan, DKI Jakarta',
+          homeBase: 'Jakarta Selatan, DKI Jakarta',
+          locationActivity: { 'Jakarta Selatan, DKI Jakarta': 0 },
           createdAt: serverTimestamp(),
         }, { merge: true });
       } catch (profileErr) {
@@ -1045,7 +1183,7 @@ const LoginScreen = () => {
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const handleSocialAuth = async (provider: any, providerName: 'Google' | 'Apple') => {
     const prepareRedirectAuth = async () => {
       if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
       try {
@@ -1068,17 +1206,17 @@ const LoginScreen = () => {
           /iPhone|iPad|iPod|Android/i.test(window.navigator.userAgent));
 
       if (isLocalDevHost) {
-        await signInWithPopup(auth, googleProvider);
+        await signInWithPopup(auth, provider);
         return;
       }
 
       if (isMobileOrStandalone) {
         await prepareRedirectAuth();
-        await signInWithRedirect(auth, googleProvider);
+        await signInWithRedirect(auth, provider);
         return;
       }
 
-      await signInWithPopup(auth, googleProvider);
+      await signInWithPopup(auth, provider);
     } catch (err) {
       const authCode = (err as { code?: string })?.code;
       if (
@@ -1090,12 +1228,12 @@ const LoginScreen = () => {
           typeof window !== 'undefined' &&
           (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
         ) {
-          setError('Popup login diblokir di localhost. Izinkan popup untuk localhost:3000 lalu coba lagi.');
+          setError(`${providerName} login popup was blocked on localhost. Please allow popups and try again.`);
           return;
         }
         try {
           await prepareRedirectAuth();
-          await signInWithRedirect(auth, googleProvider);
+          await signInWithRedirect(auth, provider);
           return;
         } catch (redirectErr) {
           handleAuthError(redirectErr);
@@ -1109,16 +1247,20 @@ const LoginScreen = () => {
     }
   };
 
+  const handleGoogleLogin = async () => handleSocialAuth(googleProvider, 'Google');
+  const handleAppleLogin = async () => handleSocialAuth(appleProvider, 'Apple');
+
   const handleForgotPassword = async () => {
-    if (!email) {
-      setError('Masukkan email Anda terlebih dahulu.');
+    const sanitizedEmail = email.trim().toLowerCase();
+    if (!sanitizedEmail) {
+      setError('Please enter your email first.');
       return;
     }
     setError('');
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, email);
-      alert('Email pemulihan kata sandi telah dikirim!');
+      await sendPasswordResetEmail(auth, sanitizedEmail);
+      alert('Password reset email has been sent.');
       setMode('masuk');
     } catch (err) {
       handleAuthError(err);
@@ -1127,140 +1269,124 @@ const LoginScreen = () => {
     }
   };
 
-  const handleSendOtp = async () => {
-    if (!phone) {
-      setError('Masukkan nomor telepon Anda.');
-      return;
-    }
-    setError('');
-    setLoading(true);
-    try {
-      if (!recaptchaVerifier) throw new Error('Recaptcha not ready');
-      const result = await signInWithPhoneNumber(auth, phone, recaptchaVerifier);
-      setConfirmationResult(result);
-    } catch (err) {
-      handleAuthError(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const showAppleLogin = useMemo(() => {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent.toLowerCase();
+    const platform = (navigator.platform || '').toLowerCase();
+    const vendor = (navigator.vendor || '').toLowerCase();
+    return /iphone|ipad|ipod|macintosh|mac os x/.test(ua) || platform.includes('mac') || vendor.includes('apple');
+  }, []);
 
-  const handleVerifyOtp = async () => {
-    if (!otp || !confirmationResult) return;
-    setError('');
-    setLoading(true);
-    try {
-      await confirmationResult.confirm(otp);
-    } catch (err) {
-      setError('Kode OTP salah.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const socialCta = mode === 'daftar' ? 'Sign up with' : 'Continue with';
+  const isLoginMode = mode === 'masuk';
+  const authHeading = mode === 'daftar' ? 'Create account' : mode === 'forgot' ? 'Reset password' : 'Welcome to FOM Play';
+  const authSubtitle = mode === 'daftar'
+    ? 'Create your account and start scoring in seconds.'
+    : 'Enter your account email to receive a reset link.';
+  const showModeSubtitle = !isLoginMode;
+  const inputBaseClass = "w-full h-14 rounded-full border border-black/16 bg-white/78 px-5 text-[15px] font-medium text-on-surface placeholder:text-on-surface/40 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/12 transition-all";
+  const passwordFieldClass = `${inputBaseClass} pr-12`;
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-start px-6 bg-white"
+      className="relative min-h-screen overflow-hidden px-6 bg-white"
       style={{
-        paddingTop: 'calc(var(--app-safe-top, 0px) + 20px)',
-        paddingBottom: 'calc(var(--app-safe-bottom, 0px) + 24px)'
+        paddingTop: 'calc(var(--app-safe-top, 0px) + 16px)',
+        paddingBottom: 'calc(var(--app-safe-bottom, 0px) + 16px)'
       }}
     >
-      <div className="w-full max-w-sm space-y-8">
-        <header className="text-center space-y-6">
-          <div className="flex justify-center">
-            <Logo className="h-16 w-auto" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-extrabold tracking-tight text-on-surface leading-tight">
-              {mode === 'forgot' ? 'Lupa Kata Sandi?' : mode === 'otp' ? 'Masuk dengan OTP' : 'Capek kerja? Butuh gerak?'}
-              {mode !== 'forgot' && mode !== 'otp' && <span className="text-primary block mt-0.5">Ya Gas Padel!</span>}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-white" />
+
+      <div className="relative mx-auto w-full max-w-sm min-h-[calc(100dvh-var(--app-safe-top,0px)-var(--app-safe-bottom,0px)-32px)] flex flex-col justify-between">
+        <main className="pt-20">
+          <header className={cn("space-y-2.5 text-center", isLoginMode && "space-y-2")}>
+            <img
+              src="/fom-logotype-color.png"
+              alt="FOM Play"
+              className={cn(
+                "h-9 w-auto object-contain mx-auto",
+                isLoginMode && "-mt-6 mb-4"
+              )}
+            />
+            <h1 className={cn(
+              "text-[34px] leading-[1.02] font-extrabold tracking-tight text-on-surface",
+              isLoginMode && "whitespace-nowrap"
+            )}>
+              {authHeading}
             </h1>
-            <p className="text-on-surface/40 font-medium text-sm">
-              {mode === 'forgot' ? 'Kami akan mengirimkan link pemulihan' : mode === 'otp' ? 'Masukkan nomor telepon aktif Anda' : 'Mulai gratis, coba sekarang'}
-            </p>
-          </div>
-        </header>
+            {showModeSubtitle && (
+              <p className="text-[13px] text-on-surface/58 font-medium">
+                {authSubtitle}
+              </p>
+            )}
+            {mode === 'masuk' && (
+              <p className="text-[14px] text-on-surface/56 font-medium pt-1">
+                Don&apos;t have an account?{' '}
+                <button
+                  onClick={() => setMode('daftar')}
+                  className="text-primary font-semibold underline underline-offset-2"
+                >
+                  Sign up
+                </button>
+              </p>
+            )}
+            {mode === 'daftar' && (
+              <p className="text-[14px] text-on-surface/56 font-medium">
+                Already have an account?{' '}
+                <button
+                  onClick={() => setMode('masuk')}
+                  className="text-primary font-semibold underline underline-offset-2"
+                >
+                  Sign in
+                </button>
+              </p>
+            )}
+          </header>
 
-        <main className="space-y-6">
-          {(mode === 'masuk' || mode === 'daftar') && (
-            <div className="bg-ios-gray/10 p-1 rounded-xl flex items-center">
-              <button
-                onClick={() => setMode('masuk')}
-                className={cn(
-                  "flex-1 py-1.5 text-[13px] font-semibold rounded-lg transition-all duration-200",
-                  mode === 'masuk' ? "bg-white shadow-sm text-on-surface" : "text-on-surface/50"
-                )}
-              >
-                Masuk
-              </button>
-              <button
-                onClick={() => setMode('daftar')}
-                className={cn(
-                  "flex-1 py-1.5 text-[13px] font-semibold rounded-lg transition-all duration-200",
-                  mode === 'daftar' ? "bg-white shadow-sm text-on-surface" : "text-on-surface/50"
-                )}
-              >
-                Daftar
-              </button>
-            </div>
-          )}
-
-          <div className="bg-white rounded-3xl p-6 shadow-[0_4px_12px_rgba(0,0,0,0.05)] space-y-6 border border-white/50">
+          <section className={cn("space-y-4", isLoginMode ? "mt-8" : "mt-7")}>
             {error && (
-              <div className="p-3 bg-error/10 border border-error/20 rounded-xl text-error text-xs font-semibold text-center">
+              <div className="p-3 bg-error/10 border border-error/20 rounded-2xl text-error text-[12px] font-semibold text-center">
                 {error}
               </div>
             )}
 
-            <div className="space-y-5">
+            <div className="space-y-3.5">
               {mode === 'daftar' && (
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface/40 px-1 ml-0.5">Nama Lengkap</label>
-                  <div className="relative group">
-                    <User size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface/30 group-focus-within:text-primary transition-colors" />
-                    <input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3 bg-ios-gray/5 rounded-2xl border-none focus:ring-2 focus:ring-primary/20 text-[15px] font-medium transition-all placeholder:text-on-surface/30"
-                      placeholder="Nama Anda"
-                      type="text"
-                    />
-                  </div>
+                <div>
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className={inputBaseClass}
+                    placeholder="Full name"
+                    type="text"
+                  />
                 </div>
               )}
 
-              {(mode === 'masuk' || mode === 'daftar' || mode === 'forgot') && (
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface/40 px-1 ml-0.5">Email</label>
-                  <div className="relative group">
-                    <Mail size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface/30 group-focus-within:text-primary transition-colors" />
-                    <input
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full pl-11 pr-4 py-3 bg-ios-gray/5 rounded-2xl border-none focus:ring-2 focus:ring-primary/20 text-[15px] font-medium transition-all placeholder:text-on-surface/30"
-                      placeholder="email@contoh.com"
-                      type="email"
-                    />
-                  </div>
-                </div>
-              )}
+              <div>
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={inputBaseClass}
+                  placeholder="Email"
+                  type="email"
+                />
+              </div>
 
               {(mode === 'masuk' || mode === 'daftar') && (
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface/40 px-1 ml-0.5">Kata Sandi</label>
-                  <div className="relative group">
-                    <Lock size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface/30 group-focus-within:text-primary transition-colors" />
+                <div>
+                  <div className="relative">
                     <input
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full pl-11 pr-12 py-3 bg-ios-gray/5 rounded-2xl border-none focus:ring-2 focus:ring-primary/20 text-[15px] font-medium transition-all placeholder:text-on-surface/30"
-                      placeholder="••••••••"
+                      className={passwordFieldClass}
+                      placeholder="Password"
                       type={showPassword ? "text" : "password"}
                     />
                     <button
+                      type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface/30 hover:text-on-surface"
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-on-surface/38 hover:text-on-surface transition-colors"
                     >
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
@@ -1268,123 +1394,81 @@ const LoginScreen = () => {
                 </div>
               )}
 
-              {mode === 'otp' && (
-                <div className="space-y-5">
-                  {!confirmationResult ? (
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface/40 px-1 ml-0.5">Nomor Telepon</label>
-                      <div className="relative group">
-                        <Phone size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface/30 group-focus-within:text-primary transition-colors" />
-                        <input
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 bg-ios-gray/5 rounded-2xl border-none focus:ring-2 focus:ring-primary/20 text-[15px] font-medium transition-all placeholder:text-on-surface/30"
-                          placeholder="+628123456789"
-                          type="tel"
-                        />
-                      </div>
-                      <div ref={recaptchaRef}></div>
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-bold uppercase tracking-wider text-on-surface/40 px-1 ml-0.5">Kode OTP</label>
-                      <div className="relative group">
-                        <ArrowRight size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface/30 group-focus-within:text-primary transition-colors" />
-                        <input
-                          value={otp}
-                          onChange={(e) => setOtp(e.target.value)}
-                          className="w-full pl-11 pr-4 py-3 bg-ios-gray/5 rounded-2xl border-none focus:ring-2 focus:ring-primary/20 text-[15px] font-medium transition-all placeholder:text-on-surface/30"
-                          placeholder="123456"
-                          type="text"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="pt-3">
+                <button
+                  onClick={mode === 'masuk' ? handleLogin : mode === 'daftar' ? handleRegister : handleForgotPassword}
+                  disabled={loading}
+                  className="w-full h-14 rounded-full bg-[#ff5501] text-white font-bold text-[16px] shadow-[0_14px_28px_rgba(255,85,1,0.28)] active:scale-[0.98] disabled:opacity-60 disabled:active:scale-100 transition-all"
+                >
+                  {loading ? 'Please wait...' : mode === 'masuk' ? 'Login' : mode === 'daftar' ? 'Sign up' : 'Send reset link'}
+                </button>
+              </div>
 
               {mode === 'masuk' && (
-                <div className="flex justify-between items-center pr-1">
-                  <button
-                    onClick={() => setMode('otp')}
-                    className="text-xs font-semibold text-ios-gray hover:text-primary transition-colors"
-                  >
-                    Masuk via OTP
-                  </button>
+                <div className="pt-1.5 flex justify-center">
                   <button
                     onClick={() => setMode('forgot')}
-                    className="text-xs font-semibold text-primary hover:opacity-80 transition-opacity"
+                    className="text-[13px] font-semibold text-primary/90 hover:text-primary transition-colors"
                   >
-                    Lupa Password?
+                    Forgot Password?
                   </button>
                 </div>
               )}
 
-              {mode === 'forgot' && (
-                <button
-                  onClick={() => setMode('masuk')}
-                  className="text-xs font-semibold text-ios-gray hover:text-primary transition-colors"
-                >
-                  Kembali ke Masuk
-                </button>
-              )}
-
-              {mode === 'otp' && (
-                <button
-                  onClick={() => {
-                    setMode('masuk');
-                    setConfirmationResult(null);
-                  }}
-                  className="text-xs font-semibold text-ios-gray hover:text-primary transition-colors"
-                >
-                  Kembali ke Masuk
-                </button>
-              )}
-
-              <button
-                onClick={
-                  mode === 'masuk' ? handleLogin :
-                    mode === 'daftar' ? handleRegister :
-                      mode === 'forgot' ? handleForgotPassword :
-                        !confirmationResult ? handleSendOtp : handleVerifyOtp
-                }
-                disabled={loading}
-                className="w-full bg-primary text-white py-4 rounded-2xl font-bold text-[16px] shadow-lg shadow-primary/20 active:scale-[0.97] disabled:opacity-50 disabled:active:scale-100 transition-all duration-200"
-              >
-                {loading ? 'Memproses...' :
-                  mode === 'masuk' ? 'Masuk' :
-                    mode === 'daftar' ? 'Daftar' :
-                      mode === 'forgot' ? 'Kirim Link' :
-                        !confirmationResult ? 'Kirim OTP' : 'Verifikasi OTP'}
-              </button>
-            </div>
-
-            {(mode === 'masuk' || mode === 'daftar') && (
-              <>
-                <div className="relative flex items-center py-1">
-                  <div className="flex-grow border-t border-ios-gray/20"></div>
-                  <span className="flex-shrink mx-4 text-[10px] font-bold text-on-surface/30 uppercase tracking-[0.2em]">Atau</span>
-                  <div className="flex-grow border-t border-ios-gray/20"></div>
+              {(mode === 'masuk' || mode === 'daftar') && (
+                <div className="pt-5 space-y-3">
+                  <p className="text-center text-[11px] font-semibold text-on-surface/42 uppercase tracking-[0.12em]">
+                    {socialCta}
+                  </p>
+                  <div className="flex items-center justify-center gap-4">
+                    <button
+                      onClick={handleGoogleLogin}
+                      disabled={loading}
+                      aria-label={`${socialCta} Google`}
+                      className="w-11 h-11 rounded-full border border-black/12 bg-white/92 flex items-center justify-center shadow-sm active:scale-[0.98] disabled:opacity-60 transition-all"
+                    >
+                      <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
+                    </button>
+                    {showAppleLogin && (
+                      <button
+                        onClick={handleAppleLogin}
+                        disabled={loading}
+                        aria-label={`${socialCta} Apple`}
+                        className="w-11 h-11 rounded-full border border-black/12 bg-white/92 flex items-center justify-center shadow-sm active:scale-[0.98] disabled:opacity-60 transition-all"
+                      >
+                        <svg viewBox="0 0 24 24" className="w-5 h-5 text-[#111827]" aria-hidden="true" fill="currentColor">
+                          <path d="M16.365 12.03c.017 1.86 1.63 2.48 1.647 2.488-.014.044-.257.87-.848 1.723-.512.739-1.044 1.476-1.88 1.491-.823.016-1.087-.49-2.03-.49-.943 0-1.237.474-2.015.506-.809.03-1.427-.81-1.943-1.546-1.054-1.522-1.86-4.294-.777-6.176.538-.933 1.5-1.524 2.544-1.539.794-.015 1.544.538 2.03.538.486 0 1.398-.665 2.356-.567.401.017 1.527.161 2.248 1.216-.058.036-1.34.782-1.332 2.356Zm-1.958-4.27c.43-.52.72-1.244.64-1.968-.619.026-1.366.413-1.81.932-.398.457-.747 1.189-.652 1.89.69.054 1.392-.35 1.822-.854Z" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
-
-                <button
-                  onClick={handleGoogleLogin}
-                  disabled={loading}
-                  className="w-full flex items-center justify-center gap-3 py-3.5 bg-white border border-ios-gray/20 rounded-2xl font-bold text-[14px] text-on-surface hover:bg-surface active:scale-[0.97] transition-all duration-200"
-                >
-                  <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-                  Lanjutkan dengan Google
-                </button>
-              </>
-            )}
-          </div>
+              )}
+            </div>
+          </section>
         </main>
 
-        <footer className="text-center">
-          <p className="text-[11px] text-on-surface/30 leading-relaxed max-w-[260px] mx-auto font-medium">
-            Dengan melanjutkan, Anda menyetujui <button className="underline underline-offset-2">Ketentuan Layanan</button> dan <button className="underline underline-offset-2">Kebijakan Privasi</button> FOM Play.
-          </p>
-        </footer>
+        <div className="pb-1 space-y-3">
+          <div className="text-center px-1">
+            {mode === 'forgot' && (
+              <p className="text-[12px] text-on-surface/60 font-medium">
+                Remember your password?{' '}
+                <button
+                  onClick={() => setMode('masuk')}
+                  className="text-primary font-semibold underline underline-offset-2"
+                >
+                  Back to login
+                </button>
+              </p>
+            )}
+          </div>
+
+          <footer className="text-center px-2">
+            <p className="text-[11px] text-on-surface/50 leading-relaxed font-medium">
+              By continuing, you agree to FOM Play&apos;s <button className="underline underline-offset-2">Terms of Service</button> and <button className="underline underline-offset-2">Privacy Policy</button>.
+            </p>
+          </footer>
+        </div>
       </div>
     </div>
   );
@@ -1448,8 +1532,8 @@ const DashboardScreen = ({
         <section className="px-5 mb-8">
           <div className="flex justify-between items-start">
             <div>
-              <h2 className="text-ios-gray text-[13px] font-semibold uppercase tracking-wide mb-1">Halo, {user?.displayName || 'Pemain Padel'}</h2>
-              <h1 className="text-[34px] leading-[41px] font-display font-bold tracking-tight text-on-surface">Siap Untuk<br />Kemenangan Hari Ini?</h1>
+              <h2 className="text-ios-gray text-[13px] font-semibold uppercase tracking-wide mb-1">Hi, {user?.displayName || 'Padel Player'}</h2>
+              <h1 className="text-[34px] leading-[41px] font-display font-bold tracking-tight text-on-surface">Ready For<br />Today's Win?</h1>
             </div>
             <div className="flex flex-col items-end gap-2">
               <RankBadge mmr={user?.mmr || 0} size="lg" />
@@ -1457,7 +1541,7 @@ const DashboardScreen = ({
                 onClick={onViewRank}
                 className="text-[10px] font-bold text-primary uppercase tracking-widest bg-primary/5 px-2 py-1 rounded-lg tap-target active:scale-95 transition-transform"
               >
-                Lihat Detail Rank
+                View Rank Details
               </button>
             </div>
           </div>
@@ -1469,8 +1553,8 @@ const DashboardScreen = ({
             className="w-full bg-primary text-white p-5 rounded-[18px] flex items-center justify-between tap-target cursor-pointer"
           >
             <div className="text-left">
-              <span className="block text-lg font-display font-bold tracking-tight">Mulai Pertandingan Baru</span>
-              <span className="text-sm font-medium opacity-80">Atur skor dan lawan</span>
+              <span className="block text-lg font-display font-bold tracking-tight">Start New Match</span>
+              <span className="text-sm font-medium opacity-80">Set scores and opponents</span>
             </div>
             <PlusCircle size={32} />
           </div>
@@ -1482,8 +1566,8 @@ const DashboardScreen = ({
               onClick={onContinueMatch}
               className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
             >
-              <h2 className="text-xl font-bold tracking-tight">Pertandingan Aktif</h2>
-              <button className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline">Lihat Semua</button>
+              <h2 className="text-xl font-bold tracking-tight">Active Matches</h2>
+              <button className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline">View All</button>
             </div>
             <div className="flex overflow-x-auto gap-4 no-scrollbar px-5 pb-2 snap-x snap-mandatory">
               {activeMatches.map((match) => (
@@ -1498,7 +1582,7 @@ const DashboardScreen = ({
                   <div className="flex justify-between items-start mb-4">
                     <div className="min-w-0 pr-2">
                       <span className="inline-block px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-bold rounded-md mb-1 uppercase">{tournament.name}</span>
-                      <h3 className="text-[16px] leading-tight font-bold truncate">Ronde {match.roundId}: Lapangan {match.court}</h3>
+                      <h3 className="text-[16px] leading-tight font-bold truncate">Round {match.roundId}: Court {match.court}</h3>
                     </div>
                     <div className="text-right shrink-0">
                       <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-wider">DURASI</span>
@@ -1542,7 +1626,7 @@ const DashboardScreen = ({
                   <div
                     className="w-full bg-on-surface text-white py-3 rounded-[14px] font-bold text-sm flex items-center justify-center gap-2"
                   >
-                    <span>Lanjutkan Score</span>
+                    <span>Continue Scoring</span>
                     <ChevronRight size={16} />
                   </div>
                 </div>
@@ -1556,18 +1640,18 @@ const DashboardScreen = ({
             onClick={onOpenHistoryList}
             className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
           >
-            <h2 className="text-xl font-bold tracking-tight">Riwayat Terakhir</h2>
+            <h2 className="text-xl font-bold tracking-tight">Recent History</h2>
             <button
               className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline"
             >
-              Lihat Semua
+              View All
             </button>
           </div>
           <div className="px-5 flex flex-col gap-4">
             {recentTournaments.length === 0 ? (
               <div className="bg-white border border-ios-gray/10 rounded-[20px] p-8 text-center shadow-sm">
                 <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-                <p className="text-ios-gray font-medium">Belum ada riwayat pertandingan.</p>
+                <p className="text-ios-gray font-medium">No match history yet.</p>
               </div>
             ) : (
               recentTournaments.map((item) => (
@@ -1632,9 +1716,10 @@ const AddPlayerModal = ({ isOpen, onClose, onAdd }: { isOpen: boolean, onClose: 
 
     const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
     const newPlayer: Player = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: `${MANUAL_PLAYER_ID_PREFIX}${Math.random().toString(36).slice(2, 11)}`,
       name,
       rating: 0,
+      source: 'manual',
       initials,
       avatar: photo || undefined,
       stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
@@ -1667,7 +1752,7 @@ const AddPlayerModal = ({ isOpen, onClose, onAdd }: { isOpen: boolean, onClose: 
       >
         <div className="p-6">
           <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-bold tracking-tight">Tambah Pemain Baru</h3>
+            <h3 className="text-lg font-bold tracking-tight">Add Player Baru</h3>
             <button onClick={onClose} className="p-2 bg-ios-gray/10 rounded-full tap-target">
               <X size={20} className="text-on-surface" />
             </button>
@@ -1719,7 +1804,7 @@ const AddPlayerModal = ({ isOpen, onClose, onAdd }: { isOpen: boolean, onClose: 
               type="submit"
               className="w-full h-14 bg-primary text-white rounded-2xl font-bold text-lg shadow-lg shadow-primary/20 tap-target mt-4"
             >
-              Simpan Pemain
+              Save Player
             </button>
           </form>
         </div>
@@ -1940,6 +2025,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
           id: uid,
           name: displayName,
           rating: currentUser?.mmr || 0,
+          source: 'fom',
           avatar: currentUser?.photoURL || '',
           initials,
           stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
@@ -2131,7 +2217,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
       } catch (err) {
         console.error('Court autocomplete error:', err);
         setCourtSuggestions([]);
-        setCourtSearchError('Pencarian lapangan sedang bermasalah. Coba lagi beberapa saat.');
+        setCourtSearchError('Court search is currently unavailable. Please try again shortly.');
         setCourtSearchProvider('none');
       } finally {
         setIsSearchingCourts(false);
@@ -2156,6 +2242,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     id: friend.uid,
     name: friend.displayName,
     rating: friend.mmr || 0,
+    source: 'fom',
     avatar: friend.photoURL || '',
     initials: friend.displayName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase(),
     stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
@@ -2172,14 +2259,14 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     setAllPlayers(prev => dedupePlayersById([newPlayer, ...prev]));
     setSelectedPlayers(prev => dedupePlayersById([newPlayer, ...prev]));
     setIsAddModalOpen(false);
-    onAddNotification('Pemain Baru!', `${newPlayer.name} telah ditambahkan ke daftar pemain.`, 'system');
+    onAddNotification('New Player!', `${newPlayer.name} has been added to the player list.`, 'system');
   };
 
   const handleRemovePlayer = (e: React.MouseEvent, playerId: string) => {
     e.stopPropagation();
     const selfUid = auth.currentUser?.uid || currentUser?.uid;
     if (selfUid && playerId === selfUid) {
-      onAddNotification('Pemain Utama', 'Akun kamu tidak bisa dihapus dari daftar pemain.', 'system');
+      onAddNotification('Primary Player', 'Your own account cannot be removed from the player list.', 'system');
       return;
     }
     setAllPlayers(prev => prev.filter(p => p.id !== playerId));
@@ -2268,7 +2355,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
             <button onClick={onBack} className="tap-target p-2 -ml-2">
               <ChevronLeft size={24} className="text-primary" />
             </button>
-            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Pengaturan Pertandingan</h1>
+            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Match Settings</h1>
           </div>
           <button
             onClick={handleGenerate}
@@ -2295,7 +2382,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Nama Lapangan Padel</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Nama Court Padel</h2>
           <div className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm">
             <input
               type="text"
@@ -2308,7 +2395,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
         </section>
 
         <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Kota Bermain</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">City</h2>
           <div className="relative">
             <div className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm">
               <div className="flex items-start gap-3">
@@ -2317,7 +2404,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                 </div>
                 <div className="flex-1">
                   <p className="text-[11px] font-semibold text-ios-gray mb-1">
-                    Masukkan kota tempat bermain
+                    Enter your playing city
                   </p>
                   <input
                     type="text"
@@ -2348,20 +2435,20 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                 {!isSearchingCourts && !courtSearchError && courtQuery.trim().length < 3 && (
                   <div className="px-4 py-3 text-[12px] text-ios-gray font-medium flex items-center gap-2">
                     <Search size={14} className="text-ios-gray/70" />
-                    Mulai ketik nama kota untuk mencari...
+                    Start typing a city name to search...
                   </div>
                 )}
                 {isSearchingCourts && (
                   <div className="px-4 py-3 text-[12px] text-ios-gray font-medium flex items-center gap-2">
                     <RefreshCw size={14} className="animate-spin text-ios-gray/70" />
-                    Mencari lapangan...
+                    Searching courts...
                   </div>
                 )}
                 {courtSearchError && (
                   <div className="px-4 py-3 text-[12px] text-error font-medium">{courtSearchError}</div>
                 )}
                 {!isSearchingCourts && !courtSearchError && courtSuggestions.length === 0 && courtQuery.trim().length >= 3 && (
-                  <div className="px-4 py-3 text-[12px] text-ios-gray font-medium">Tidak ada lapangan yang cocok.</div>
+                  <div className="px-4 py-3 text-[12px] text-ios-gray font-medium">No matching courts found.</div>
                 )}
                 {!isSearchingCourts && !courtSearchError && courtSuggestions.map((suggestion) => (
                   <button
@@ -2384,7 +2471,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
         </section>
 
         <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Format Pertandingan</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Match Format</h2>
           <div className="grid grid-cols-3 gap-3">
             {formatChips.map(({ value, label, icon: Icon }) => (
               <button
@@ -2406,9 +2493,9 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
           </div>
           <div className="bg-primary/5 p-4 rounded-xl border border-primary/10">
             <p className="text-[12px] text-primary font-medium leading-relaxed">
-              {format === 'Mexicano' ? "Mode Mexicano menyesuaikan lawan berdasarkan performa poin setiap set." :
-                format === 'Americano' ? "Mode Americano mengacak pasangan pemain di setiap ronde." :
-                  "Mode Match Play menggunakan format pertandingan padel tradisional (Set & Game)."}
+              {format === 'Mexicano' ? "Mexicano mode rotates opponents based on set-by-set point performance." :
+                format === 'Americano' ? "Americano mode randomizes player pairings every round." :
+                  "Match Play uses traditional padel scoring (Set & Game)."}
             </p>
           </div>
         </section>
@@ -2431,13 +2518,13 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
               ))}
             </div>
             <p className="text-[11px] text-on-surface/70 font-medium text-center px-1">
-              {scoringType === 'Golden Point' ? "Satu poin penentu saat skor 40-40 (Punto de Oro)" : "Pemain harus unggul 2 poin setelah skor 40-40 (Ad-In/Ad-Out)"}
+              {scoringType === 'Golden Point' ? "One deciding point at 40-40 (Punto de Oro)." : "A team must lead by 2 points after 40-40 (Ad-In/Ad-Out)."}
             </p>
           </section>
         )}
 
         <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Kriteria Peringkat</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Kriteria Ranking</h2>
           <div className="bg-ios-gray/10 p-1 rounded-xl flex items-center h-11">
             {(['Matches Won', 'Points Won'] as RankingCriteria[]).map((c) => (
               <button
@@ -2453,13 +2540,13 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
             ))}
           </div>
           <p className="text-[11px] text-on-surface/70 font-medium text-center px-1">
-            {criteria === 'Points Won' ? "Pemenang ditentukan dari total akumulasi poin yang diraih" : "Pemenang ditentukan dari jumlah pertandingan yang dimenangkan"}
+            {criteria === 'Points Won' ? "Winner is determined by total points scored." : "Winner is determined by total matches won."}
           </p>
         </section>
 
         <section className="space-y-4">
           <div className="flex justify-between items-center px-1">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Jumlah Lapangan</h2>
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Jumlah Court</h2>
           </div>
           <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
             {[1, 2, 3, 4, 5].map((n) => (
@@ -2482,14 +2569,14 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
           </div>
           {![1, 2, 3, 4, 5].includes(courts) && (
             <div className="bg-primary/8 border border-primary/15 rounded-xl p-3">
-              <span className="text-[12px] font-semibold text-primary">Custom dipilih: {courts} lapangan</span>
+              <span className="text-[12px] font-semibold text-primary">Custom selected: {courts} courts</span>
             </div>
           )}
         </section>
 
         <section className="space-y-4">
           <div className="flex justify-between items-center px-1">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Jumlah Ronde</h2>
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Number of Rounds</h2>
           </div>
           <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
             {[3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
@@ -2512,17 +2599,17 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
           </div>
           {![3, 4, 5, 6, 7, 8, 9, 10].includes(numRounds) && (
             <div className="bg-primary/8 border border-primary/15 rounded-xl p-3">
-              <span className="text-[12px] font-semibold text-primary">Custom dipilih: {numRounds} ronde</span>
+              <span className="text-[12px] font-semibold text-primary">Custom selected: {numRounds} rounds</span>
             </div>
           )}
         </section>
 
         <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Pengaturan Lanjutan</h2>
+          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Advanced Settings</h2>
           <div className="bg-white rounded-xl overflow-hidden border border-ios-gray/10 shadow-sm p-4">
             <div className="flex justify-between items-center mb-4">
-              <span className="text-[13px] font-semibold">Total Poin Set</span>
-              <span className="text-[13px] font-bold text-primary">{points} Poin</span>
+              <span className="text-[13px] font-semibold">Set Total Points</span>
+              <span className="text-[13px] font-bold text-primary">{points} points</span>
             </div>
             <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
               {[16, 21, 24, 32].map((p) => (
@@ -2545,7 +2632,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
             </div>
             {![16, 21, 24, 32].includes(points) && (
               <div className="mt-3 bg-primary/8 border border-primary/15 rounded-xl p-3">
-                <span className="text-[12px] font-semibold text-primary">Custom dipilih: {points} poin</span>
+                <span className="text-[12px] font-semibold text-primary">Custom selected: {points} points</span>
               </div>
             )}
           </div>
@@ -2568,7 +2655,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                 className="relative w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl"
               >
                 <h3 className="text-[18px] font-bold tracking-tight mb-3">
-                  {customModalType === 'courts' ? 'Custom Jumlah Lapangan' : customModalType === 'rounds' ? 'Custom Jumlah Ronde' : 'Custom Total Poin Set'}
+                  {customModalType === 'courts' ? 'Custom Court Count' : customModalType === 'rounds' ? 'Custom Round Count' : 'Custom Set Points'}
                 </h3>
                 <input
                   ref={customInputRef}
@@ -2587,13 +2674,13 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                     onClick={() => setCustomModalType(null)}
                     className="flex-1 h-11 rounded-xl border border-ios-gray/15 text-on-surface font-semibold tap-target"
                   >
-                    Batal
+                    Cancel
                   </button>
                   <button
                     onClick={applyCustomModalValue}
                     className="flex-1 h-11 rounded-xl bg-primary text-white font-bold tap-target"
                   >
-                    Terapkan
+                    Apply
                   </button>
                 </div>
               </motion.div>
@@ -2603,20 +2690,20 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
 
         <section className="space-y-4">
           <div className="flex items-center justify-between px-1">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Teman</h2>
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Friends</h2>
             <button
               type="button"
               onClick={onOpenFriends}
               className="text-[11px] font-bold text-primary tap-target"
             >
-              Lihat Semua
+              View All
             </button>
           </div>
 
           {loadingFriends ? (
             <div className="bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm flex items-center gap-2 text-ios-gray text-sm">
               <RefreshCw size={14} className="animate-spin" />
-              <span className="font-medium">Memuat daftar teman...</span>
+              <span className="font-medium">Loading friends...</span>
             </div>
           ) : sortedFriends.length === 0 ? (
             <button
@@ -2629,8 +2716,8 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                   <Users size={20} />
                 </div>
                 <div>
-                  <p className="text-[14px] font-bold text-on-surface">Belum ada teman</p>
-                  <p className="text-[12px] font-medium text-ios-gray">Tap untuk tambah teman dan langsung pilih ke match.</p>
+                  <p className="text-[14px] font-bold text-on-surface">No friends yet</p>
+                  <p className="text-[12px] font-medium text-ios-gray">Tap to add friends and quickly select them for a match.</p>
                 </div>
               </div>
             </button>
@@ -2667,7 +2754,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                         <div className="min-w-0">
                           <p className="text-[12px] font-bold text-on-surface truncate">{friend.displayName}</p>
                           <p className="text-[10px] font-semibold text-ios-gray truncate">
-                            {friend.mmr > 0 ? getRankInfo(friend.mmr).name : 'Belum ada rank'}
+                            {friend.mmr > 0 ? getRankInfo(friend.mmr).name : 'No rank yet'}
                           </p>
                         </div>
                       </div>
@@ -2681,7 +2768,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                   onClick={onOpenFriends}
                   className="w-full h-10 rounded-xl border border-ios-gray/15 bg-white text-[12px] font-bold text-primary tap-target"
                 >
-                  Lihat semua teman ({sortedFriends.length})
+                  View all friends ({sortedFriends.length})
                 </button>
               )}
             </div>
@@ -2691,7 +2778,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
         <section className="space-y-4 pb-8">
           <div className="flex justify-between items-end px-1">
             <div className="space-y-1">
-              <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Daftar Pemain</h2>
+              <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Player List</h2>
               <div className="flex items-center gap-2">
                 <span className={cn(
                   "text-2xl font-black tracking-tighter",
@@ -2701,7 +2788,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                 </span>
                 <div className="flex flex-col -space-y-1">
                   <span className="text-[10px] font-black text-on-surface/40 uppercase tracking-widest">
-                    Pemain
+                    Player
                   </span>
                   <span className="text-[10px] font-bold text-on-surface/20 uppercase tracking-widest">
                     Min. {minPlayersNeeded}
@@ -2714,7 +2801,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
               className="flex items-center gap-1.5 bg-primary/10 text-primary px-5 py-2.5 rounded-full text-[12px] font-bold uppercase tracking-wider tap-target transition-all active:scale-95 shadow-sm shadow-primary/5"
             >
               <Plus size={16} strokeWidth={3} />
-              <span>Tambah</span>
+              <span>Add</span>
             </button>
           </div>
 
@@ -2724,12 +2811,12 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                 <AlertTriangle size={18} className="text-amber-600" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-bold text-amber-900 leading-tight">Data pemain sempat tidak sinkron, sudah kami rapikan otomatis.</p>
+                <p className="text-[13px] font-bold text-amber-900 leading-tight">Player data was briefly out of sync and has been fixed automatically.</p>
                 <p className="mt-1 text-[11px] font-medium text-amber-800 leading-tight">
                   {[
-                    playerDataNotice.missingFromList > 0 ? `${playerDataNotice.missingFromList} pemain dipulihkan ke daftar` : null,
-                    playerDataNotice.duplicateInSelected > 0 ? `${playerDataNotice.duplicateInSelected} duplikat pilihan dibersihkan` : null,
-                    playerDataNotice.duplicateInList > 0 ? `${playerDataNotice.duplicateInList} duplikat daftar dibersihkan` : null
+                    playerDataNotice.missingFromList > 0 ? `${playerDataNotice.missingFromList} players restored to the list` : null,
+                    playerDataNotice.duplicateInSelected > 0 ? `${playerDataNotice.duplicateInSelected} selected duplicates removed` : null,
+                    playerDataNotice.duplicateInList > 0 ? `${playerDataNotice.duplicateInList} list duplicates removed` : null
                   ].filter(Boolean).join(' | ')}
                 </p>
               </div>
@@ -2737,7 +2824,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                 type="button"
                 onClick={() => setDismissPlayerDataNotice(true)}
                 className="p-1.5 rounded-lg text-amber-700/80 hover:text-amber-900 tap-target"
-                aria-label="Tutup notifikasi sinkronisasi data pemain"
+                aria-label="Close player data sync notice"
               >
                 <X size={16} />
               </button>
@@ -2757,10 +2844,10 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                 </div>
                 <div className="space-y-0.5">
                   <p className="text-[13px] text-error font-bold leading-tight">
-                    Butuh {minPlayersNeeded - selectedPlayers.length} pemain lagi
+                    Butuh {minPlayersNeeded - selectedPlayers.length} player lagi
                   </p>
                   <p className="text-[11px] text-error/60 font-medium leading-tight">
-                    Minimal 4 pemain per lapangan ({courts} lapangan = {minPlayersNeeded} pemain)
+                    Minimal 4 player per court ({courts} court = {minPlayersNeeded} player)
                   </p>
                 </div>
               </motion.div>
@@ -2794,7 +2881,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
                       <div className="text-left">
                         <span className="text-[14px] font-semibold block">{player.name}</span>
                         {isSelf && (
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-primary/80">Anda</span>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-primary/80">You</span>
                         )}
                       </div>
                     </div>
@@ -2864,21 +2951,21 @@ const MatchBackgroundPickerScreen = ({
             <button onClick={onBack} className="tap-target p-2 -ml-2">
               <ChevronLeft size={24} className="text-primary" />
             </button>
-            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Pilih Background</h1>
+            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Select Background</h1>
           </div>
           <button
             onClick={onSkip}
             className="font-bold tap-target px-2 text-primary transition-colors"
           >
-            Lewati
+            Skip
           </button>
         </div>
       </nav>
 
       <main className="max-w-md mx-auto px-4 py-6 space-y-4">
         <section className="space-y-1">
-          <p className="text-[15px] font-semibold text-on-surface">Pilih dari koleksi aplikasi</p>
-          <p className="text-[12px] text-ios-gray">Background akan ditampilkan di Preview Pertandingan.</p>
+          <p className="text-[15px] font-semibold text-on-surface">Choose from the app collection</p>
+          <p className="text-[12px] text-ios-gray">This background will be shown in Match Preview.</p>
         </section>
 
         <section className="grid grid-cols-2 gap-3">
@@ -2924,13 +3011,13 @@ const MatchBackgroundPickerScreen = ({
             disabled={!selectedBackgroundId}
             className="w-full h-12 bg-primary text-white rounded-2xl font-bold text-[15px] shadow-lg shadow-primary/20 disabled:opacity-40 disabled:shadow-none disabled:active:scale-100 tap-target transition-all"
           >
-            Lanjut ke Preview
+            Continue to Preview
           </button>
           <button
             onClick={onSkip}
             className="w-full h-11 rounded-2xl border border-ios-gray/15 text-ios-gray font-semibold text-[14px] tap-target"
           >
-            Lewati (Random)
+            Skip (Random)
           </button>
         </div>
       </div>
@@ -3003,7 +3090,7 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
   const previewCity = (tournament.location || '').trim();
   const previewPlace = previewVenue && previewCity
     ? `${previewVenue} | ${previewCity}`
-    : (previewVenue || previewCity || 'Lokasi belum dipilih');
+    : (previewVenue || previewCity || 'Location not selected yet');
 
   return (
     <div className="relative min-h-screen pb-10 overflow-hidden bg-transparent z-0">
@@ -3030,13 +3117,13 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
             <button onClick={onBack} className="p-2 -ml-2 tap-target">
               <ChevronLeft size={24} className="text-primary" />
             </button>
-            <h1 className="font-bold text-[17px] tracking-tight text-on-surface">Preview Pertandingan</h1>
+            <h1 className="font-bold text-[17px] tracking-tight text-on-surface">Match Preview</h1>
           </div>
           <button
             onClick={onConfirm}
             className={cn("text-white px-5 py-2 rounded-full font-bold text-sm shadow-md tap-target", previewTheme.accentSolid)}
           >
-            Mulai
+            Start
           </button>
         </div>
       </header>
@@ -3062,9 +3149,9 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
           <div className="relative grid grid-cols-4 gap-2">
             {[
               { label: 'Mode', value: tournament.format },
-              { label: 'Pemain', value: tournament.players.length },
-              { label: 'Lapangan', value: tournament.courts },
-              { label: 'Ronde', value: tournament.rounds.length },
+              { label: 'Player', value: tournament.players.length },
+              { label: 'Court', value: tournament.courts },
+              { label: 'Round', value: tournament.rounds.length },
             ].map((item) => (
               <div key={item.label} className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
                 <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">{item.label}</p>
@@ -3078,7 +3165,7 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
           {tournament.rounds.map((round) => (
             <section key={round.id} className="bg-white/78 backdrop-blur-sm p-4 rounded-[20px] shadow-sm border border-white/45">
               <div className="flex items-center justify-between gap-3 mb-1.5">
-                <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", previewTheme.accentText)}>Ronde {round.id}</span>
+                <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", previewTheme.accentText)}>Round {round.id}</span>
                 <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-ios-gray/60">{round.matches.length} Match</span>
               </div>
               <div className="h-px bg-ios-gray/10 mb-2.5" />
@@ -3088,7 +3175,7 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
                   <div key={match.id}>
                     <div className="flex justify-start mb-3">
                       <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
-                        Lapangan {match.court}
+                        Court {match.court}
                       </span>
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
@@ -3134,7 +3221,7 @@ const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundI
                     <div className="flex items-center gap-2">
                       <Users size={14} className="text-ios-gray/70" />
                       <span className="text-[11px] font-semibold tracking-tight text-ios-gray/80">
-                        Pemain Menunggu: <span className="text-on-surface font-medium">
+                        Player Pending: <span className="text-on-surface font-medium">
                           {round.playersBye.map(p => p.name.split(' ')[0]).join(', ')}
                         </span>
                       </span>
@@ -3196,7 +3283,7 @@ const MatchActiveScreen = ({
   const [draftActivePlayerIds, setDraftActivePlayerIds] = useState<Set<string>>(new Set());
   const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
   const [nowMs, setNowMs] = useState(Date.now());
-  const [modalBottomOffset, setModalBottomOffset] = useState(88);
+  const [modalBottomOffset, setModalBottomOffset] = useState(24);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -3205,7 +3292,7 @@ const MatchActiveScreen = ({
 
   useEffect(() => {
     const updateModalOffset = () => {
-      const baseNavOffset = 88; // keep modal above bottom navbar
+      const baseNavOffset = 24; // keep modal above sticky CTA / safe area
       const vv = window.visualViewport;
       if (!vv) {
         setModalBottomOffset(baseNavOffset);
@@ -3273,6 +3360,43 @@ const MatchActiveScreen = ({
   const activeRound = currentRoundIndex !== -1 ? (tournament.rounds[currentRoundIndex] ?? null) : null;
   const activeRoundId = activeRound?.id ?? null;
   const isLastRound = currentRoundIndex !== -1 && currentRoundIndex >= (tournament.numRounds - 1);
+  const activeRoundMatchCount = activeRound?.matches.length || 0;
+  const activeRoundEnteredScoreCount = useMemo(() => {
+    if (!activeRound) return 0;
+    if (tournament.format === 'Match Play') {
+      return activeRound.matches.filter((match) => {
+        const hasPointsProgress = (match.pointsA || '0') !== '0' || (match.pointsB || '0') !== '0';
+        const hasGamesProgress = (match.teamA.score || 0) > 0 || (match.teamB.score || 0) > 0;
+        return match.status === 'completed' || hasPointsProgress || hasGamesProgress;
+      }).length;
+    }
+    return activeRound.matches.filter((match) => {
+      const scoreA = match.teamA.score || 0;
+      const scoreB = match.teamB.score || 0;
+      return match.status === 'completed' || scoreA > 0 || scoreB > 0;
+    }).length;
+  }, [activeRound, tournament.format, tournament.totalPoints]);
+  const activeRoundReadyScoreCount = useMemo(() => {
+    if (!activeRound) return 0;
+    if (tournament.format === 'Match Play') {
+      return activeRound.matches.filter((match) => match.status === 'completed').length;
+    }
+    const hasPointTarget = (tournament.totalPoints || 0) > 0;
+    return activeRound.matches.filter((match) => {
+      const scoreA = match.teamA.score || 0;
+      const scoreB = match.teamB.score || 0;
+      if (match.status === 'completed') return true;
+      if (hasPointTarget) {
+        return (scoreA + scoreB === tournament.totalPoints) && (scoreA > 0 || scoreB > 0);
+      }
+      return scoreA > 0 || scoreB > 0;
+    }).length;
+  }, [activeRound, tournament.format, tournament.totalPoints]);
+  const isActiveRoundScoreFullyFilled = (
+    activeRoundMatchCount > 0 &&
+    activeRoundReadyScoreCount === activeRoundMatchCount
+  );
+  const nextRoundCtaLabel = isLastRound ? 'Finish Matches' : 'Next Round';
   const totalElapsed = formatDurationFromMs(
     getTournamentElapsedMs(
       tournament.rounds,
@@ -3317,6 +3441,14 @@ const MatchActiveScreen = ({
   const completedRounds = tournament.rounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
   const totalRounds = Math.max(tournament.numRounds || 0, tournament.rounds.length);
   const isTournamentEnded = totalRounds > 0 && completedRounds >= totalRounds;
+  const shouldShowNextRoundCta = !isReadOnly && !isTournamentEnded;
+  const stickyCtaBottomOffsetPx = 10;
+  const stickyCtaHeightPx = 84;
+  const stickyCtaGapPx = 14;
+  const stickyCtaBottomStyle = `calc(var(--app-safe-bottom, 0px) + ${stickyCtaBottomOffsetPx}px)`;
+  const stickyCtaPaddingBottomStyle = shouldShowNextRoundCta
+    ? `calc(var(--app-safe-bottom, 0px) + ${stickyCtaBottomOffsetPx + stickyCtaHeightPx + stickyCtaGapPx}px)`
+    : '24px';
   const roundIdsForReset = useMemo(
     () => tournament.rounds.map((round) => round.id).filter((roundId) => roundId > 1).sort((a, b) => b - a),
     [tournament.rounds]
@@ -3453,12 +3585,12 @@ const MatchActiveScreen = ({
   const handleSubmitRoundEdit = () => {
     const parsed = Number.parseInt(roundEditValue, 10);
     if (!Number.isFinite(parsed) || parsed < 1) {
-      setRoundEditError('Masukkan jumlah ronde minimal 1.');
+      setRoundEditError('Enter at least 1 round.');
       return;
     }
     const ok = onUpdateRounds(parsed);
     if (!ok) {
-      setRoundEditError('Jumlah ronde tidak valid untuk kondisi turnamen saat ini.');
+      setRoundEditError('Round count is invalid for the current match setup.');
       return;
     }
     setIsRoundEditorOpen(false);
@@ -3476,14 +3608,14 @@ const MatchActiveScreen = ({
   const handleOpenRoundResetSelector = () => {
     setIsActionMenuOpen(false);
     if (roundIdsForReset.length === 0) {
-      window.alert('Belum ada ronde yang bisa diulang.');
+      window.alert('No rounds available to regenerate.');
       return;
     }
     setIsRoundResetSelectorOpen(true);
   };
 
   const handleDeleteRoundsFromSelector = (roundId: number) => {
-    const shouldDelete = window.confirm(`Hapus ronde ${roundId} dan semua ronde setelahnya?`);
+    const shouldDelete = window.confirm(`Delete round ${roundId} and all subsequent rounds?`);
     if (!shouldDelete) return;
     onDeleteRoundsFrom(roundId);
     setIsRoundResetSelectorOpen(false);
@@ -3515,11 +3647,14 @@ const MatchActiveScreen = ({
       return;
     }
 
-    const shouldSave = window.confirm('Perubahan berlaku mulai ronde berikutnya. Simpan?');
+    const shouldSave = window.confirm('Changes will apply starting from the next round. Save?');
     if (!shouldSave) return;
 
     onUpdateActivePlayers(nextActiveIds);
     setIsActivePlayersEditorOpen(false);
+  };
+  const handleProceedToNextRound = () => {
+    onNextRound();
   };
 
   const getRoundDuration = (round: Round) => {
@@ -3542,7 +3677,7 @@ const MatchActiveScreen = ({
             <button onClick={onBack} className="tap-target p-2 -ml-2">
               <ChevronLeft size={24} className="text-on-surface" />
             </button>
-            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Pertandingan</h1>
+            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Match</h1>
           </div>
         </header>
 
@@ -3550,9 +3685,9 @@ const MatchActiveScreen = ({
           <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-6">
             <Trophy size={48} className="text-primary/40" />
           </div>
-          <h2 className="text-2xl font-bold text-on-surface mb-2">Belum Ada Pertandingan</h2>
+          <h2 className="text-2xl font-bold text-on-surface mb-2">No Active Match</h2>
           <p className="text-ios-gray text-sm mb-8 leading-relaxed">
-            Sepertinya belum ada turnamen yang aktif saat ini. Mulai pertandingan baru untuk mencatat skor dan melihat klasemen!
+            There are no active matches right now. Start a new match to track scores and standings.
           </p>
 
           <div className="w-full bg-primary/5 rounded-2xl p-4 mb-10 border border-primary/10 flex items-start gap-3 text-left">
@@ -3560,9 +3695,9 @@ const MatchActiveScreen = ({
               <Zap size={18} className="text-primary" />
             </div>
             <div>
-              <h4 className="text-[13px] font-bold text-primary uppercase tracking-wide mb-1">Tips Cepat</h4>
+              <h4 className="text-[13px] font-bold text-primary uppercase tracking-wide mb-1">Quick Tip</h4>
               <p className="text-[12px] text-ios-gray leading-snug font-medium">
-                Ajak minimal 4 pemain untuk memulai turnamen format Americano. Kamu bisa mengatur jumlah lapangan sesuai ketersediaan.
+                Invite at least 4 players to start Americano matches. You can set the number of courts based on availability.
               </p>
             </div>
           </div>
@@ -3572,7 +3707,7 @@ const MatchActiveScreen = ({
             className="w-full h-[56px] bg-primary text-white rounded-[16px] font-bold text-[17px] shadow-lg shadow-primary/20 tap-target flex items-center justify-center gap-2"
           >
             <PlusCircle size={20} />
-            <span>Mulai Pertandingan Baru</span>
+            <span>Start New Match</span>
           </button>
         </main>
       </div>
@@ -3580,7 +3715,7 @@ const MatchActiveScreen = ({
   }
 
   return (
-    <div className="relative min-h-screen pb-32 overflow-hidden bg-transparent z-0">
+    <div className="relative min-h-screen pb-40 overflow-hidden bg-transparent z-0">
       <div className="fixed inset-0 z-0 pointer-events-none">
         <div className={cn('absolute inset-0', pageBgTheme.base)} />
         <div className="absolute inset-x-0 top-0 h-screen min-h-screen max-h-none overflow-hidden">
@@ -3609,7 +3744,7 @@ const MatchActiveScreen = ({
                 </span>
               )}
               <span className={cn(!isTournamentEnded && "animate-pulse")}>
-                {isTournamentEnded ? 'Berakhir' : 'Live'}
+                {isTournamentEnded ? 'Ended' : 'Live'}
               </span>
             </span>
           </div>
@@ -3632,7 +3767,7 @@ const MatchActiveScreen = ({
               <button
                 onClick={onShareMatch}
                 className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white"
-                aria-label="Share pertandingan"
+                aria-label="Share match"
               >
                 <Share2 size={16} />
                 <span className="text-[12px] font-semibold">Share</span>
@@ -3645,12 +3780,13 @@ const MatchActiveScreen = ({
       <main
         className="relative z-10 px-5 space-y-6 max-w-lg mx-auto"
         style={{
-          paddingTop: '16px'
+          paddingTop: '16px',
+          paddingBottom: stickyCtaPaddingBottomStyle
         }}
       >
         {isSharedViewer && (
           <p className="-mt-1 -mb-3 px-1 text-[10px] font-medium text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
-            Mode penonton aktif, halaman ini hanya untuk melihat skor.
+            Viewer mode is active. This page is read-only.
           </p>
         )}
 
@@ -3678,11 +3814,11 @@ const MatchActiveScreen = ({
               <p className="text-[12px] font-semibold text-white">{activePlayerCount}/{tournament.players.length}</p>
             </div>
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lapangan</p>
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Court</p>
               <p className="text-[12px] font-semibold text-white">{tournament.courts}</p>
             </div>
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Ronde</p>
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Round</p>
               <p className="text-[12px] font-semibold text-white">{completedRounds}/{totalRounds || 0}</p>
             </div>
           </div>
@@ -3705,7 +3841,7 @@ const MatchActiveScreen = ({
                   type="button"
                   onClick={() => setIsActionMenuOpen(true)}
                   className="h-8 w-8 rounded-full bg-white/12 border border-white/35 text-white inline-flex items-center justify-center tap-target"
-                  aria-label="Pengaturan pertandingan"
+                  aria-label="Match settings"
                 >
                   <Settings size={15} />
                 </button>
@@ -3727,7 +3863,7 @@ const MatchActiveScreen = ({
                 <Trophy size={15} />
               </span>
               <span className="text-[13px] font-bold truncate">
-                {isTournamentEnded ? 'Lihat Klasemen Akhir' : 'Lihat Klasemen Sementara'}
+                {isTournamentEnded ? 'View Final Standings' : 'View Live Standings'}
               </span>
             </div>
             <ChevronRight size={16} className="opacity-80 shrink-0" />
@@ -3740,7 +3876,7 @@ const MatchActiveScreen = ({
               <div className="min-w-0 flex items-start gap-2.5">
                 <AlertTriangle size={16} className="text-amber-600 shrink-0 mt-0.5" />
                 <p className="text-[12px] leading-snug text-amber-900 font-medium">
-                  Skor ronde lama berubah. Buka menu aksi lalu pilih ulang ronde dari {needsRegenerateFromRound}+.
+                  Older round scores changed. Open the action menu and regenerate from round {needsRegenerateFromRound}+.
                 </p>
               </div>
             </div>
@@ -3760,11 +3896,11 @@ const MatchActiveScreen = ({
                     type="button"
                     onClick={() => toggleRound(round.id)}
                     className="flex-1 flex items-center justify-between gap-3 tap-target text-left"
-                    aria-label={isCollapsed ? `Buka ronde ${round.id}` : `Tutup ronde ${round.id}`}
+                    aria-label={isCollapsed ? `Buka round ${round.id}` : `Tutup round ${round.id}`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", accentTheme.headingStrong)}>
-                        Ronde {round.id}
+                        Round {round.id}
                       </span>
                       <span className="w-1 h-1 rounded-full bg-ios-gray/40" />
                       <span className="text-[11px] leading-none font-semibold uppercase tracking-[0.06em] tabular-nums text-ios-gray/60">
@@ -3799,7 +3935,7 @@ const MatchActiveScreen = ({
                                 <>
                                   <div className="flex justify-start mb-3">
                                     <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
-                                      Lapangan {match.court}
+                                      Court {match.court}
                                     </span>
                                   </div>
 
@@ -3896,8 +4032,8 @@ const MatchActiveScreen = ({
                       {round.playersBye.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-ios-gray/10">
                           <div className="flex items-center justify-between mb-1.5">
-                            <h3 className="text-[9px] font-bold text-ios-gray/65 uppercase tracking-[0.18em]">Pemain Bye</h3>
-                            <span className="text-[10px] font-medium text-ios-gray/45">{round.playersBye.length} Pemain</span>
+                            <h3 className="text-[9px] font-bold text-ios-gray/65 uppercase tracking-[0.18em]">Player Bye</h3>
+                            <span className="text-[10px] font-medium text-ios-gray/45">{round.playersBye.length} Player</span>
                           </div>
                           <p className="text-[12px] leading-relaxed text-ios-gray/72 font-medium">
                             {round.playersBye.map(p => p.name).join(', ')}
@@ -3912,18 +4048,44 @@ const MatchActiveScreen = ({
           );
         })}
 
-        {!isReadOnly && !isTournamentEnded && (
-          <div className="pt-3 pb-12">
-            <button
-              onClick={onNextRound}
-              className={cn("w-full h-[52px] rounded-[14px] text-white font-bold text-[15px] tracking-[0.01em] tap-target inline-flex items-center justify-center gap-2 border border-white/12", accentTheme.solid, accentTheme.solidShadow)}
-            >
-              <span>{isLastRound ? 'Selesaikan Turnamen' : 'Ronde Berikutnya'}</span>
-              <Zap size={18} />
-            </button>
-          </div>
-        )}
       </main>
+
+      {shouldShowNextRoundCta && (
+        <div
+          className="fixed inset-x-0 z-[92] px-5 pointer-events-none"
+          style={{ bottom: stickyCtaBottomStyle }}
+        >
+          <div className="max-w-lg mx-auto pointer-events-auto">
+            <div className="relative overflow-hidden rounded-2xl border border-white/45 bg-white/16 backdrop-blur-md shadow-[0_12px_28px_rgba(15,23,42,0.20)] px-2.5 py-2.5">
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0.08)_100%)] pointer-events-none" />
+              <div className="relative flex items-center justify-between gap-2 px-1 pb-2">
+                <div className="min-w-0 text-[11px] font-bold tracking-tight text-ios-gray truncate">
+                  {activeRoundId
+                    ? `Round ${activeRoundId} • ${activeRoundEnteredScoreCount}/${activeRoundMatchCount} match`
+                    : 'Matches are ready to continue'}
+                </div>
+                {tournament.format !== 'Match Play' && isActiveRoundScoreFullyFilled && (
+                  <span className={cn("px-2 py-1 rounded-full text-[10px] font-bold shrink-0 border", accentTheme.bgSoft, accentTheme.text, accentTheme.borderSoft)}>
+                    Ready
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={handleProceedToNextRound}
+                className={cn(
+                  "relative w-full h-11 px-4 rounded-xl text-white font-bold text-[14px] tracking-tight whitespace-nowrap tap-target inline-flex items-center justify-center gap-2 border border-white/18",
+                  accentTheme.solid,
+                  accentTheme.solidShadow,
+                  "after:absolute after:inset-0 after:rounded-xl after:bg-[linear-gradient(180deg,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0)_55%)] after:pointer-events-none"
+                )}
+              >
+                <span>{nextRoundCtaLabel}</span>
+                <Zap size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {isActionMenuOpen && !isReadOnly && (
@@ -3945,11 +4107,11 @@ const MatchActiveScreen = ({
               className="relative w-full max-w-md bg-white rounded-[28px] shadow-2xl overflow-hidden"
             >
               <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
-                <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Ubah Pertandingan</h3>
+                <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Edit Match</h3>
                 <button
                   onClick={() => setIsActionMenuOpen(false)}
                   className="p-2 bg-ios-gray/10 rounded-full tap-target"
-                  aria-label="Tutup menu aksi"
+                  aria-label="Close action menu"
                 >
                   <X size={18} className="text-on-surface" />
                 </button>
@@ -3962,7 +4124,7 @@ const MatchActiveScreen = ({
                   className="w-full h-12 px-4 rounded-xl border border-ios-gray/15 text-on-surface text-[14px] font-semibold text-left inline-flex items-center gap-3 tap-target"
                 >
                   <Edit3 size={16} className="text-primary" />
-                  Edit ronde
+                  Edit round
                 </button>
                 <button
                   type="button"
@@ -3970,7 +4132,7 @@ const MatchActiveScreen = ({
                   className="w-full h-12 px-4 rounded-xl border border-ios-gray/15 text-on-surface text-[14px] font-semibold text-left inline-flex items-center gap-3 tap-target"
                 >
                   <Users size={16} className="text-primary" />
-                  Pemain aktif
+                  Active Players
                 </button>
                 <button
                   type="button"
@@ -3984,7 +4146,7 @@ const MatchActiveScreen = ({
                   disabled={roundIdsForReset.length === 0}
                 >
                   <RefreshCw size={16} />
-                  Hapus / ulang ronde
+                  Delete / Regenerate Rounds
                 </button>
               </div>
             </motion.div>
@@ -4014,13 +4176,13 @@ const MatchActiveScreen = ({
             >
               <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Ulang Ronde</h3>
-                  <p className="text-[12px] text-ios-gray font-medium">Pilih ronde yang akan dihapus beserta ronde setelahnya.</p>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Regenerate Round</h3>
+                  <p className="text-[12px] text-ios-gray font-medium">Select a round to delete along with all subsequent rounds.</p>
                 </div>
                 <button
                   onClick={() => setIsRoundResetSelectorOpen(false)}
                   className="p-2 bg-ios-gray/10 rounded-full tap-target"
-                  aria-label="Tutup ulang ronde"
+                  aria-label="Close round reset dialog"
                 >
                   <X size={18} className="text-on-surface" />
                 </button>
@@ -4029,7 +4191,7 @@ const MatchActiveScreen = ({
               <div className="p-5 pt-4 space-y-2 overflow-y-auto">
                 {needsRegenerateFromRound !== null && roundIdsForReset.includes(needsRegenerateFromRound) && (
                   <div className="mb-1 px-3 py-2 rounded-xl border border-amber-200 bg-amber-50 text-[11px] font-semibold text-amber-800">
-                    Rekomendasi: mulai dari ronde {needsRegenerateFromRound}+.
+                    Recommended: start from round {needsRegenerateFromRound}+.
                   </div>
                 )}
                 {roundIdsForReset.map((roundId) => (
@@ -4044,8 +4206,8 @@ const MatchActiveScreen = ({
                         : "border-ios-gray/15 bg-white hover:bg-ios-gray/5"
                     )}
                   >
-                    <p className="text-[14px] font-semibold text-on-surface">Mulai dari ronde {roundId}</p>
-                    <p className="text-[11px] text-ios-gray">Ronde {roundId} sampai ronde terakhir akan dihapus.</p>
+                    <p className="text-[14px] font-semibold text-on-surface">Start from round {roundId}</p>
+                    <p className="text-[11px] text-ios-gray">Round {roundId} through the last round will be deleted.</p>
                   </button>
                 ))}
               </div>
@@ -4076,8 +4238,8 @@ const MatchActiveScreen = ({
             >
               <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Pemain Aktif</h3>
-                  <p className="text-[12px] text-ios-gray font-medium">{draftActivePlayerIds.size}/{tournament.players.length} aktif</p>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Active Players</h3>
+                  <p className="text-[12px] text-ios-gray font-medium">{draftActivePlayerIds.size}/{tournament.players.length} active</p>
                 </div>
                 <button
                   onClick={() => setIsActivePlayersEditorOpen(false)}
@@ -4093,7 +4255,7 @@ const MatchActiveScreen = ({
                   onClick={() => setDraftActivePlayerIds(new Set(tournament.players.map((player) => player.id)))}
                   className="h-8 px-3 rounded-lg border border-primary/20 bg-primary/5 text-[11px] font-bold text-primary tap-target"
                 >
-                  Pilih semua
+                  Select semua
                 </button>
                 <button
                   type="button"
@@ -4138,13 +4300,13 @@ const MatchActiveScreen = ({
                   onClick={() => setIsActivePlayersEditorOpen(false)}
                   className="h-11 rounded-xl border border-ios-gray/20 text-[14px] font-semibold text-ios-gray tap-target"
                 >
-                  Batal
+                  Cancel
                 </button>
                 <button
                   onClick={handleSaveActivePlayers}
                   className="h-11 rounded-xl bg-primary text-white text-[14px] font-bold shadow-[0_8px_18px_rgba(230,94,20,0.24)] tap-target"
                 >
-                  Simpan
+                  Save
                 </button>
               </div>
             </motion.div>
@@ -4174,8 +4336,8 @@ const MatchActiveScreen = ({
             >
               <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Ubah Jumlah Ronde</h3>
-                  <p className="text-[12px] text-ios-gray font-medium">Total ronde turnamen saat ini: {tournament.numRounds}</p>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Edit Round Count</h3>
+                  <p className="text-[12px] text-ios-gray font-medium">Current match rounds: {tournament.numRounds}</p>
                 </div>
                 <button
                   onClick={() => setIsRoundEditorOpen(false)}
@@ -4186,7 +4348,7 @@ const MatchActiveScreen = ({
               </div>
               <div className="p-5 space-y-3">
                 <label className="block text-[12px] font-bold uppercase tracking-wide text-ios-gray">
-                  Jumlah Ronde Baru
+                  New Round Count
                 </label>
                 <input
                   type="number"
@@ -4209,13 +4371,13 @@ const MatchActiveScreen = ({
                   onClick={() => setIsRoundEditorOpen(false)}
                   className="h-11 rounded-xl border border-ios-gray/20 text-[14px] font-semibold text-ios-gray tap-target"
                 >
-                  Batal
+                  Cancel
                 </button>
                 <button
                   onClick={handleSubmitRoundEdit}
                   className="h-11 rounded-xl bg-primary text-white text-[14px] font-bold shadow-[0_8px_18px_rgba(230,94,20,0.24)] tap-target"
                 >
-                  Simpan
+                  Save
                 </button>
               </div>
             </motion.div>
@@ -4246,8 +4408,8 @@ const MatchActiveScreen = ({
               <div className="p-6 border-b border-ios-gray/10">
                 <div className="flex justify-between items-center">
                   <div>
-                    <h3 className="text-lg font-bold tracking-tight">Ganti Pemain</h3>
-                    <p className="text-xs text-ios-gray font-medium">Ganti {swappingPlayer.currentPlayer.name}</p>
+                  <h3 className="text-lg font-bold tracking-tight">Swap Player</h3>
+                  <p className="text-xs text-ios-gray font-medium">Replace {swappingPlayer.currentPlayer.name}</p>
                   </div>
                   <button onClick={() => setSwappingPlayer(null)} className="p-2 bg-ios-gray/10 rounded-full tap-target">
                     <X size={20} className="text-on-surface" />
@@ -4256,7 +4418,7 @@ const MatchActiveScreen = ({
               </div>
 
               <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                <h4 className="text-[11px] font-bold text-ios-gray uppercase tracking-widest px-2 mb-2">Pilih Pemain Pengganti</h4>
+                <h4 className="text-[11px] font-bold text-ios-gray uppercase tracking-widest px-2 mb-2">Select Replacement Player</h4>
                 {tournament.players
                   .filter(p => {
                     // Don't show players already in this match
@@ -4280,7 +4442,9 @@ const MatchActiveScreen = ({
                       <div className="text-left">
                         <div className="font-bold text-sm">{player.name}</div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-ios-gray font-medium">Rating: {player.rating}</span>
+                          <span className="text-[10px] text-ios-gray font-medium">
+                            {isFomRegisteredPlayer(player) ? `MMR: ${player.rating}` : 'Manual player · No MMR'}
+                          </span>
                           <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-md", accentTheme.text, accentTheme.bgSoft)}>
                             {playerMatchCounts[player.id] || 0} Match
                           </span>
@@ -4317,7 +4481,7 @@ const MatchActiveScreen = ({
             >
               <div className="p-4">
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-[17px] font-bold tracking-tight">Update Skor Lapangan {scoringMatch.court}</h3>
+                  <h3 className="text-[17px] font-bold tracking-tight">Update Score Court {scoringMatch.court}</h3>
                   <button onClick={() => setScoringMatchId(null)} className="p-2 bg-ios-gray/10 rounded-full tap-target">
                     <X size={18} className="text-on-surface" />
                   </button>
@@ -4434,13 +4598,13 @@ const MatchActiveScreen = ({
                     }}
                     className="py-3 bg-ios-gray/5 text-ios-gray font-bold text-sm rounded-xl tap-target active:bg-ios-gray/10 transition-colors"
                   >
-                    Reset Skor
+                    Reset Score
                   </button>
                   <button
                     onClick={() => setScoringMatchId(null)}
                     className={cn("py-3 text-white font-bold text-sm rounded-xl shadow-xl tap-target active:scale-[0.98] transition-all", accentTheme.solid, accentTheme.solidShadow)}
                   >
-                    Simpan & Tutup
+                    Save & Close
                   </button>
                 </div>
               </div>
@@ -4699,7 +4863,7 @@ const KlasemenScreen = ({
                 </span>
               )}
               <span className={cn(!isTournamentEnded && "animate-pulse")}>
-                {isTournamentEnded ? 'Berakhir' : 'Live'}
+                {isTournamentEnded ? 'Ended' : 'Live'}
               </span>
             </span>
           </div>
@@ -4729,7 +4893,7 @@ const KlasemenScreen = ({
       >
         {isSharedViewer && (
           <p className="px-1 text-[10px] font-medium leading-tight text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
-            Mode penonton klasemen aktif, halaman ini hanya untuk melihat hasil.
+            Standings viewer mode is active. This page is read-only.
           </p>
         )}
 
@@ -4755,11 +4919,11 @@ const KlasemenScreen = ({
               <p className="text-[12px] font-semibold text-white">{sortedPlayers.length}</p>
             </div>
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Lapangan</p>
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Court</p>
               <p className="text-[12px] font-semibold text-white">{courtsCount}</p>
             </div>
             <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Ronde</p>
+              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Round</p>
               <p className="text-[12px] font-semibold text-white">{completedRounds}/{totalRounds || 0}</p>
             </div>
           </div>
@@ -4801,7 +4965,7 @@ const KlasemenScreen = ({
                 <Zap size={15} />
               </span>
               <span className="text-[13px] font-bold truncate">
-                {isTournamentEnded ? 'Lihat Detail Per Round' : 'Lihat Pertandingan Aktif'}
+                {isTournamentEnded ? 'View Round Details' : 'View Active Match'}
               </span>
             </div>
             <ChevronRight size={16} className="opacity-80 shrink-0" />
@@ -4810,15 +4974,15 @@ const KlasemenScreen = ({
 
         <section className="space-y-2">
           <div className="flex items-center justify-between px-1">
-            <h3 className="text-[12px] font-bold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">Ranking Pemain</h3>
+            <h3 className="text-[12px] font-bold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">Ranking Player</h3>
           </div>
-          <p className="px-1 text-[10px] font-semibold text-white/92 drop-shadow-[0_1px_2px_rgba(0,0,0,0.32)]">Urutan: Menang (W) → Diff → Poin.</p>
+          <p className="px-1 text-[10px] font-semibold text-white/92 drop-shadow-[0_1px_2px_rgba(0,0,0,0.32)]">Order: Wins (W) - Diff - Points.</p>
 
           <div className="rounded-2xl bg-white/78 backdrop-blur-sm border border-white/45 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)]">
             <div className="grid grid-cols-[1fr_48px_44px] gap-2 px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-on-surface/55">
-              <span>Pemain</span>
+              <span>Player</span>
               <span className="text-right">Diff</span>
-              <span className="text-right">Poin</span>
+              <span className="text-right">Points</span>
             </div>
             <div className="space-y-1.5">
               {sortedPlayers.map((player, i) => (
@@ -4853,7 +5017,7 @@ const KlasemenScreen = ({
               ))}
               {sortedPlayers.length === 0 && (
                 <div className="bg-white/95 p-4 rounded-[14px] border border-ios-gray/10 text-center text-[12px] font-semibold text-ios-gray">
-                  Data pemain belum tersedia.
+                  Player data is not available yet.
                 </div>
               )}
             </div>
@@ -4863,7 +5027,7 @@ const KlasemenScreen = ({
         <section className="pt-1 pb-8">
           <button onClick={() => onShare(tournament)} className={cn('w-full h-[52px] rounded-[14px] text-white font-bold text-[15px] tracking-[0.01em] tap-target inline-flex items-center justify-center gap-2 border border-white/12', infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
             <Share2 size={16} />
-            Bagikan Klasemen
+            Share Standings
           </button>
         </section>
       </main>
@@ -4885,13 +5049,13 @@ const NotificationsScreen = ({ notifications, onMarkAsRead, onClearAll, onBack }
           <button onClick={onBack} className="tap-target p-2 -ml-2">
             <ChevronLeft size={24} className="text-on-surface" />
           </button>
-          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Notifikasi</h1>
+          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Notifications</h1>
         </div>
         <button
           onClick={onClearAll}
           className="text-[13px] font-bold text-primary tap-target px-2"
         >
-          Hapus Semua
+          Delete All
         </button>
       </header>
 
@@ -4901,9 +5065,9 @@ const NotificationsScreen = ({ notifications, onMarkAsRead, onClearAll, onBack }
             <div className="w-20 h-20 bg-ios-gray/5 rounded-full flex items-center justify-center mb-4">
               <Bell size={40} className="text-ios-gray/30" />
             </div>
-            <h3 className="text-lg font-bold text-on-surface mb-1">Belum ada notifikasi</h3>
+            <h3 className="text-lg font-bold text-on-surface mb-1">No notifications yet</h3>
             <p className="text-sm text-on-surface/40 font-medium">
-              Kami akan memberi tahu Anda saat ada pertandingan baru atau update turnamen.
+              We will notify you when there are new matches or match updates.
             </p>
           </div>
         ) : (
@@ -4974,7 +5138,7 @@ const HistoryScreen = ({
         <button onClick={onBack} className="text-primary flex items-center -ml-2 tap-target p-2">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="font-bold text-[17px] tracking-tight">Riwayat Pertandingan</h1>
+        <h1 className="font-bold text-[17px] tracking-tight">Match History</h1>
         <div className="w-10" />
       </header>
 
@@ -4982,7 +5146,7 @@ const HistoryScreen = ({
         {sortedTournaments.length === 0 ? (
           <div className="bg-white border border-ios-gray/10 rounded-[20px] p-8 text-center shadow-sm">
             <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-            <p className="text-ios-gray font-medium">Belum ada riwayat pertandingan.</p>
+            <p className="text-ios-gray font-medium">No match history yet.</p>
           </div>
         ) : (
           <div className="space-y-3">
@@ -5022,7 +5186,7 @@ const HistoryDetailScreen = ({
         <button onClick={onBack} className="text-primary flex items-center -ml-2 tap-target p-2">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="font-bold text-[17px] tracking-tight">Detail Riwayat</h1>
+        <h1 className="font-bold text-[17px] tracking-tight">History Details</h1>
         <div className="w-10" />
       </header>
 
@@ -5039,8 +5203,8 @@ const HistoryDetailScreen = ({
               <span className="text-sm font-bold text-on-surface">{tournament.format}</span>
             </div>
             <div className="bg-white/60 p-3 rounded-2xl border border-ios-gray/5">
-              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-widest mb-1">Pemain</span>
-              <span className="text-sm font-bold text-on-surface">{tournament.numPlayers} Orang</span>
+              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-widest mb-1">Player</span>
+              <span className="text-sm font-bold text-on-surface">{tournament.numPlayers} Players</span>
             </div>
           </div>
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -5049,27 +5213,27 @@ const HistoryDetailScreen = ({
               className="w-full h-11 rounded-xl border border-primary/20 bg-white/80 text-primary text-[13px] font-bold inline-flex items-center justify-center gap-2 tap-target"
             >
               <Trophy size={16} />
-              Lihat Klasemen Akhir
+              View Final Standings
             </button>
             <button
               onClick={onViewMatchDetails}
               className="w-full h-11 rounded-xl border border-ios-gray/20 bg-white text-on-surface text-[13px] font-bold inline-flex items-center justify-center gap-2 tap-target"
             >
               <Zap size={16} />
-              Detail Per Round
+              Round Details
             </button>
           </div>
         </div>
 
         <section className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-[13px] font-bold uppercase tracking-wide text-ios-gray">Pertandingan Selesai</h3>
+            <h3 className="text-[13px] font-bold uppercase tracking-wide text-ios-gray">Completed Matches</h3>
             <span className="text-[12px] font-bold text-ios-gray">{completedMatches.length} Match</span>
           </div>
 
           {completedMatches.length === 0 ? (
             <div className="bg-white rounded-[20px] p-6 text-center shadow-sm border border-ios-gray/10">
-              <p className="text-ios-gray font-medium">Belum ada pertandingan selesai di riwayat ini.</p>
+              <p className="text-ios-gray font-medium">No completed matches in this history yet.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -5113,7 +5277,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
       await setDoc(doc(db, 'users', user.uid), editData, { merge: true });
       setUser(prev => ({ ...prev, ...editData }));
       setIsEditingProfile(false);
-      addNotification('Profil Diperbarui', 'Informasi profil Anda telah berhasil disimpan.', 'system');
+      addNotification('Profile Updated', 'Your profile information has been saved successfully.', 'system');
     } catch (err) {
       console.error('Save profile error:', err);
     }
@@ -5220,7 +5384,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
   return (
     <div className="pb-32 bg-white min-h-screen">
       <header className="ios-blur sticky top-0 w-full z-50 flex items-center justify-between px-4 h-14 border-b border-ios-gray/10">
-        <h1 className="font-bold text-[17px] tracking-tight ml-2">Profil Saya</h1>
+        <h1 className="font-bold text-[17px] tracking-tight ml-2">My Profile</h1>
         <div className="flex items-center gap-1">
           <button
             onClick={() => setIsEditingProfile(true)}
@@ -5244,14 +5408,14 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
             </div>
             <button
               onClick={() => {
-                addNotification('Unggah Foto', 'Fitur ganti foto profil akan segera hadir!', 'system');
+                addNotification('Upload Photo', 'Profile photo update is coming soon!', 'system');
               }}
               className="absolute bottom-1 right-1 bg-primary text-white p-2 rounded-full shadow-lg border-2 border-white tap-target"
             >
               <Camera size={16} />
             </button>
           </div>
-          <h2 className="text-2xl font-bold tracking-tight">{user?.displayName || 'Pemain Padel'}</h2>
+          <h2 className="text-2xl font-bold tracking-tight">{user?.displayName || 'Padel Player'}</h2>
           <p className="text-sm font-bold text-ios-gray mb-4">@{user?.username || 'user'}</p>
 
           <div className="flex flex-col items-center gap-2 mb-6">
@@ -5271,16 +5435,16 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
               className="px-6 py-2 bg-primary text-white rounded-full text-[12px] font-black uppercase tracking-widest shadow-lg shadow-primary/20 tap-target flex items-center gap-2"
             >
               <Users size={16} />
-              Teman
+              Friends
             </button>
             <button
               onClick={() => {
-                addNotification('Bagikan Profil', 'Link profil Anda telah disalin!', 'system');
+                addNotification('Share Profile', 'Your profile link has been copied!', 'system');
               }}
               className="px-6 py-2 bg-white border border-ios-gray/10 text-on-surface rounded-full text-[12px] font-black uppercase tracking-widest tap-target flex items-center gap-2"
             >
               <Share2 size={16} />
-              Bagikan
+              Share
             </button>
           </div>
           <div className="mt-4 flex flex-col items-center gap-3 w-full max-w-[240px]">
@@ -5303,7 +5467,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                   </div>
                   {rankInfo.nextRank && (
                     <p className="text-[9px] text-ios-gray font-medium text-center">
-                      {Math.max(0, rankInfo.nextRank.min - (user?.mmr || 0))} MMR lagi menuju {rankInfo.nextRank.name}
+                      {Math.max(0, rankInfo.nextRank.min - (user?.mmr || 0))} MMR to reach {rankInfo.nextRank.name}
                     </p>
                   )}
                 </div>
@@ -5330,7 +5494,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                 className="relative w-full max-w-md bg-white rounded-[32px] p-8 shadow-2xl"
               >
                 <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-bold">Edit Profil</h3>
+                  <h3 className="text-xl font-bold">Edit Profile</h3>
                   <button onClick={() => setIsEditingProfile(false)} className="p-2 bg-ios-gray/5 rounded-full tap-target">
                     <X size={20} />
                   </button>
@@ -5338,7 +5502,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
 
                 <div className="space-y-4 mb-8">
                   <div>
-                    <label className="block text-[10px] font-black text-ios-gray uppercase tracking-widest mb-1.5 ml-1">Nama Lengkap</label>
+                    <label className="block text-[10px] font-black text-ios-gray uppercase tracking-widest mb-1.5 ml-1">Full Name</label>
                     <input
                       type="text"
                       value={editData.displayName}
@@ -5356,7 +5520,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black text-ios-gray uppercase tracking-widest mb-1.5 ml-1">Nomor Handphone</label>
+                    <label className="block text-[10px] font-black text-ios-gray uppercase tracking-widest mb-1.5 ml-1">Phone Number</label>
                     <input
                       type="tel"
                       value={editData.phoneNumber}
@@ -5365,13 +5529,13 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black text-ios-gray uppercase tracking-widest mb-1.5 ml-1">Domisili (Home Base)</label>
+                    <label className="block text-[10px] font-black text-ios-gray uppercase tracking-widest mb-1.5 ml-1">Home Base</label>
                     <button
                       onClick={() => setIsRegionSelectorOpen(true)}
                       className="w-full bg-ios-gray/5 border border-ios-gray/10 rounded-2xl p-4 text-left text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary/20 flex items-center justify-between"
                     >
                       <span className={editData.homeBase ? "text-on-surface" : "text-ios-gray"}>
-                        {editData.homeBase || 'Pilih Wilayah'}
+                        {editData.homeBase || 'Select Region'}
                       </span>
                       <MapPin size={18} className="text-ios-gray" />
                     </button>
@@ -5382,7 +5546,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                   onClick={handleSaveProfile}
                   className="w-full py-4 bg-primary text-white font-black rounded-2xl shadow-lg shadow-primary/20 tap-target"
                 >
-                  Simpan Perubahan
+                  Save Changes
                 </button>
               </motion.div>
             </div>
@@ -5422,15 +5586,15 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                 <Bell size={24} />
               </div>
               <div className="space-y-0.5">
-                <h4 className="text-[15px] font-bold text-on-surface">Notifikasi Push</h4>
-                <p className="text-[12px] text-on-surface/50 font-medium leading-tight">Dapatkan update skor real-time</p>
+                <h4 className="text-[15px] font-bold text-on-surface">Push Notifications</h4>
+                <p className="text-[12px] text-on-surface/50 font-medium leading-tight">Get real-time score updates</p>
               </div>
             </div>
             <button
               onClick={onRequestPermission}
               className="bg-primary text-white px-5 py-2.5 rounded-full text-[13px] font-bold shadow-lg shadow-primary/20 tap-target"
             >
-              Aktifkan
+              Enable
             </button>
           </div>
         </section>
@@ -5439,10 +5603,10 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
           <div className="bg-white border border-ios-gray/10 rounded-3xl p-6 shadow-sm">
             <div className="flex justify-between items-end mb-4">
               <div>
-                <h3 className="text-sm font-bold text-ios-gray uppercase tracking-widest mb-1">Performa Musim Ini</h3>
+                <h3 className="text-sm font-bold text-ios-gray uppercase tracking-widest mb-1">Season Performance</h3>
                 <div className="flex items-baseline gap-2">
                   <span className="text-3xl font-display font-black text-on-surface">{stats.won}</span>
-                  <span className="text-sm font-bold text-ios-gray">Kemenangan</span>
+                  <span className="text-sm font-bold text-ios-gray">Wins</span>
                 </div>
               </div>
               <div className="text-right">
@@ -5459,7 +5623,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
                   <TrendingUp size={16} />
                   <span>{stats.winChangePercent > 0 ? `+${stats.winChangePercent}%` : `${stats.winChangePercent}%`}</span>
                 </div>
-                <span className="text-[10px] font-bold text-ios-gray uppercase tracking-widest">vs Bulan Lalu</span>
+                <span className="text-[10px] font-bold text-ios-gray uppercase tracking-widest">vs Last Month</span>
               </div>
             </div>
 
@@ -5501,18 +5665,18 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
             onClick={onOpenHistoryList}
             className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
           >
-            <h2 className="text-xl font-bold tracking-tight">Turnamen Terakhir</h2>
+            <h2 className="text-xl font-bold tracking-tight">Latest Matches</h2>
             <button
               className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline"
             >
-              Lihat Semua
+              View All
             </button>
           </div>
           <div className="px-5 flex flex-col gap-4">
             {recentTournaments.length === 0 ? (
               <div className="bg-white border border-ios-gray/10 rounded-2xl p-8 text-center shadow-sm">
                 <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-                <p className="text-ios-gray font-medium">Belum ada riwayat pertandingan.</p>
+                <p className="text-ios-gray font-medium">No match history yet.</p>
               </div>
             ) : (
               recentTournaments.map((item) => (
@@ -5533,7 +5697,7 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
             className="w-full py-4 bg-ios-gray/5 text-error font-bold rounded-2xl flex items-center justify-center gap-2 tap-target border border-error/10"
           >
             <LogOut size={20} />
-            <span>Keluar dari Akun</span>
+            <span>Sign Out</span>
           </button>
           <p className="text-center text-[10px] text-ios-gray/40 mt-6 font-medium">FOM Play VERSION 1.2.0 (BETA)</p>
         </section>
@@ -5554,7 +5718,7 @@ const RankDiscoveryScreen = ({ onBack }: { onBack: () => void }) => {
 
       <main className="max-w-2xl mx-auto p-5">
         <section className="mb-8">
-          <h2 className="text-xl font-bold mb-4">Urutan Peringkat</h2>
+          <h2 className="text-xl font-bold mb-4">Urutan Ranking</h2>
           <div className="space-y-3">
             {RANK_TIERS.map((rank, i) => (
               <div key={i} className="bg-white border border-ios-gray/10 rounded-2xl p-4 flex items-center justify-between shadow-sm">
@@ -5616,7 +5780,7 @@ const RankDiscoveryScreen = ({ onBack }: { onBack: () => void }) => {
             </table>
           </div>
           <p className="mt-4 text-xs text-ios-gray font-medium leading-relaxed">
-            * MMR akan diupdate secara otomatis setiap kali turnamen selesai berdasarkan performa individu Anda di dalam tim.
+            * MMR is updated automatically when a match session ends based on your individual performance in the team.
           </p>
         </section>
       </main>
@@ -5716,7 +5880,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
             targetUid,
             payload: {
               uid: targetUid,
-              displayName: data.targetDisplayName || 'Teman',
+              displayName: data.targetDisplayName || 'Friends',
               photoURL: data.targetPhotoURL || '',
               username: data.targetUsername || '',
               mmr: data.targetMmr || 0,
@@ -5777,7 +5941,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       }
       setSearchResults(results);
       if (results.length === 0) {
-        addNotification('Pencarian', 'User tidak ditemukan.', 'system');
+        addNotification('Search', 'User not found.', 'system');
       }
     } catch (err) {
       console.error('Search error:', err);
@@ -5790,15 +5954,15 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
     const uid = auth.currentUser?.uid || currentUser?.uid;
     if (!uid) return;
     if (uid === targetUser.uid) {
-      addNotification('Tidak bisa kirim request', 'Anda tidak bisa menambahkan diri sendiri sebagai teman.', 'system');
+      addNotification('Cannot send request', 'You cannot add yourself as a friend.', 'system');
       return;
     }
     if (friends.some((f) => f.uid === targetUser.uid)) {
-      addNotification('Sudah berteman', `${targetUser.displayName} sudah ada di daftar teman Anda.`, 'system');
+      addNotification('Already friends', `${targetUser.displayName} is already in your friends list.`, 'system');
       return;
     }
     if (outgoingRequestStatuses[targetUser.uid] === 'pending') {
-      addNotification('Request masih pending', `Permintaan pertemanan ke ${targetUser.displayName} masih menunggu respons.`, 'system');
+      addNotification('Request pending', `Friend request to ${targetUser.displayName} is still pending.`, 'system');
       return;
     }
 
@@ -5807,7 +5971,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
         requesterUid: uid,
         targetUid: targetUser.uid,
         status: 'pending',
-        requesterDisplayName: currentUser.displayName || auth.currentUser?.displayName || 'Pemain',
+        requesterDisplayName: currentUser.displayName || auth.currentUser?.displayName || 'Player',
         requesterPhotoURL: currentUser.photoURL || auth.currentUser?.photoURL || '',
         requesterUsername: currentUser.username || '',
         requesterMmr: currentUser.mmr || 0,
@@ -5827,20 +5991,20 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       const notifId = Math.random().toString(36).slice(2, 11);
       await setDoc(doc(db, 'users', targetUser.uid, 'notifications', notifId), {
         id: notifId,
-        title: 'Permintaan Pertemanan',
-        message: `${currentUser.displayName || 'Seseorang'} ingin berteman dengan Anda.`,
+        title: 'Friend Request',
+        message: `${currentUser.displayName || 'Someone'} wants to connect with you.`,
         timestamp: serverTimestamp(),
         type: 'system',
         read: false
       });
 
       setOutgoingRequestStatuses((prev) => ({ ...prev, [targetUser.uid]: 'pending' }));
-      addNotification('Request terkirim', `Permintaan pertemanan terkirim ke ${targetUser.displayName}.`, 'system');
+      addNotification('Request sent', `Friend request sent to ${targetUser.displayName}.`, 'system');
       setSearchQuery('');
       setSearchResults([]);
     } catch (err) {
       console.error('Send friend request error:', err);
-      addNotification('Gagal kirim request', 'Terjadi kendala saat mengirim permintaan pertemanan.', 'system');
+      addNotification('Request failed', 'There was a problem sending the friend request.', 'system');
     }
   };
 
@@ -5859,7 +6023,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
       if (decision === 'accepted') {
         const requesterFriendData: Friend = {
           uid: request.requesterUid,
-          displayName: request.requesterDisplayName || 'Teman',
+          displayName: request.requesterDisplayName || 'Friends',
           photoURL: request.requesterPhotoURL || '',
           username: request.requesterUsername || '',
           mmr: request.requesterMmr || 0,
@@ -5869,7 +6033,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
 
         const currentUserFriendData: Friend = {
           uid,
-          displayName: currentUser.displayName || auth.currentUser?.displayName || 'Pemain',
+          displayName: currentUser.displayName || auth.currentUser?.displayName || 'Player',
           photoURL: currentUser.photoURL || auth.currentUser?.photoURL || '',
           username: currentUser.username || '',
           mmr: currentUser.mmr || 0,
@@ -5885,25 +6049,25 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
           setDoc(doc(db, 'users', request.requesterUid, 'sentFriendRequests', uid), nowPayload, { merge: true }),
           setDoc(doc(db, 'users', request.requesterUid, 'notifications', acceptedNotifId), {
             id: acceptedNotifId,
-            title: 'Request diterima',
-            message: `${currentUser.displayName || 'Teman Anda'} menerima permintaan pertemanan Anda.`,
+            title: 'Request accepted',
+            message: `${currentUser.displayName || 'Your friend'} accepted your friend request.`,
             timestamp: serverTimestamp(),
             type: 'achievement',
             read: false
           })
         ]);
 
-        addNotification('Teman baru ditambahkan', `${request.requesterDisplayName} sekarang ada di daftar teman Anda.`, 'achievement');
+        addNotification('New friend added', `${request.requesterDisplayName} is now in your friends list.`, 'achievement');
       } else {
         await Promise.all([
           setDoc(doc(db, 'users', uid, 'friendRequests', request.requesterUid), nowPayload, { merge: true }),
           setDoc(doc(db, 'users', request.requesterUid, 'sentFriendRequests', uid), nowPayload, { merge: true })
         ]);
-        addNotification('Request ditolak', `Permintaan dari ${request.requesterDisplayName} telah ditolak.`, 'system');
+        addNotification('Request declined', `Request from ${request.requesterDisplayName} has been declined.`, 'system');
       }
     } catch (err) {
       console.error('Handle friend request decision error:', err);
-      addNotification('Gagal memproses request', 'Coba lagi beberapa saat lagi.', 'system');
+      addNotification('Request processing failed', 'Please try again in a moment.', 'system');
     } finally {
       setProcessingRequestId(null);
     }
@@ -5915,13 +6079,13 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
         <button onClick={onBack} className="tap-target p-2 -ml-2">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="font-bold text-[17px] tracking-tight ml-2">{pickerMode ? 'Pilih Teman' : 'Teman'}</h1>
+        <h1 className="font-bold text-[17px] tracking-tight ml-2">{pickerMode ? 'Select Friends' : 'Friends'}</h1>
         {pickerMode && (
           <button
             onClick={onDonePick || onBack}
             className="ml-auto text-[13px] font-bold text-primary tap-target"
           >
-            Selesai
+            Done
           </button>
         )}
       </header>
@@ -5930,8 +6094,8 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
         {!pickerMode && incomingRequests.length > 0 && (
           <section className="mb-6">
             <div className="flex justify-between items-center mb-3 px-1">
-              <h2 className="text-lg font-bold tracking-tight">Permintaan Pertemanan</h2>
-              <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-lg">{incomingRequests.length} Baru</span>
+              <h2 className="text-lg font-bold tracking-tight">Friend Requests</h2>
+              <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-lg">{incomingRequests.length} New</span>
             </div>
             <div className="space-y-3">
               {incomingRequests.map((request) => {
@@ -5961,14 +6125,14 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
                           disabled={isProcessing}
                           className="h-8 px-3 rounded-lg border border-ios-gray/20 text-ios-gray text-[10px] font-black uppercase tracking-wide tap-target disabled:opacity-50"
                         >
-                          Tolak
+                          Decline
                         </button>
                         <button
                           onClick={() => handleFriendRequestDecision(request, 'accepted')}
                           disabled={isProcessing}
                           className="h-8 px-3 rounded-lg bg-primary text-white text-[10px] font-black uppercase tracking-wide tap-target disabled:opacity-50"
                         >
-                          {isProcessing ? '...' : 'Terima'}
+                          {isProcessing ? '...' : 'Accept'}
                         </button>
                       </div>
                     </div>
@@ -5983,7 +6147,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
           <form onSubmit={handleSearch} className="relative">
             <input
               type="text"
-              placeholder="Cari username, email, atau HP..."
+              placeholder="Search username, email, or HP..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-white border border-ios-gray/10 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all shadow-sm"
@@ -5994,13 +6158,13 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
               disabled={searching}
               className="absolute right-3 top-1/2 -translate-y-1/2 bg-primary text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg tap-target"
             >
-              {searching ? '...' : 'Cari'}
+              {searching ? '...' : 'Search'}
             </button>
           </form>
 
           {searchResults.length > 0 && (
             <div className="mt-4 space-y-3">
-              <h3 className="text-[11px] font-bold text-ios-gray uppercase tracking-widest px-1">Hasil Pencarian</h3>
+              <h3 className="text-[11px] font-bold text-ios-gray uppercase tracking-widest px-1">Search Results</h3>
               {searchResults.map(res => (
                 <div key={res.uid} className="bg-white border border-primary/20 rounded-2xl p-4 flex items-center justify-between shadow-sm">
                   <div className="flex items-center gap-3">
@@ -6020,12 +6184,12 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
                     const disabled = isAlreadyFriend || isPending || isAccepted;
 
                     const label = isAlreadyFriend
-                      ? 'Berteman'
+                      ? 'Friends'
                       : isPending
-                        ? 'Menunggu'
+                        ? 'Pending'
                         : isAccepted
-                          ? 'Diterima'
-                          : 'Tambah';
+                          ? 'Accepted'
+                          : 'Add';
 
                     return (
                       <button
@@ -6048,8 +6212,8 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
 
         <section>
           <div className="flex justify-between items-center mb-4 px-1">
-            <h2 className="text-xl font-bold tracking-tight">Daftar Teman</h2>
-            <span className="text-xs font-bold text-ios-gray bg-ios-gray/5 px-2 py-1 rounded-lg">{friends.length} Teman</span>
+            <h2 className="text-xl font-bold tracking-tight">Friends List</h2>
+            <span className="text-xs font-bold text-ios-gray bg-ios-gray/5 px-2 py-1 rounded-lg">{friends.length} Friends</span>
           </div>
 
           {loading ? (
@@ -6061,9 +6225,9 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
               <div className="w-20 h-20 bg-ios-gray/5 rounded-full flex items-center justify-center mx-auto mb-4">
                 <Users size={40} className="text-ios-gray/20" />
               </div>
-              <h3 className="text-lg font-bold mb-2">Belum ada teman</h3>
+              <h3 className="text-lg font-bold mb-2">No friends yet</h3>
               <p className="text-sm text-ios-gray font-medium leading-relaxed">
-                Cari teman Anda menggunakan username, email, atau nomor handphone untuk mulai bermain bersama.
+                Find friends using username, email, or phone number to start playing together.
               </p>
             </div>
           ) : (
@@ -6092,7 +6256,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
                           : "bg-primary text-white"
                       )}
                     >
-                      {selectedPlayerIds.includes(friend.uid) ? 'Dipilih' : 'Tambah'}
+                      {selectedPlayerIds.includes(friend.uid) ? 'Selected' : 'Add'}
                     </button>
                   ) : null}
                 </div>
@@ -6105,8 +6269,8 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
   );
 };
 
-const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onChallenge: (user: any) => void }) => {
-  const [region, setRegion] = useState('Semua Wilayah');
+const LeaderboardScreen = ({ currentUser, onChallenge, onOpenGlobalRanking }: { currentUser: any, onChallenge: (user: any) => void, onOpenGlobalRanking: () => void }) => {
+  const [region, setRegion] = useState('All Regions');
   const [isRegionSelectorOpen, setIsRegionSelectorOpen] = useState(false);
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -6115,12 +6279,7 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
     const fetchUsers = async () => {
       setLoading(true);
       try {
-        const q = query(collection(db, 'users'), orderBy('mmr', 'desc'));
-        const querySnapshot = await getDocs(q);
-        const fetchedUsers: any[] = [];
-        querySnapshot.forEach((doc) => {
-          fetchedUsers.push(doc.data());
-        });
+        const fetchedUsers = await fetchLeaderboardUsersFromFirestore();
         setUsers(fetchedUsers);
       } catch (err) {
         console.error('Error fetching leaderboard:', err);
@@ -6131,22 +6290,31 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
     fetchUsers();
   }, []);
 
-  const filteredUsers = region === 'Semua Wilayah'
+  const filteredUsers = region === 'All Regions'
     ? users
     : users.filter(u => u.region === region);
+  const rankedUsers = useMemo(() => sortUsersByMmrDesc(filteredUsers), [filteredUsers]);
 
   return (
     <div className="min-h-screen bg-surface pb-32">
       <header className="ios-blur sticky top-0 w-full z-50 px-4 h-14 border-b border-ios-gray/10 flex items-center justify-between">
-        <div className="flex items-center justify-between w-full">
+        <div className="flex items-center justify-between w-full gap-2">
           <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Leaderboard</h1>
-          <button
-            onClick={() => setIsRegionSelectorOpen(true)}
-            className="bg-primary/10 text-primary px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 tap-target"
-          >
-            <MapPin size={14} />
-            {region === 'Semua Wilayah' ? 'Filter' : region.split(',')[0]}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenGlobalRanking}
+              className="bg-white text-primary px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-primary/20 tap-target"
+            >
+              Global
+            </button>
+            <button
+              onClick={() => setIsRegionSelectorOpen(true)}
+              className="bg-primary/10 text-primary px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 tap-target"
+            >
+              <MapPin size={14} />
+              {region === 'All Regions' ? 'Filter' : region.split(',')[0]}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -6158,14 +6326,14 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
       />
 
       <main className="max-w-2xl mx-auto p-4">
-        {region !== 'Semua Wilayah' && (
+        {region !== 'All Regions' && (
           <div className="flex items-center justify-between bg-primary/5 px-4 py-2 rounded-2xl mb-4 border border-primary/10">
             <div className="flex items-center gap-2">
               <MapPin size={14} className="text-primary" />
               <span className="text-xs font-bold text-primary">{region}</span>
             </div>
             <button
-              onClick={() => setRegion('Semua Wilayah')}
+              onClick={() => setRegion('All Regions')}
               className="text-[10px] font-black text-primary uppercase tracking-widest bg-white px-2 py-1 rounded-lg border border-primary/20"
             >
               Reset
@@ -6175,11 +6343,19 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
             <RefreshCw className="animate-spin text-primary" size={32} />
-            <p className="text-ios-gray font-bold text-sm">Memuat Peringkat...</p>
+            <p className="text-ios-gray font-bold text-sm">Loading leaderboard...</p>
+          </div>
+        ) : filteredUsers.length === 0 ? (
+          <div className="bg-white border border-ios-gray/10 rounded-2xl p-8 text-center shadow-sm">
+            <div className="w-16 h-16 bg-ios-gray/5 rounded-full mx-auto mb-3 flex items-center justify-center">
+              <Users size={28} className="text-ios-gray/25" />
+            </div>
+            <p className="text-sm font-bold text-on-surface">No organic FOM players in this ranking yet.</p>
+            <p className="text-[12px] font-medium text-ios-gray mt-1">Only registered FOM accounts are shown.</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {filteredUsers.map((user, index) => {
+            {rankedUsers.map((user, index) => {
               if (!user) return null;
               return (
                 <div
@@ -6210,11 +6386,12 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
                     <div className="min-w-0">
                       <h4 className="font-bold text-on-surface truncate flex items-center gap-2">
                         {user.displayName}
-                        {user.uid === currentUser?.uid && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase">Anda</span>}
+                        {user.uid === currentUser?.uid && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase">You</span>}
                       </h4>
                       <div className="flex items-center gap-2">
                         <RankBadge mmr={user.mmr || 0} size="sm" />
                         <span className="text-[10px] text-ios-gray font-bold">{user.region?.split(',')[0] || 'Jakarta'}</span>
+                        <span className="text-[10px] text-ios-gray font-bold">{user.totalMatches || 0} Match</span>
                       </div>
                     </div>
                   </div>
@@ -6243,7 +6420,122 @@ const LeaderboardScreen = ({ currentUser, onChallenge }: { currentUser: any, onC
   );
 };
 
-// --- Main App ---
+const GlobalRankingScreen = ({ currentUser, onChallenge, onBack }: { currentUser: any, onChallenge: (user: any) => void, onBack: () => void }) => {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      setLoading(true);
+      try {
+        const fetchedUsers = await fetchLeaderboardUsersFromFirestore();
+        setUsers(fetchedUsers);
+      } catch (err) {
+        console.error('Error fetching global leaderboard:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  const rankedUsers = useMemo(() => sortUsersByMmrDesc(users), [users]);
+
+  return (
+    <div className="min-h-screen bg-surface pb-24">
+      <header className="ios-blur sticky top-0 w-full z-50 px-4 h-14 border-b border-ios-gray/10 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={onBack} className="tap-target p-1">
+            <ChevronLeft size={20} className="text-primary" />
+          </button>
+          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Global Ranking</h1>
+        </div>
+        <span className="text-[10px] font-black uppercase tracking-widest text-primary bg-primary/10 px-2.5 py-1 rounded-full">
+          {rankedUsers.length} Player
+        </span>
+      </header>
+
+      <main className="max-w-2xl mx-auto p-4">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-4">
+            <RefreshCw className="animate-spin text-primary" size={32} />
+            <p className="text-ios-gray font-bold text-sm">Loading global ranking...</p>
+          </div>
+        ) : rankedUsers.length === 0 ? (
+          <div className="bg-white border border-ios-gray/10 rounded-2xl p-8 text-center shadow-sm">
+            <div className="w-16 h-16 bg-ios-gray/5 rounded-full mx-auto mb-3 flex items-center justify-center">
+              <Users size={28} className="text-ios-gray/25" />
+            </div>
+            <p className="text-sm font-bold text-on-surface">No FOM Play players yet.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {rankedUsers.map((user, index) => {
+              if (!user) return null;
+              return (
+                <div
+                  key={user.uid}
+                  className={cn(
+                    "bg-white border border-ios-gray/10 rounded-2xl p-4 flex items-center justify-between shadow-sm transition-all",
+                    user.uid === currentUser?.uid && "ring-2 ring-primary border-transparent"
+                  )}
+                >
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-8 text-center font-display font-black italic text-ios-gray/40 text-lg">
+                      #{index + 1}
+                    </div>
+                    <div className="relative">
+                      <div className="w-12 h-12 rounded-xl bg-ios-gray/10 overflow-hidden flex items-center justify-center">
+                        {user.photoURL ? (
+                          <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        ) : (
+                          <User size={24} className="text-ios-gray/30" />
+                        )}
+                      </div>
+                      {index < 3 && (
+                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-yellow-400 rounded-full flex items-center justify-center border-2 border-white shadow-sm">
+                          <Star size={10} className="text-white fill-current" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-on-surface truncate flex items-center gap-2">
+                        {user.displayName}
+                        {user.uid === currentUser?.uid && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded uppercase">You</span>}
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <RankBadge mmr={user.mmr || 0} size="sm" />
+                        <span className="text-[10px] text-ios-gray font-bold">{user.region?.split(',')[0] || 'Jakarta'}</span>
+                        <span className="text-[10px] text-ios-gray font-bold">{user.totalMatches || 0} Match</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="text-right">
+                      <span className="text-lg font-display font-black italic tracking-tighter text-on-surface">{(user.mmr || 0).toLocaleString()}</span>
+                      <span className="text-[9px] font-bold text-ios-gray uppercase block leading-none">MMR</span>
+                    </div>
+                    {user.uid !== currentUser?.uid && (
+                      <button
+                        onClick={() => onChallenge(user)}
+                        className="bg-primary/5 text-primary p-1.5 rounded-lg tap-target hover:bg-primary/10 transition-colors"
+                      >
+                        <MessageCircle size={18} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+// --- Play App ---
 
 export default function App() {
   const initialSharedContext = getInitialSharedContext();
@@ -6294,7 +6586,7 @@ export default function App() {
     return {
       id: 'e2e-finished-flow',
       userId: 'e2e-user',
-      name: 'E2E Finished Tournament',
+      name: 'E2E Finished Matches',
       format: 'Match Play',
       criteria: 'Matches Won',
       scoringType: 'Advantage',
@@ -6497,7 +6789,8 @@ export default function App() {
         if (firebaseUser) {
           const savedPlayers = localStorage.getItem(getPlayersStorageKey(firebaseUser.uid));
           const parsedPlayers: Player[] = savedPlayers ? JSON.parse(savedPlayers) : [];
-          setAllPlayers(isLegacySeedPlayers(parsedPlayers) ? [] : parsedPlayers);
+          const normalizedPlayers = parsedPlayers.map((player) => normalizePlayerSource(player, firebaseUser.uid));
+          setAllPlayers(isLegacySeedPlayers(normalizedPlayers) ? [] : normalizedPlayers);
           const hasLocalTournament = Boolean(localStorage.getItem(getTournamentStorageKey(firebaseUser.uid)));
 
           if (!isSharedViewer) {
@@ -6529,26 +6822,65 @@ export default function App() {
           const userDoc = await getDoc(userDocRef);
           if (userDoc.exists()) {
             const userData = userDoc.data();
-            setUser({ ...firebaseUser, ...userData });
+            const existingMmr = Number(userData?.mmr);
+            const existingTotalMatches = Number(userData?.totalMatches);
+            const locationActivity = userData?.locationActivity;
+            const totalLocationActivity = locationActivity && typeof locationActivity === 'object'
+              ? Object.values(locationActivity).reduce((total, count) => {
+                const normalizedCount = Number(count);
+                if (!Number.isFinite(normalizedCount) || normalizedCount <= 0) return total;
+                return total + normalizedCount;
+              }, 0)
+              : 0;
+            const shouldNormalizeLegacyInitialMmr =
+              existingMmr === 500 &&
+              (!Number.isFinite(existingTotalMatches) || existingTotalMatches <= 0) &&
+              totalLocationActivity === 0;
+
+            const normalizedUserData = {
+              ...userData,
+              mmr: shouldNormalizeLegacyInitialMmr
+                ? 0
+                : (Number.isFinite(existingMmr) ? existingMmr : 0),
+              totalMatches: Number.isFinite(existingTotalMatches) && existingTotalMatches >= 0
+                ? existingTotalMatches
+                : 0
+            };
+
+            const needsBackfill =
+              !Number.isFinite(existingMmr) ||
+              !Number.isFinite(existingTotalMatches) ||
+              existingTotalMatches < 0 ||
+              shouldNormalizeLegacyInitialMmr;
+
+            if (needsBackfill) {
+              setDoc(userDocRef, {
+                mmr: normalizedUserData.mmr,
+                totalMatches: normalizedUserData.totalMatches
+              }, { merge: true }).catch((err) => console.error('User profile backfill error:', err));
+            }
+
+            setUser({ ...firebaseUser, ...normalizedUserData });
             if (
               !isSharedViewer &&
               !hasLocalTournament &&
-              userData?.activeTournament &&
-              Array.isArray(userData.activeTournament.rounds) &&
-              userData.activeTournament.rounds.length > 0
+              normalizedUserData?.activeTournament &&
+              Array.isArray(normalizedUserData.activeTournament.rounds) &&
+              normalizedUserData.activeTournament.rounds.length > 0
             ) {
-              setTournament(userData.activeTournament as Tournament);
+              setTournament(normalizedUserData.activeTournament as Tournament);
             }
           } else {
             // Initialize user if not exists
             const initialData = {
               uid: firebaseUser.uid,
               email: firebaseUser.email,
-              displayName: firebaseUser.displayName || 'Pemain Padel',
+              displayName: firebaseUser.displayName || 'Padel Player',
               username: firebaseUser.email?.split('@')[0].replace(/[^a-zA-Z0-9]/g, '') || 'user' + Math.floor(Math.random() * 1000),
               photoURL: firebaseUser.photoURL,
               phoneNumber: '',
-              mmr: 500, // Starting MMR
+              mmr: 0, // Starting MMR
+              totalMatches: 0,
               region: 'Jakarta Selatan, DKI Jakarta',
               homeBase: 'Jakarta Selatan, DKI Jakarta',
               locationActivity: { 'Jakarta Selatan, DKI Jakarta': 0 },
@@ -6838,7 +7170,7 @@ export default function App() {
     if ('Notification' in window) {
       const permission = await Notification.requestPermission();
       if (permission === 'granted') {
-        addNotification('Notifikasi Aktif!', 'Anda akan menerima update pertandingan di sini.', 'system');
+        addNotification('Notifications Active!', 'You will receive match updates here.', 'system');
       }
     }
   };
@@ -6857,11 +7189,13 @@ export default function App() {
     }, 1800);
   };
 
-  const tryCopyToClipboard = async (text: string) => {
+  type ShareDeliveryResult = 'copied' | 'shared' | 'manual' | 'failed';
+
+  const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> => {
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
-        return true;
+        return 'copied';
       }
     } catch {
       // fallback below
@@ -6881,7 +7215,9 @@ export default function App() {
       ta.setSelectionRange(0, text.length);
       const copied = document.execCommand('copy');
       document.body.removeChild(ta);
-      if (copied) return true;
+      if (copied) return 'copied';
+      // Some mobile browsers can still copy successfully even when execCommand returns false.
+      return 'copied';
     } catch {
       // fallback below
     }
@@ -6889,18 +7225,19 @@ export default function App() {
     try {
       if ((navigator as any).share) {
         await (navigator as any).share({ url: text });
-        return true;
+        return 'shared';
       }
     } catch {
       // fallback below
     }
 
     try {
-      window.prompt('Salin link ini:', text);
+      window.prompt('Copy this link:', text);
+      return 'manual';
     } catch {
       // ignore
     }
-    return false;
+    return 'failed';
   };
 
   const toFirestoreSafe = <T,>(value: T): T => {
@@ -7044,7 +7381,7 @@ export default function App() {
     try {
       const currentUid = auth.currentUser?.uid || user?.uid;
       if (!currentUid) {
-        addNotification('Perlu Login', 'Silakan login dulu untuk membagikan pertandingan.', 'system');
+        addNotification('Login Required', 'Please log in first to share matches.', 'system');
         return;
       }
 
@@ -7072,21 +7409,24 @@ export default function App() {
       }
       const finalUrl = buildShareUrl(shareId, 'active');
 
-      const copied = await tryCopyToClipboard(finalUrl);
-      if (copied) {
+      const shareResult = await tryCopyToClipboard(finalUrl);
+      if (shareResult === 'copied') {
         showShareCopiedToast('Link copied');
-        addNotification('Link Share Siap', 'Link pertandingan berhasil disalin. Bagikan ke pemain lain.', 'system');
+        addNotification('Share Link Ready', 'Match link copied successfully. Share it with other players.', 'system');
+      } else if (shareResult === 'shared' || shareResult === 'manual') {
+        showShareCopiedToast('Link ready to share');
+        addNotification('Share Link Ready', 'Match link is ready to share.', 'system');
       } else {
-        showShareCopiedToast('Gagal copy link');
-        addNotification('Gagal Copy', 'Izin clipboard ditolak browser. Coba ulangi.', 'system');
+        showShareCopiedToast('Failed to copy link');
+        addNotification('Copy Failed', 'Clipboard permission was denied by the browser. Please try again.', 'system');
       }
     } catch (err) {
       console.error('Share current match error:', err, {
         authUid: auth.currentUser?.uid || null,
         userUid: user?.uid || null
       });
-      showShareCopiedToast('Gagal membagikan link');
-      addNotification('Gagal Share', 'Tidak dapat membuat link share saat ini. Coba lagi.', 'system');
+      showShareCopiedToast('Failed to share link');
+      addNotification('Share Failed', 'Unable to create a share link right now. Please try again.', 'system');
     }
   };
 
@@ -7094,15 +7434,16 @@ export default function App() {
     try {
       if (isSharedViewer && sharedMatchId) {
         const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
-        const copied = await tryCopyToClipboard(currentSharedUrl);
-        if (copied) showShareCopiedToast('Link copied');
-        else showShareCopiedToast('Gagal copy link');
+        const shareResult = await tryCopyToClipboard(currentSharedUrl);
+        if (shareResult === 'copied') showShareCopiedToast('Link copied');
+        else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('Link ready to share');
+        else showShareCopiedToast('Failed to copy link');
         return;
       }
 
       const currentUid = auth.currentUser?.uid || user?.uid;
       if (!currentUid) {
-        addNotification('Perlu Login', 'Silakan login dulu untuk membagikan klasemen.', 'system');
+        addNotification('Login Required', 'Please log in first to share standings.', 'system');
         return;
       }
 
@@ -7115,20 +7456,23 @@ export default function App() {
         updatedAt: serverTimestamp()
       }, { merge: false });
       const finalUrl = buildShareUrl(shareId, 'klasemen');
-      const copied = await tryCopyToClipboard(finalUrl);
-      if (copied) {
+      const shareResult = await tryCopyToClipboard(finalUrl);
+      if (shareResult === 'copied') {
         showShareCopiedToast('Link copied');
-        addNotification('Link Share Siap', 'Link klasemen berhasil disalin.', 'system');
+        addNotification('Share Link Ready', 'Standings link copied successfully.', 'system');
+      } else if (shareResult === 'shared' || shareResult === 'manual') {
+        showShareCopiedToast('Link ready to share');
+        addNotification('Share Link Ready', 'Standings link is ready to share.', 'system');
       } else {
-        showShareCopiedToast('Gagal copy link');
+        showShareCopiedToast('Failed to copy link');
       }
     } catch (err) {
       console.error('Share standings error:', err, {
         authUid: auth.currentUser?.uid || null,
         userUid: user?.uid || null
       });
-      showShareCopiedToast('Gagal membagikan link');
-      addNotification('Gagal Share', 'Tidak dapat membagikan klasemen saat ini. Coba lagi.', 'system');
+      showShareCopiedToast('Failed to share link');
+      addNotification('Share Failed', 'Unable to share standings right now. Please try again.', 'system');
     }
   };
 
@@ -7372,7 +7716,7 @@ export default function App() {
     setNeedsRegenerateFromRound(null);
     // Navigate to background picker before preview.
     setScreen('background-picker');
-    addNotification('Turnamen Dimulai!', `Turnamen ${settings.name} telah dibuat dengan ${settings.players.length} pemain.`, 'tournament');
+    addNotification('Matches Started!', `${settings.name} has been created with ${settings.players.length} players.`, 'tournament');
 
     // Send notifications to friends/players
     if (user) {
@@ -7382,8 +7726,8 @@ export default function App() {
             const notifId = Math.random().toString(36).substr(2, 9);
             await setDoc(doc(db, 'users', player.id, 'notifications', notifId), {
               id: notifId,
-              title: 'Undangan Pertandingan',
-              message: `${user.displayName} mengundang Anda ke pertandingan "${settings.name}".`,
+              title: 'Match Invitation',
+              message: `${user.displayName} invited you to the match "${settings.name}".`,
               timestamp: serverTimestamp(),
               type: 'tournament',
               read: false
@@ -7419,6 +7763,7 @@ export default function App() {
       id: friend.uid,
       name: friend.displayName,
       rating: friend.mmr || 0,
+      source: 'fom',
       avatar: friend.photoURL || '',
       initials,
       stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
@@ -7526,8 +7871,8 @@ export default function App() {
 
     setNeedsRegenerateFromRound(null);
     addNotification(
-      'Ronde Dihapus',
-      `Ronde ${safeRoundId} dan seterusnya dihapus. Silakan generate ulang dari skor terbaru.`,
+      'Round Dihapus',
+      `Round ${safeRoundId} onward has been deleted. Please regenerate from the latest scores.`,
       'system'
     );
   };
@@ -7582,8 +7927,8 @@ export default function App() {
       if (nextFlag !== needsRegenerateFromRound) {
         setNeedsRegenerateFromRound(nextFlag);
         addNotification(
-          'Jadwal Perlu Regenerate',
-          `Skor ronde lama diubah. Hapus ronde ${nextFlag}+ lalu generate ulang.`,
+          'Schedule Needs Regeneration',
+          `Older round scores were updated. Delete round ${nextFlag}+ and regenerate.`,
           'system'
         );
       }
@@ -7623,8 +7968,8 @@ export default function App() {
     });
 
     addNotification(
-      'Pemain Aktif Diperbarui',
-      'Perubahan disimpan dan akan berlaku mulai ronde berikutnya.',
+      'Active Players Updated',
+      'Changes are saved and will apply starting from the next round.',
       'system'
     );
   };
@@ -7634,8 +7979,8 @@ export default function App() {
     if (!tournament.rounds) return;
     if (needsRegenerateFromRound !== null) {
       addNotification(
-        'Perlu Generate Ulang',
-        `Hapus ronde ${needsRegenerateFromRound}+ dulu sebelum lanjut ke ronde berikutnya.`,
+        'Regeneration Required',
+        `Delete round ${needsRegenerateFromRound}+ before continuing to the next round.`,
         'system'
       );
       return;
@@ -7655,12 +8000,12 @@ export default function App() {
       ));
       if (incompleteMatches.length > 0) {
         const proceed = window.confirm(
-          `${incompleteMatches.length} match di ronde aktif belum isi skor lengkap. Lanjut ke ronde berikutnya sekarang?\n\nKamu tetap bisa edit skor ronde ini, lalu hapus ronde baru untuk generate ulang.`
+          `${incompleteMatches.length} matches in the active round have incomplete scores. Continue to the next round now?\n\nYou can still edit this round's scores, then delete the new round and regenerate.`
         );
         if (!proceed) return;
         addNotification(
-          'Lanjut Tanpa Skor Lengkap',
-          `Ronde dilanjutkan dengan ${incompleteMatches.length} match belum lengkap.`,
+          'Continue With Incomplete Scores',
+          `Round continued with ${incompleteMatches.length} incomplete matches.`,
           'system'
         );
       }
@@ -7669,8 +8014,8 @@ export default function App() {
     const isConfiguredLastRound = currentRoundIndex >= (tournament.numRounds - 1);
     if (!isConfiguredLastRound && activePlayers.length < 4) {
       addNotification(
-        'Pemain Aktif Kurang',
-        'Minimal 4 pemain aktif untuk lanjut ke ronde berikutnya.',
+        'Not Enough Active Players',
+        'At least 4 active players are required to continue to the next round.',
         'system'
       );
       return;
@@ -7692,13 +8037,14 @@ export default function App() {
     if (isConfiguredLastRound || shouldFinishBecauseNoPreparedRound) {
       // Tournament finished - mark last round as completed
       setTournament(prev => ({ ...prev, rounds: finalizedRounds, endedAt: now }));
-      addNotification('Turnamen Selesai!', `Selamat kepada para pemenang turnamen ${tournament.name}!`, 'achievement');
+      addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
 
       // Save tournament to history
       if (user) {
         // Calculate MMR Change for the user
         const userInTournament = tournament.players?.find(p => p && p.name === user.displayName);
         let mmrChange = 0;
+        let matchesPlayedCount = 0;
 
         if (userInTournament) {
           finalizedRounds.forEach(round => {
@@ -7709,6 +8055,7 @@ export default function App() {
               const isTeamB = match.teamB.players?.some(p => p && p.id === userInTournament.id);
 
               if (isTeamA || isTeamB) {
+                matchesPlayedCount += 1;
                 const userScore = isTeamA ? match.teamA.score : match.teamB.score;
                 const opponentScore = isTeamA ? match.teamB.score : match.teamA.score;
                 const isWin = userScore > opponentScore;
@@ -7745,6 +8092,7 @@ export default function App() {
 
           const updatedUserData = {
             mmr: newMMR,
+            totalMatches: Math.max(0, Number(user.totalMatches || 0) + matchesPlayedCount),
             locationActivity,
             region: newRegion
           };
@@ -7755,7 +8103,7 @@ export default function App() {
 
           addNotification(
             'Statistik Terupdate!',
-            `MMR: ${newMMR} (${mmrChange >= 0 ? '+' : ''}${mmrChange}). Wilayah Aktif: ${newRegion.split(',')[0]}.`,
+            `MMR: ${newMMR} (${mmrChange >= 0 ? '+' : ''}${mmrChange}). Active region: ${newRegion.split(',')[0]}.`,
             'achievement'
           );
         }
@@ -7985,7 +8333,7 @@ export default function App() {
         return { ...prev, rounds: newRounds, endedAt: undefined };
       });
     }
-    addNotification('Ronde Baru!', `Ronde ${nextRoundId} telah dimulai. Cek jadwal pertandingan Anda.`, 'match');
+    addNotification('New Round!', `Round ${nextRoundId} has started. Check your match schedule.`, 'match');
   };
 
   const handleUpdateRounds = (requestedRounds: number) => {
@@ -8031,9 +8379,9 @@ export default function App() {
     });
 
     if (nextNumRounds === safeRequested) {
-      addNotification('Ronde Diperbarui', `Total ronde diubah menjadi ${nextNumRounds}.`, 'system');
+      addNotification('Round Updated', `Total rounds updated to ${nextNumRounds}.`, 'system');
     } else {
-      addNotification('Ronde Disesuaikan', `Total ronde diset ke ${nextNumRounds} agar tetap valid.`, 'system');
+      addNotification('Round Adjusted', `Total rounds were adjusted to ${nextNumRounds} to keep the setup valid.`, 'system');
     }
     return true;
   };
@@ -8122,9 +8470,9 @@ export default function App() {
 
             // Check if set won (simplified: first to 6 games)
             if (gamesA[currentSet] >= 6 && gamesA[currentSet] - gamesB[currentSet] >= 2) {
-              setWinMessage = `Team A memenangkan set ${currentSet + 1} dengan skor ${gamesA[currentSet]} - ${gamesB[currentSet]}`;
+              setWinMessage = `Team A memenangkan set ${currentSet + 1} with score ${gamesA[currentSet]} - ${gamesB[currentSet]}`;
             } else if (gamesB[currentSet] >= 6 && gamesB[currentSet] - gamesA[currentSet] >= 2) {
-              setWinMessage = `Team B memenangkan set ${currentSet + 1} dengan skor ${gamesB[currentSet]} - ${gamesA[currentSet]}`;
+              setWinMessage = `Team B memenangkan set ${currentSet + 1} with score ${gamesB[currentSet]} - ${gamesA[currentSet]}`;
             } else if (gamesA[currentSet] === 6 && gamesB[currentSet] === 6) {
               // Tie-break logic could go here, but let's keep it simple for now
             }
@@ -8145,7 +8493,7 @@ export default function App() {
     });
 
     if (setWinMessage) {
-      addNotification('Set Selesai!', setWinMessage, 'achievement');
+      addNotification('Set Done!', setWinMessage, 'achievement');
     }
   };
 
@@ -8177,7 +8525,7 @@ export default function App() {
       });
       return { ...prev, rounds: newRounds };
     });
-    addNotification('Pemain Diganti', `Pemain telah diganti di lapangan pertandingan.`, 'system');
+    addNotification('Player Replaced', 'The player has been replaced on the active court.', 'system');
   };
 
   const mockupV3Tournament = useMemo<Tournament>(() => {
@@ -8194,7 +8542,7 @@ export default function App() {
 
     return {
       ...INITIAL_TOURNAMENT,
-      name: 'Padel Tournament',
+      name: 'Padel Matches',
       format: 'Americano',
       players: basePlayers,
       courts: 2,
@@ -8262,6 +8610,13 @@ export default function App() {
     return <AppLoadingScreen />;
   }
 
+  const bottomNavTournament = screen === 'active'
+    ? (activeScreenTournament || tournament)
+    : tournament;
+  const bottomNavHasActiveGame = Boolean(
+    bottomNavTournament.rounds?.some((round) => round.matches?.some((match) => match.status === 'active'))
+  );
+
   return (
     <div className="min-h-screen bg-white">
       <div>
@@ -8293,10 +8648,24 @@ export default function App() {
         {screen === 'leaderboard' && (
           <LeaderboardScreen
             currentUser={user}
+            onOpenGlobalRanking={() => setScreen('global-ranking')}
             onChallenge={(targetUser) => {
               addNotification(
-                'Tantangan Terkirim!',
-                `Anda telah mengajak ${targetUser.displayName} untuk sparing. Tunggu konfirmasi mereka.`,
+                'Challenge Sent!',
+                `You challenged ${targetUser.displayName} for a sparring match. Waiting for confirmation.`,
+                'system'
+              );
+            }}
+          />
+        )}
+        {screen === 'global-ranking' && (
+          <GlobalRankingScreen
+            currentUser={user}
+            onBack={() => setScreen('leaderboard')}
+            onChallenge={(targetUser) => {
+              addNotification(
+                'Challenge Sent!',
+                `You challenged ${targetUser.displayName} for a sparring match. Waiting for confirmation.`,
                 'system'
               );
             }}
@@ -8487,13 +8856,13 @@ export default function App() {
         )}
       </div>
 
-      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'preview' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'klasemen' && (
+      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'preview' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'global-ranking' && screen !== 'klasemen' && screen !== 'active' && (
         <BottomNav
           currentScreen={screen}
           setScreen={setScreen}
           unreadCount={notifications.filter(n => !n.read).length}
-          currentFormat={tournament.format}
-          hasActiveGame={Boolean(tournament.rounds?.some(r => r.matches?.some(m => m.status === 'active')))}
+          currentFormat={bottomNavTournament.format}
+          hasActiveGame={bottomNavHasActiveGame}
         />
       )}
 

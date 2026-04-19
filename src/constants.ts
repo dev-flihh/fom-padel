@@ -90,6 +90,7 @@ export const INITIAL_TOURNAMENT: Tournament = {
   courts: 1,
   totalPoints: 21,
   players: [],
+  inactivePlayerIds: [],
   rounds: [],
   numRounds: 5
 };

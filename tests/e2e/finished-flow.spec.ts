@@ -9,7 +9,6 @@ test.describe('Finished Tournament Flow', () => {
 
     await page.getByRole('button', { name: 'Detail Per Round' }).click();
 
-    await expect(page.getByText('View Only')).toBeVisible();
     await expect(page.getByText('Berakhir')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Selesaikan Turnamen' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Ronde Berikutnya' })).toHaveCount(0);

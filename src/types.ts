@@ -6,6 +6,7 @@ export interface Player {
   id: string;
   name: string;
   rating: number;
+  source?: 'fom' | 'manual';
   avatar?: string;
   initials: string;
   team?: string;
@@ -94,6 +95,7 @@ export interface UserProfile {
   phoneNumber?: string;
   photoURL?: string;
   mmr: number;
+  totalMatches?: number;
   region?: string; // This will be the "Active Zone" (most played location)
   homeBase?: string; // This is the manual input (domicile)
   locationActivity?: Record<string, number>; // Track frequency of play in each location
@@ -129,7 +131,7 @@ export interface FriendRequest {
   resolvedAt?: any;
 }
 
-export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'preview' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
+export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'preview' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'global-ranking' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
 
 export interface AppNotification {
   id: string;
