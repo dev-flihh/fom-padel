@@ -6097,7 +6097,30 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
         const data = docSnap.data() as FriendRequest;
         if (data.status === 'pending') fetched.push(data);
       });
-      setIncomingRequests(fetched);
+      if (fetched.length === 0) {
+        setIncomingRequests([]);
+        return;
+      }
+
+      fetchPlayerStatsMapByUids(fetched.map((item) => item.requesterUid))
+        .then((statsByUid) => {
+          setIncomingRequests(
+            fetched.map((item) => {
+              const stats = statsByUid.get(item.requesterUid);
+              const statsMmr = Number(stats?.mmr);
+              return {
+                ...item,
+                requesterMmr: Number.isFinite(statsMmr)
+                  ? Math.max(0, statsMmr)
+                  : Number(item?.requesterMmr || 0)
+              };
+            })
+          );
+        })
+        .catch((err) => {
+          console.error('Incoming friend requests stats enrichment error:', err);
+          setIncomingRequests(fetched);
+        });
     }, (error) => {
       console.error('Incoming friend requests snapshot error:', error);
       setIncomingRequests([]);
@@ -6129,7 +6152,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
               displayName: data.targetDisplayName || 'Friends',
               photoURL: data.targetPhotoURL || '',
               username: data.targetUsername || '',
-              mmr: data.targetMmr || 0,
+              mmr: 0,
               addedAt: serverTimestamp(),
               lastPlayedAt: null
             }
@@ -6237,11 +6260,9 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
         requesterDisplayName: currentUser.displayName || auth.currentUser?.displayName || 'Player',
         requesterPhotoURL: currentUser.photoURL || auth.currentUser?.photoURL || '',
         requesterUsername: currentUser.username || '',
-        requesterMmr: currentUser.mmr || 0,
         targetDisplayName: targetUser.displayName || '',
         targetPhotoURL: targetUser.photoURL || '',
         targetUsername: targetUser.username || '',
-        targetMmr: targetUser.mmr || 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
@@ -6374,6 +6395,9 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
             <div className="space-y-3">
               {incomingRequests.map((request) => {
                 const isProcessing = processingRequestId === request.requesterUid;
+                const requesterMmr = Number.isFinite(Number(request.requesterMmr))
+                  ? Math.max(0, Number(request.requesterMmr))
+                  : 0;
                 return (
                   <div key={request.requesterUid} className="bg-white border border-primary/20 rounded-2xl p-4 shadow-sm">
                     <div className="flex items-center justify-between gap-3">
@@ -6388,7 +6412,7 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
                         <div className="min-w-0">
                           <p className="font-bold text-sm text-on-surface truncate">{request.requesterDisplayName}</p>
                           <div className="flex items-center gap-2 mt-0.5">
-                            <RankBadge mmr={request.requesterMmr || 0} size="sm" />
+                            <RankBadge mmr={requesterMmr} size="sm" />
                             <span className="text-[10px] text-ios-gray font-bold truncate">@{request.requesterUsername || 'user'}</span>
                           </div>
                         </div>
