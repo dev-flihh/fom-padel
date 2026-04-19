@@ -40,7 +40,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { cn } from './lib/utils';
-import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus } from './types';
+import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus, CourtChange } from './types';
 import { INITIAL_PLAYERS, INITIAL_TOURNAMENT } from './constants';
 import { auth, db, googleProvider, appleProvider } from './firebase';
 import { getScreenRoute, resolveTrackableButton, syncAnalyticsUser, trackButtonClick, trackPageView } from './analytics';
@@ -137,6 +137,8 @@ const getRankInfo = (mmr: number) => {
 };
 
 const MANUAL_PLAYER_ID_PREFIX = 'manual_';
+const PLAYER_STATS_COLLECTION = 'player_stats';
+const PLAYER_MATCH_LEDGER_COLLECTION = 'player_match_ledger';
 
 const isLikelyFirebaseUid = (value?: string | null) => /^[A-Za-z0-9_-]{20,}$/.test((value || '').trim());
 
@@ -173,7 +175,7 @@ const normalizeLeaderboardUser = (rawUser: any, fallbackUid: string) => {
     : 0;
   const locationActivity = rawUser?.locationActivity;
   const totalLocationActivity = locationActivity && typeof locationActivity === 'object'
-    ? Object.values(locationActivity).reduce((total, count) => {
+    ? Object.values(locationActivity).reduce<number>((total, count) => {
       const normalizedCount = Number(count);
       if (!Number.isFinite(normalizedCount) || normalizedCount <= 0) return total;
       return total + normalizedCount;
@@ -217,12 +219,64 @@ const sortUsersByMmrDesc = (users: any[]) => (
 );
 
 const fetchLeaderboardUsersFromFirestore = async () => {
-  const resolveTotalMatches = async (uid: string) => {
-    try {
-      const tournamentsQuery = query(collection(db, 'tournaments'), where('userId', '==', uid));
-      const tournamentsSnapshot = await getDocs(tournamentsQuery);
-      let totalMatches = 0;
+  try {
+    const [statsSnapshot, usersSnapshot] = await Promise.all([
+      getDocs(query(collection(db, PLAYER_STATS_COLLECTION), orderBy('mmr', 'desc'))),
+      getDocs(query(collection(db, 'users'), orderBy('mmr', 'desc')))
+    ]);
 
+    if (!statsSnapshot.empty) {
+      const userByUid = new Map<string, any>();
+      usersSnapshot.forEach((docSnap) => {
+        const normalized = normalizeLeaderboardUser(docSnap.data(), docSnap.id);
+        if (!isRegisteredFomUser(normalized)) return;
+        userByUid.set(normalized.uid, normalized);
+      });
+
+      const statsBasedUsers: any[] = [];
+      const seenUids = new Set<string>();
+      statsSnapshot.forEach((statsDoc) => {
+        const rawStats = statsDoc.data() || {};
+        const uid = typeof rawStats?.uid === 'string' && rawStats.uid.trim()
+          ? rawStats.uid.trim()
+          : statsDoc.id;
+        if (!uid) return;
+        const baseUser = userByUid.get(uid) || {};
+        const mergedUser = normalizeLeaderboardUser(
+          {
+            ...baseUser,
+            ...rawStats,
+            uid,
+            mmr: Number.isFinite(Number(rawStats?.mmr)) ? Number(rawStats.mmr) : Number(baseUser?.mmr || 0),
+            totalMatches: Number.isFinite(Number(rawStats?.totalMatches))
+              ? Number(rawStats.totalMatches)
+              : Number(baseUser?.totalMatches || 0)
+          },
+          uid
+        );
+        if (!isRegisteredFomUser(mergedUser)) return;
+        statsBasedUsers.push(mergedUser);
+        seenUids.add(uid);
+      });
+
+      userByUid.forEach((baseUser, uid) => {
+        if (seenUids.has(uid)) return;
+        statsBasedUsers.push(baseUser);
+      });
+
+      return sortUsersByMmrDesc(statsBasedUsers);
+    }
+  } catch (statsErr) {
+    console.error('Error fetching player_stats leaderboard source, falling back to legacy users:', statsErr);
+  }
+
+  const deriveMatchCountsByPlayerFromTournaments = async (targetUserIds: string[]) => {
+    const targetSet = new Set(targetUserIds);
+    const counts = new Map<string, number>();
+    targetUserIds.forEach((uid) => counts.set(uid, 0));
+
+    try {
+      const tournamentsSnapshot = await getDocs(collection(db, 'tournaments'));
       tournamentsSnapshot.forEach((tournamentDoc) => {
         const tournamentData = tournamentDoc.data();
         const rounds = Array.isArray(tournamentData?.rounds) ? tournamentData.rounds : [];
@@ -231,16 +285,56 @@ const fetchLeaderboardUsersFromFirestore = async () => {
           if (!Array.isArray(round?.matches)) return;
           round.matches.forEach((match: any) => {
             if (!match || match.status === 'pending') return;
-            totalMatches += 1;
+            const participantIds = new Set<string>();
+            const teamAPlayers = Array.isArray(match?.teamA?.players) ? match.teamA.players : [];
+            const teamBPlayers = Array.isArray(match?.teamB?.players) ? match.teamB.players : [];
+
+            [...teamAPlayers, ...teamBPlayers].forEach((player: any) => {
+              const playerId = typeof player?.id === 'string' ? player.id.trim() : '';
+              if (!playerId || !targetSet.has(playerId)) return;
+              participantIds.add(playerId);
+            });
+
+            participantIds.forEach((participantId) => {
+              counts.set(participantId, (counts.get(participantId) || 0) + 1);
+            });
           });
         });
       });
 
-      return totalMatches;
-    } catch (matchErr) {
-      console.error(`Error deriving match count for user ${uid}:`, matchErr);
-      return 0;
+      return counts;
+    } catch (err) {
+      console.error('Error deriving participant-based match counts:', err);
     }
+
+    // Fallback for stricter rulesets: count tournaments owned by each target user.
+    await Promise.all(
+      targetUserIds.map(async (uid) => {
+        try {
+          const tournamentsQuery = query(collection(db, 'tournaments'), where('userId', '==', uid));
+          const tournamentsSnapshot = await getDocs(tournamentsQuery);
+          let totalMatches = 0;
+
+          tournamentsSnapshot.forEach((tournamentDoc) => {
+            const tournamentData = tournamentDoc.data();
+            const rounds = Array.isArray(tournamentData?.rounds) ? tournamentData.rounds : [];
+            rounds.forEach((round: any) => {
+              if (!Array.isArray(round?.matches)) return;
+              round.matches.forEach((match: any) => {
+                if (!match || match.status === 'pending') return;
+                totalMatches += 1;
+              });
+            });
+          });
+
+          counts.set(uid, totalMatches);
+        } catch (matchErr) {
+          console.error(`Error deriving owner-based match count for user ${uid}:`, matchErr);
+        }
+      })
+    );
+
+    return counts;
   };
 
   const usersQuery = query(collection(db, 'users'), orderBy('mmr', 'desc'));
@@ -256,11 +350,10 @@ const fetchLeaderboardUsersFromFirestore = async () => {
 
     const hasStoredTotalMatches = Number.isFinite(Number(rawUser?.totalMatches));
     const numericStoredTotalMatches = hasStoredTotalMatches ? Number(rawUser.totalMatches) : 0;
-    const numericMmr = Number.isFinite(Number(normalizedUser?.mmr)) ? Number(normalizedUser.mmr) : 0;
     const shouldRecomputeMatches = (
       !hasStoredTotalMatches ||
       numericStoredTotalMatches < 0 ||
-      (numericStoredTotalMatches === 0 && numericMmr > 0)
+      numericStoredTotalMatches === 0
     );
 
     if (shouldRecomputeMatches) {
@@ -269,13 +362,10 @@ const fetchLeaderboardUsersFromFirestore = async () => {
   });
 
   if (usersNeedingMatchRecompute.length > 0) {
-    const derivedMatches = await Promise.all(
-      usersNeedingMatchRecompute.map(async (leaderboardUser) => ({
-        uid: leaderboardUser.uid,
-        totalMatches: await resolveTotalMatches(leaderboardUser.uid)
-      }))
-    );
-    const derivedMatchMap = new Map(derivedMatches.map((item) => [item.uid, item.totalMatches]));
+    const targetUids = usersNeedingMatchRecompute
+      .map((leaderboardUser) => leaderboardUser.uid)
+      .filter((uid): uid is string => typeof uid === 'string' && uid.trim().length > 0);
+    const derivedMatchMap = await deriveMatchCountsByPlayerFromTournaments(targetUids);
     return sortUsersByMmrDesc(
       fetchedUsers.map((leaderboardUser) => ({
         ...leaderboardUser,
@@ -285,6 +375,91 @@ const fetchLeaderboardUsersFromFirestore = async () => {
   }
 
   return sortUsersByMmrDesc(fetchedUsers);
+};
+
+const fetchTournamentHistoryForUser = async (uid: string): Promise<TournamentHistory[]> => {
+  const normalizeHistoryDate = (rawDate: any, fallbackMs?: number) => {
+    if (rawDate?.toDate) return rawDate.toDate();
+    if (rawDate instanceof Date) return rawDate;
+    if (typeof rawDate === 'number') return new Date(rawDate);
+    if (typeof rawDate === 'string') {
+      const parsed = new Date(rawDate);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date(fallbackMs || Date.now());
+  };
+
+  try {
+    const ledgerSnapshot = await getDocs(
+      query(collection(db, PLAYER_MATCH_LEDGER_COLLECTION), where('uid', '==', uid))
+    );
+    const latestPlayedAtByTournament = new Map<string, number>();
+
+    ledgerSnapshot.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      const tournamentId = typeof data?.tournamentId === 'string' ? data.tournamentId.trim() : '';
+      if (!tournamentId) return;
+      const playedAtDate = data?.playedAt?.toDate ? data.playedAt.toDate() : null;
+      const playedAtMs = playedAtDate instanceof Date && !Number.isNaN(playedAtDate.getTime())
+        ? playedAtDate.getTime()
+        : 0;
+      const prev = latestPlayedAtByTournament.get(tournamentId) || 0;
+      if (playedAtMs >= prev) latestPlayedAtByTournament.set(tournamentId, playedAtMs);
+    });
+
+    if (latestPlayedAtByTournament.size > 0) {
+      const tournamentIds = Array.from(latestPlayedAtByTournament.keys());
+      const tournamentDocs = await Promise.all(
+        tournamentIds.map(async (tournamentId) => {
+          try {
+            const tournamentRef = doc(db, 'tournaments', tournamentId);
+            const tournamentSnap = await getDoc(tournamentRef);
+            if (!tournamentSnap.exists()) return null;
+            const data = tournamentSnap.data();
+            const fallbackMs = latestPlayedAtByTournament.get(tournamentId) || Date.now();
+            return normalizeHistoryTournament({
+              ...(data as TournamentHistory),
+              id: tournamentSnap.id,
+              date: normalizeHistoryDate((data as any)?.date, fallbackMs)
+            } as TournamentHistory);
+          } catch (err) {
+            console.error(`Error fetching tournament history ${tournamentId}:`, err);
+            return null;
+          }
+        })
+      );
+
+      const histories = tournamentDocs
+        .filter((item): item is TournamentHistory => Boolean(item))
+        .sort((a, b) => {
+          const aRefMs = latestPlayedAtByTournament.get(a.id) || getTournamentDateMs(a);
+          const bRefMs = latestPlayedAtByTournament.get(b.id) || getTournamentDateMs(b);
+          if (bRefMs !== aRefMs) return bRefMs - aRefMs;
+          return getTournamentDateMs(b) - getTournamentDateMs(a);
+        });
+
+      if (histories.length > 0) return histories;
+    }
+  } catch (ledgerErr) {
+    console.error('Error fetching tournament history from player_match_ledger, fallback to owner-based tournaments:', ledgerErr);
+  }
+
+  const ownerBasedQuery = query(
+    collection(db, 'tournaments'),
+    where('userId', '==', uid),
+    orderBy('date', 'desc')
+  );
+  const ownerBasedSnapshot = await getDocs(ownerBasedQuery);
+  const ownerBasedTournaments: TournamentHistory[] = [];
+  ownerBasedSnapshot.forEach((docSnap) => {
+    const data = docSnap.data();
+    ownerBasedTournaments.push(normalizeHistoryTournament({
+      ...data,
+      id: docSnap.id,
+      date: normalizeHistoryDate((data as any)?.date)
+    } as TournamentHistory));
+  });
+  return ownerBasedTournaments;
 };
 
 const calculateMMRChange = (isWin: boolean, scoreDiff: number, isUnderdog: boolean, isFavorite: boolean) => {
@@ -365,6 +540,20 @@ const sanitizeInactivePlayerIds = (players: Player[], rawInactiveIds?: string[])
     sanitized.push(id);
   });
   return sanitized;
+};
+
+const normalizeCourtChanges = (rawCourtChanges?: CourtChange[]) => {
+  if (!Array.isArray(rawCourtChanges) || rawCourtChanges.length === 0) return [];
+  return rawCourtChanges
+    .map((change) => ({
+      effectiveFromRoundId: Math.max(1, Math.floor(Number(change?.effectiveFromRoundId) || 1)),
+      fromCourts: Math.max(1, Math.floor(Number(change?.fromCourts) || 1)),
+      toCourts: Math.max(1, Math.floor(Number(change?.toCourts) || 1)),
+      changedAt: Number.isFinite(Number(change?.changedAt))
+        ? Number(change.changedAt)
+        : Date.now()
+    }))
+    .sort((a, b) => a.changedAt - b.changedAt);
 };
 
 const getActivePlayersFromTournament = (tournament: Tournament) => {
@@ -654,6 +843,7 @@ const normalizeHistoryTournament = (rawItem: TournamentHistory): TournamentHisto
     ...rawItem,
     date: normalizedDate,
     endedAt: rawItem.endedAt ?? (hasStatusRepair ? fallbackEndedAt : rawItem.endedAt),
+    courtChanges: normalizeCourtChanges(rawItem.courtChanges),
     rounds: normalizedRounds
   };
 };
@@ -1730,7 +1920,7 @@ const AddPlayerModal = ({ isOpen, onClose, onAdd }: { isOpen: boolean, onClose: 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
+    <div className="fixed inset-0 z-[160] flex items-end justify-center p-4 sm:items-center">
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
@@ -2960,7 +3150,7 @@ const MatchBackgroundPickerScreen = ({
       <main className="max-w-md mx-auto px-4 py-6 space-y-4">
         <section className="space-y-1">
           <p className="text-[15px] font-semibold text-on-surface">Choose from the app collection</p>
-          <p className="text-[12px] text-ios-gray">This background will be shown in Match Preview.</p>
+          <p className="text-[12px] text-ios-gray">This background will be shown in Active Match.</p>
         </section>
 
         <section className="grid grid-cols-2 gap-3">
@@ -3006,7 +3196,7 @@ const MatchBackgroundPickerScreen = ({
             disabled={!selectedBackgroundId}
             className="w-full h-12 bg-primary text-white rounded-2xl font-bold text-[15px] shadow-lg shadow-primary/20 disabled:opacity-40 disabled:shadow-none disabled:active:scale-100 tap-target transition-all"
           >
-            Continue to Preview
+            Continue to Match
           </button>
           <button
             onClick={onSkip}
@@ -3020,218 +3210,6 @@ const MatchBackgroundPickerScreen = ({
   );
 };
 
-const MatchPreviewScreen = ({ onBack, onConfirm, tournament, selectedBackgroundId }: {
-  onBack: () => void,
-  onConfirm: () => void,
-  tournament: Tournament,
-  selectedBackgroundId?: string | null
-}) => {
-  const previewBackground = resolveMatchBackground(
-    tournament.format,
-    selectedBackgroundId || tournament.backgroundId
-  );
-  const previewTheme =
-    tournament.format === 'Americano'
-      ? {
-        accentText: 'text-[#12806A]',
-        accentBg: 'bg-[#18A486]/10',
-        accentBorder: 'border-[#18A486]/20',
-        accentSolid: 'bg-[#18A486]',
-        accentSoft: 'bg-[#18A486]/12',
-      }
-      : tournament.format === 'Mexicano'
-        ? {
-          accentText: 'text-primary',
-          accentBg: 'bg-primary/10',
-          accentBorder: 'border-primary/20',
-          accentSolid: 'bg-primary',
-          accentSoft: 'bg-primary/12',
-        }
-        : {
-          accentText: 'text-[#2F6FE4]',
-          accentBg: 'bg-[#2F6FE4]/10',
-          accentBorder: 'border-[#2F6FE4]/20',
-          accentSolid: 'bg-[#2F6FE4]',
-          accentSoft: 'bg-[#2F6FE4]/12',
-        };
-  const previewInfoTheme =
-    tournament.format === 'Americano'
-      ? {
-        shadow: 'shadow-[0_14px_30px_rgba(18,128,106,0.32)]'
-      }
-      : tournament.format === 'Mexicano'
-        ? {
-          shadow: 'shadow-[0_14px_30px_rgba(230,94,20,0.35)]'
-        }
-        : {
-          shadow: 'shadow-[0_14px_30px_rgba(34,72,181,0.32)]'
-        };
-  const previewPageBgTheme =
-    tournament.format === 'Americano'
-      ? {
-        base: 'bg-[linear-gradient(175deg,#e9faf6_0%,#d8f3eb_42%,#f5fffb_100%)]',
-        photoBlend: 'bg-[linear-gradient(180deg,rgba(10,28,24,0.22)_0%,rgba(11,46,37,0.12)_16%,rgba(28,96,80,0.06)_32%,rgba(233,250,246,0.04)_44%,rgba(233,250,246,0.18)_58%,rgba(233,250,246,0.42)_72%,rgba(233,250,246,0.62)_86%,rgba(245,255,251,1)_100%)]'
-      }
-      : tournament.format === 'Mexicano'
-        ? {
-          base: 'bg-[linear-gradient(175deg,#fff3e7_0%,#ffe8d8_40%,#fff5ec_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(33,19,12,0.22)_0%,rgba(78,35,14,0.12)_16%,rgba(156,74,28,0.06)_32%,rgba(255,243,231,0.04)_44%,rgba(255,243,231,0.18)_58%,rgba(255,243,231,0.42)_72%,rgba(255,243,231,0.62)_86%,rgba(255,245,236,1)_100%)]'
-        }
-        : {
-          base: 'bg-[linear-gradient(175deg,#edf3ff_0%,#dce9ff_42%,#f6f9ff_100%)]',
-          photoBlend: 'bg-[linear-gradient(180deg,rgba(8,24,45,0.24)_0%,rgba(14,44,82,0.14)_16%,rgba(37,92,171,0.06)_32%,rgba(237,243,255,0.04)_44%,rgba(237,243,255,0.18)_58%,rgba(237,243,255,0.42)_72%,rgba(237,243,255,0.62)_86%,rgba(246,249,255,1)_100%)]'
-        };
-  const previewVenue = (tournament.venueName || '').trim();
-  const previewCity = (tournament.location || '').trim();
-  const previewPlace = previewVenue && previewCity
-    ? `${previewVenue} | ${previewCity}`
-    : (previewVenue || previewCity || 'Location not selected yet');
-
-  return (
-    <div className="relative min-h-screen pb-10 overflow-hidden bg-transparent z-0">
-      <div className="fixed inset-0 z-0 pointer-events-none">
-        <div className={cn('absolute inset-0', previewPageBgTheme.base)} />
-        <div className="absolute inset-x-0 top-0 h-screen min-h-screen max-h-none overflow-hidden">
-          <img
-            src={previewBackground}
-            alt="Preview background"
-            className="absolute inset-0 h-full w-full object-cover object-center scale-[1.12]"
-            loading="eager"
-            decoding="async"
-          />
-          <div className={cn('absolute inset-0', previewPageBgTheme.photoBlend)} />
-        </div>
-      </div>
-
-      <header
-        className="ios-blur fixed top-0 inset-x-0 z-50 bg-white/85"
-        style={{ paddingTop: 'var(--app-safe-top, 0px)' }}
-      >
-        <div className="flex justify-between items-center px-4 h-14 w-full max-w-lg mx-auto">
-          <div className="flex items-center gap-2">
-            <button onClick={onBack} className="p-2 -ml-2 tap-target">
-              <ChevronLeft size={24} className="text-primary" />
-            </button>
-            <h1 className="font-bold text-[17px] tracking-tight text-on-surface">Match Preview</h1>
-          </div>
-          <button
-            onClick={onConfirm}
-            className={cn("text-white px-5 py-2 rounded-full font-bold text-sm shadow-md tap-target", previewTheme.accentSolid)}
-          >
-            Start
-          </button>
-        </div>
-      </header>
-
-      <main
-        className="relative z-10 px-5 space-y-6 max-w-lg mx-auto pb-10"
-        style={{ paddingTop: 'calc(var(--app-safe-top, 0px) + 74px)' }}
-      >
-        <section className={cn(
-          "relative overflow-hidden rounded-2xl p-4 border border-white/40 bg-white/8 backdrop-blur-md",
-          previewInfoTheme.shadow
-        )}>
-          <div className="relative flex items-start justify-between gap-3 mb-3">
-            <div className="min-w-0">
-              <h2 className="text-[18px] font-black tracking-tight text-white truncate">{tournament.name || 'Game Padel'}</h2>
-              <p className="mt-1 text-[11px] text-white/85 truncate">{previewPlace}</p>
-            </div>
-            <span className="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest border border-white/35 bg-white/20 text-white">
-              Preview
-            </span>
-          </div>
-
-          <div className="relative grid grid-cols-4 gap-2">
-            {[
-              { label: 'Mode', value: tournament.format },
-              { label: 'Player', value: tournament.players.length },
-              { label: 'Court', value: tournament.courts },
-              { label: 'Round', value: tournament.rounds.length },
-            ].map((item) => (
-              <div key={item.label} className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">{item.label}</p>
-                <p className="text-[12px] font-semibold text-white truncate">{item.value}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <div className="space-y-4">
-          {tournament.rounds.map((round) => (
-            <section key={round.id} className="bg-white/78 backdrop-blur-sm p-4 rounded-[20px] shadow-sm border border-white/45">
-              <div className="flex items-center justify-between gap-3 mb-1.5">
-                <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", previewTheme.accentText)}>Round {round.id}</span>
-                <span className="text-[10px] font-bold uppercase tracking-[0.11em] text-ios-gray/60">{round.matches.length} Match</span>
-              </div>
-              <div className="h-px bg-ios-gray/10 mb-2.5" />
-
-              <div className="space-y-3.5">
-                {round.matches.map((match, idx) => (
-                  <div key={match.id}>
-                    <div className="flex justify-start mb-3">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
-                        Court {match.court}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-                      <div className="min-w-0 flex flex-col items-center gap-1">
-                        <div className="flex -space-x-3">
-                          {match.teamA.players.map((p, i) => (
-                            <div key={i} className="w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 overflow-hidden flex items-center justify-center text-[10px] font-bold text-on-surface">
-                              {p.avatar ? <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" /> : p.initials}
-                            </div>
-                          ))}
-                        </div>
-                        <span className="text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]">
-                          {match.teamA.players.map(p => p.name.split(' ')[0]).join(' & ')}
-                        </span>
-                      </div>
-                      <div className="flex flex-col items-center min-w-[86px] rounded-xl px-2 py-1">
-                        <div className="text-[31px] leading-none font-display font-black tracking-tight tabular-nums">
-                          <span className={previewTheme.accentText}>0</span>
-                          <span className="text-ios-gray/30 mx-1">-</span>
-                          <span className="text-on-surface">0</span>
-                        </div>
-                        <span className="text-[9px] font-bold text-ios-gray/80 tracking-[0.11em]">SKOR</span>
-                      </div>
-                      <div className="min-w-0 flex flex-col items-center gap-1">
-                        <div className="flex -space-x-3">
-                          {match.teamB.players.map((p, i) => (
-                            <div key={i} className="w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 overflow-hidden flex items-center justify-center text-[10px] font-bold text-on-surface">
-                              {p.avatar ? <img src={p.avatar} alt={p.name} className="w-full h-full object-cover" /> : p.initials}
-                            </div>
-                          ))}
-                        </div>
-                        <span className="text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]">
-                          {match.teamB.players.map(p => p.name.split(' ')[0]).join(' & ')}
-                        </span>
-                      </div>
-                    </div>
-                    {idx < round.matches.length - 1 && <div className="my-3.5 h-px bg-ios-gray/10" />}
-                  </div>
-                ))}
-
-                {round.playersBye.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-ios-gray/10">
-                    <div className="flex items-center gap-2">
-                      <Users size={14} className="text-ios-gray/70" />
-                      <span className="text-[11px] font-semibold tracking-tight text-ios-gray/80">
-                        Player Pending: <span className="text-on-surface font-medium">
-                          {round.playersBye.map(p => p.name.split(' ')[0]).join(', ')}
-                        </span>
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
-          ))}
-        </div>
-      </main>
-    </div>
-  );
-};
-
 const MatchActiveScreen = ({
   onBack,
   onStartNewMatch,
@@ -3239,7 +3217,9 @@ const MatchActiveScreen = ({
   onUpdateScore,
   onNextRound,
   onUpdateRounds,
+  onUpdateCourts,
   onUpdateActivePlayers,
+  onAddManualPlayer,
   onDeleteRoundsFrom,
   needsRegenerateFromRound,
   onOpenStandings,
@@ -3254,9 +3234,11 @@ const MatchActiveScreen = ({
   onStartNewMatch: () => void,
   tournament: Tournament,
   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void,
-  onNextRound: () => void,
+  onNextRound: () => void | Promise<void>,
   onUpdateRounds: (numRounds: number) => boolean,
+  onUpdateCourts: (numCourts: number) => boolean,
   onUpdateActivePlayers: (activePlayerIds: string[]) => void,
+  onAddManualPlayer: (player: Player) => void,
   onDeleteRoundsFrom: (roundId: number) => void,
   needsRegenerateFromRound: number | null,
   onOpenStandings: () => void,
@@ -3270,10 +3252,14 @@ const MatchActiveScreen = ({
   const [scoringMatchId, setScoringMatchId] = useState<string | null>(null);
   const [swappingPlayer, setSwappingPlayer] = useState<{ matchId: string, team: 'A' | 'B', playerIndex: number, currentPlayer: Player } | null>(null);
   const [isRoundEditorOpen, setIsRoundEditorOpen] = useState(false);
+  const [isCourtEditorOpen, setIsCourtEditorOpen] = useState(false);
   const [roundEditValue, setRoundEditValue] = useState('');
+  const [courtEditValue, setCourtEditValue] = useState('');
   const [roundEditError, setRoundEditError] = useState('');
+  const [courtEditError, setCourtEditError] = useState('');
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [isActivePlayersEditorOpen, setIsActivePlayersEditorOpen] = useState(false);
+  const [isAddPlayerModalOpen, setIsAddPlayerModalOpen] = useState(false);
   const [isRoundResetSelectorOpen, setIsRoundResetSelectorOpen] = useState(false);
   const [draftActivePlayerIds, setDraftActivePlayerIds] = useState<Set<string>>(new Set());
   const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
@@ -3348,6 +3334,12 @@ const MatchActiveScreen = ({
     [tournament.players, tournament.inactivePlayerIds]
   );
   const inactivePlayerIdSet = useMemo(() => new Set(inactivePlayerIds), [inactivePlayerIds]);
+  const currentActivePlayerIds = useMemo(
+    () => tournament.players
+      .map((player) => player.id)
+      .filter((playerId) => !inactivePlayerIdSet.has(playerId)),
+    [tournament.players, inactivePlayerIdSet]
+  );
   const activePlayerCount = useMemo(
     () => tournament.players.filter((player) => !inactivePlayerIdSet.has(player.id)).length,
     [tournament.players, inactivePlayerIdSet]
@@ -3448,6 +3440,15 @@ const MatchActiveScreen = ({
     () => tournament.rounds.map((round) => round.id).filter((roundId) => roundId > 1).sort((a, b) => b - a),
     [tournament.rounds]
   );
+  const hasDraftActivePlayersChanges = useMemo(() => {
+    const nextActiveIds = tournament.players
+      .map((player) => player.id)
+      .filter((playerId) => draftActivePlayerIds.has(playerId));
+    return (
+      nextActiveIds.length !== currentActivePlayerIds.length ||
+      nextActiveIds.some((playerId, idx) => playerId !== currentActivePlayerIds[idx])
+    );
+  }, [tournament.players, draftActivePlayerIds, currentActivePlayerIds]);
   const infoTheme =
     tournament.format === 'Americano'
       ? {
@@ -3577,6 +3578,13 @@ const MatchActiveScreen = ({
     setIsRoundEditorOpen(true);
   };
 
+  const handleOpenCourtEditor = () => {
+    setIsActionMenuOpen(false);
+    setCourtEditValue(String(tournament.courts || 1));
+    setCourtEditError('');
+    setIsCourtEditorOpen(true);
+  };
+
   const handleSubmitRoundEdit = () => {
     const parsed = Number.parseInt(roundEditValue, 10);
     if (!Number.isFinite(parsed) || parsed < 1) {
@@ -3591,12 +3599,23 @@ const MatchActiveScreen = ({
     setIsRoundEditorOpen(false);
   };
 
+  const handleSubmitCourtEdit = () => {
+    const parsed = Number.parseInt(courtEditValue, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setCourtEditError('Enter at least 1 court.');
+      return;
+    }
+    const ok = onUpdateCourts(parsed);
+    if (!ok) {
+      setCourtEditError('Court count is invalid for the current match setup.');
+      return;
+    }
+    setIsCourtEditorOpen(false);
+  };
+
   const handleOpenActivePlayersEditor = () => {
     setIsActionMenuOpen(false);
-    const activeIds = tournament.players
-      .filter((player) => !inactivePlayerIdSet.has(player.id))
-      .map((player) => player.id);
-    setDraftActivePlayerIds(new Set(activeIds));
+    setDraftActivePlayerIds(new Set(currentActivePlayerIds));
     setIsActivePlayersEditorOpen(true);
   };
 
@@ -3629,15 +3648,8 @@ const MatchActiveScreen = ({
     const nextActiveIds = tournament.players
       .map((player) => player.id)
       .filter((playerId) => draftActivePlayerIds.has(playerId));
-    const currentActiveIds = tournament.players
-      .map((player) => player.id)
-      .filter((playerId) => !inactivePlayerIdSet.has(playerId));
-    const hasChanges = (
-      nextActiveIds.length !== currentActiveIds.length ||
-      nextActiveIds.some((playerId, idx) => playerId !== currentActiveIds[idx])
-    );
 
-    if (!hasChanges) {
+    if (!hasDraftActivePlayersChanges) {
       setIsActivePlayersEditorOpen(false);
       return;
     }
@@ -3647,6 +3659,16 @@ const MatchActiveScreen = ({
 
     onUpdateActivePlayers(nextActiveIds);
     setIsActivePlayersEditorOpen(false);
+  };
+
+  const handleAddPlayerFromActive = (newPlayer: Player) => {
+    onAddManualPlayer(newPlayer);
+    setDraftActivePlayerIds((prev) => {
+      const next = new Set(prev);
+      next.add(newPlayer.id);
+      return next;
+    });
+    setIsAddPlayerModalOpen(false);
   };
   const handleProceedToNextRound = () => {
     onNextRound();
@@ -3753,7 +3775,7 @@ const MatchActiveScreen = ({
           <div className="shrink-0 flex items-center gap-3">
             <InstallAppButton
               compact
-              variant="minimal"
+              variant="minimum"
               className="text-white"
             />
             {isSharedViewer ? (
@@ -4123,6 +4145,14 @@ const MatchActiveScreen = ({
                 </button>
                 <button
                   type="button"
+                  onClick={handleOpenCourtEditor}
+                  className="w-full h-12 px-4 rounded-xl border border-ios-gray/15 text-on-surface text-[14px] font-semibold text-left inline-flex items-center gap-3 tap-target"
+                >
+                  <Building2 size={16} className="text-primary" />
+                  Edit courts
+                </button>
+                <button
+                  type="button"
                   onClick={handleOpenActivePlayersEditor}
                   className="w-full h-12 px-4 rounded-xl border border-ios-gray/15 text-on-surface text-[14px] font-semibold text-left inline-flex items-center gap-3 tap-target"
                 >
@@ -4231,56 +4261,90 @@ const MatchActiveScreen = ({
               className="relative w-full max-w-md bg-white rounded-[28px] shadow-2xl overflow-hidden flex flex-col"
               style={{ maxHeight: `calc(100dvh - ${modalBottomOffset + 28}px)` }}
             >
-              <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
+              <div className="px-5 pt-5 pb-4 border-b border-ios-gray/10 bg-white">
                 <div>
-                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Active Players</h3>
-                  <p className="text-[12px] text-ios-gray font-medium">{draftActivePlayerIds.size}/{tournament.players.length} active</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Active Players</h3>
+                    <button
+                      onClick={() => setIsActivePlayersEditorOpen(false)}
+                      className="p-2 bg-ios-gray/10 rounded-full tap-target"
+                      aria-label="Close active players dialog"
+                    >
+                      <X size={18} className="text-on-surface" />
+                    </button>
+                  </div>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <span className="inline-flex items-center h-6 px-2.5 rounded-full bg-primary/10 text-primary text-[11px] font-bold border border-primary/15">
+                      {draftActivePlayerIds.size}/{tournament.players.length} active
+                    </span>
+                    <span className="text-[11px] font-medium text-ios-gray">Applies on next round</span>
+                  </div>
                 </div>
-                <button
-                  onClick={() => setIsActivePlayersEditorOpen(false)}
-                  className="p-2 bg-ios-gray/10 rounded-full tap-target"
-                >
-                  <X size={18} className="text-on-surface" />
-                </button>
               </div>
 
-              <div className="px-5 pt-4 pb-2 flex items-center justify-end gap-2">
+              <div className="px-5 py-3.5 border-b border-ios-gray/10 bg-ios-gray/5">
                 <button
                   type="button"
-                  onClick={() => setDraftActivePlayerIds(new Set(tournament.players.map((player) => player.id)))}
-                  className="h-8 px-3 rounded-lg border border-primary/20 bg-primary/5 text-[11px] font-bold text-primary tap-target"
+                  onClick={() => setIsAddPlayerModalOpen(true)}
+                  className="w-full h-10 px-3.5 rounded-xl border border-primary/20 bg-primary/8 text-[12px] font-bold text-primary tap-target inline-flex items-center justify-center gap-1.5"
                 >
-                  Select semua
+                  <Plus size={14} />
+                  Add New Player
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setDraftActivePlayerIds(new Set())}
-                  className="h-8 px-3 rounded-lg border border-ios-gray/20 bg-ios-gray/5 text-[11px] font-bold text-ios-gray tap-target"
-                >
-                  Kosongkan
-                </button>
+                <div className="mt-2.5 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDraftActivePlayerIds(new Set(tournament.players.map((player) => player.id)))}
+                    className="h-9 px-3 rounded-lg border border-primary/20 bg-white text-[11px] font-bold text-primary tap-target"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDraftActivePlayerIds(new Set())}
+                    className="h-9 px-3 rounded-lg border border-ios-gray/20 bg-white text-[11px] font-bold text-ios-gray tap-target"
+                  >
+                    Clear All
+                  </button>
+                </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-5 pb-5 space-y-1.5">
-                {tournament.players.map((player) => {
+              <div className="flex-1 overflow-y-auto px-5 py-3.5 space-y-2">
+                {tournament.players.length === 0 ? (
+                  <div className="h-28 rounded-2xl border border-ios-gray/10 bg-ios-gray/5 flex items-center justify-center text-[12px] font-medium text-ios-gray">
+                    No players in this match yet.
+                  </div>
+                ) : tournament.players.map((player) => {
                   const isChecked = draftActivePlayerIds.has(player.id);
+                  const isManual = !isFomRegisteredPlayer(player);
                   return (
                     <button
                       key={player.id}
                       type="button"
                       onClick={() => toggleDraftActivePlayer(player.id)}
                       className={cn(
-                        "w-full h-12 flex items-center justify-between gap-3 px-3.5 rounded-xl border text-left tap-target transition-colors",
+                        "w-full h-14 flex items-center justify-between gap-3 px-3.5 rounded-xl border text-left tap-target transition-colors",
                         isChecked
-                          ? "border-primary/25 bg-primary/5"
+                          ? "border-primary/25 bg-primary/6"
                           : "border-ios-gray/12 bg-white hover:bg-ios-gray/5"
                       )}
                     >
-                      <span className="min-w-0 text-[13px] font-semibold text-on-surface truncate">
-                        {player.name}
-                      </span>
+                      <div className="min-w-0 flex items-center gap-2.5">
+                        <span className={cn(
+                          "w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0",
+                          isChecked ? "bg-primary text-white" : "bg-ios-gray/12 text-ios-gray"
+                        )}>
+                          {player.initials}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-semibold text-on-surface truncate">{player.name}</p>
+                          <p className="text-[10px] font-medium text-ios-gray">
+                            {isManual ? 'Manual Player' : 'FOM Player'}
+                          </p>
+                        </div>
+                      </div>
                       <span className={cn(
-                        "w-5 h-5 rounded-md border flex items-center justify-center shrink-0",
+                        "w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors",
                         isChecked ? "bg-primary border-primary text-white" : "bg-white border-ios-gray/35 text-transparent"
                       )}>
                         <Check size={13} />
@@ -4290,15 +4354,103 @@ const MatchActiveScreen = ({
                 })}
               </div>
 
+              <div className="px-5 pb-5 pt-3 border-t border-ios-gray/10 bg-white">
+                <p className="mb-2.5 text-[11px] font-medium text-ios-gray">Changes will apply starting from the next round.</p>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    onClick={() => setIsActivePlayersEditorOpen(false)}
+                    className="h-11 rounded-xl border border-ios-gray/20 text-[14px] font-semibold text-ios-gray tap-target"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveActivePlayers}
+                    disabled={!hasDraftActivePlayersChanges}
+                    className="h-11 rounded-xl bg-primary text-white text-[14px] font-bold shadow-[0_8px_18px_rgba(230,94,20,0.24)] tap-target disabled:opacity-50 disabled:shadow-none disabled:active:scale-100"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isAddPlayerModalOpen && !isReadOnly && (
+          <AddPlayerModal
+            isOpen={isAddPlayerModalOpen}
+            onClose={() => setIsAddPlayerModalOpen(false)}
+            onAdd={handleAddPlayerFromActive}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Modal Popup */}
+      <AnimatePresence>
+        {isCourtEditorOpen && (
+          <div
+            className="fixed inset-0 z-[121] flex items-end justify-center px-4 pt-4 sm:items-center"
+            style={{ paddingBottom: `calc(${modalBottomOffset}px + var(--app-safe-bottom, 0px))` }}
+          >
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsCourtEditorOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              className="relative w-full max-w-md bg-white rounded-[28px] shadow-2xl overflow-hidden"
+            >
+              <div className="p-5 border-b border-ios-gray/10 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Edit Court Count</h3>
+                  <p className="text-[12px] text-ios-gray font-medium">Current courts: {tournament.courts}</p>
+                </div>
+                <button
+                  onClick={() => setIsCourtEditorOpen(false)}
+                  className="p-2 bg-ios-gray/10 rounded-full tap-target"
+                >
+                  <X size={18} className="text-on-surface" />
+                </button>
+              </div>
+              <div className="p-5 space-y-3">
+                <label className="block text-[12px] font-bold uppercase tracking-wide text-ios-gray">
+                  New Court Count
+                </label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={courtEditValue}
+                  onChange={(e) => {
+                    setCourtEditValue(e.target.value);
+                    if (courtEditError) setCourtEditError('');
+                  }}
+                  className="w-full h-12 rounded-xl border border-ios-gray/20 px-4 text-[17px] font-semibold text-on-surface outline-none focus:border-primary"
+                  placeholder="Example: 2"
+                />
+                <p className="text-[11px] font-medium text-ios-gray">
+                  Changes apply starting from the next round.
+                </p>
+                {courtEditError && (
+                  <p className="text-[12px] font-semibold text-red-500">{courtEditError}</p>
+                )}
+              </div>
               <div className="p-5 pt-0 grid grid-cols-2 gap-2.5">
                 <button
-                  onClick={() => setIsActivePlayersEditorOpen(false)}
+                  onClick={() => setIsCourtEditorOpen(false)}
                   className="h-11 rounded-xl border border-ios-gray/20 text-[14px] font-semibold text-ios-gray tap-target"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleSaveActivePlayers}
+                  onClick={handleSubmitCourtEdit}
                   className="h-11 rounded-xl bg-primary text-white text-[14px] font-bold shadow-[0_8px_18px_rgba(230,94,20,0.24)] tap-target"
                 >
                   Save
@@ -4307,10 +4459,7 @@ const MatchActiveScreen = ({
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
 
-      {/* Modal Popup */}
-      <AnimatePresence>
         {isRoundEditorOpen && (
           <div
             className="fixed inset-0 z-[120] flex items-end justify-center px-4 pt-4 sm:items-center"
@@ -4866,7 +5015,7 @@ const KlasemenScreen = ({
             <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className="h-8 w-auto object-contain" />
           </div>
           <div className="shrink-0 flex items-center gap-3">
-            <InstallAppButton compact variant="minimal" className="text-white" />
+            <InstallAppButton compact variant="minimum" className="text-white" />
             {isSharedViewer ? (
               <span className="text-[10px] font-bold uppercase tracking-widest text-white/90">View Only</span>
             ) : (
@@ -6821,7 +6970,7 @@ export default function App() {
             const existingTotalMatches = Number(userData?.totalMatches);
             const locationActivity = userData?.locationActivity;
             const totalLocationActivity = locationActivity && typeof locationActivity === 'object'
-              ? Object.values(locationActivity).reduce((total, count) => {
+              ? Object.values(locationActivity).reduce<number>((total, count) => {
                 const normalizedCount = Number(count);
                 if (!Number.isFinite(normalizedCount) || normalizedCount <= 0) return total;
                 return total + normalizedCount;
@@ -6832,7 +6981,7 @@ export default function App() {
               (!Number.isFinite(existingTotalMatches) || existingTotalMatches <= 0) &&
               totalLocationActivity === 0;
 
-            const normalizedUserData = {
+            const normalizedUserData: Record<string, any> = {
               ...userData,
               mmr: shouldNormalizeLegacyInitialMmr
                 ? 0
@@ -6885,23 +7034,9 @@ export default function App() {
             setUser({ ...firebaseUser, ...initialData });
           }
 
-          // Fetch tournaments
+          // Fetch tournaments history for this user (SSOT from player_match_ledger, fallback owner-based query).
           try {
-            const q = query(
-              collection(db, 'tournaments'),
-              where('userId', '==', firebaseUser.uid),
-              orderBy('date', 'desc')
-            );
-            const querySnapshot = await getDocs(q);
-            const fetchedTournaments: TournamentHistory[] = [];
-            querySnapshot.forEach((doc) => {
-              const data = doc.data();
-              fetchedTournaments.push(normalizeHistoryTournament({
-                ...data,
-                id: doc.id,
-                date: data.date.toDate()
-              } as TournamentHistory));
-            });
+            const fetchedTournaments = await fetchTournamentHistoryForUser(firebaseUser.uid);
             setTournaments(prev => {
               const merged = new Map<string, TournamentHistory>();
               [...prev, ...fetchedTournaments].forEach((item) => {
@@ -7315,6 +7450,7 @@ export default function App() {
       courts: history.courts || detectedCourts,
       totalPoints: history.totalPoints ?? (history.format === 'Match Play' ? 0 : Math.max(21, maxKnownMatchPoints || 21)),
       players: history.players || [],
+      courtChanges: normalizeCourtChanges(history.courtChanges),
       rounds,
       numRounds: history.numRounds || rounds.length || 1,
       venueName: history.venueName,
@@ -7703,13 +7839,14 @@ export default function App() {
       id: tournamentId,
       backgroundId: undefined,
       inactivePlayerIds: sanitizedInactivePlayerIds,
+      courtChanges: [],
       rounds,
       startedAt: now,
       endedAt: undefined
     });
     setDraftMatchBackgroundId(null);
     setNeedsRegenerateFromRound(null);
-    // Navigate to background picker before preview.
+    // Navigate to background picker before starting the match.
     setScreen('background-picker');
     addNotification('Matches Started!', `${settings.name} has been created with ${settings.players.length} players.`, 'tournament');
 
@@ -7743,7 +7880,9 @@ export default function App() {
       ...prev,
       backgroundId: randomBackgroundId
     }));
-    setScreen('preview');
+    setActiveScreenTournament(null);
+    setActiveBackScreen('dashboard');
+    setScreen('active');
   };
 
   const upsertPlayerFromFriend = (friend: Friend) => {
@@ -7800,6 +7939,41 @@ export default function App() {
       setDoc(doc(db, 'users', uid, 'friends', friend.uid), { lastPlayedAt: serverTimestamp() }, { merge: true })
         .catch((err) => console.error('Update friend lastPlayedAt error:', err));
     }
+  };
+
+  const handleAddPlayerDuringActiveMatch = (newPlayer: Player) => {
+    setAllPlayers((prev) => {
+      const exists = prev.some((player) => player.id === newPlayer.id);
+      return exists ? prev : [newPlayer, ...prev];
+    });
+
+    setTournament((prev) => {
+      const existsInTournament = (prev.players || []).some((player) => player.id === newPlayer.id);
+      if (existsInTournament) return prev;
+
+      const nextPlayers = [...(prev.players || []), newPlayer];
+      const sanitizedInactive = sanitizeInactivePlayerIds(nextPlayers, prev.inactivePlayerIds);
+      const nextTournament: Tournament = {
+        ...prev,
+        players: nextPlayers,
+        inactivePlayerIds: sanitizedInactive
+      };
+
+      if (prev.format === 'Americano' && prev.rounds.length > 0) {
+        return {
+          ...nextTournament,
+          rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds)
+        };
+      }
+
+      return nextTournament;
+    });
+
+    addNotification(
+      'New Player Added',
+      `${newPlayer.name} akan ikut mulai ronde berikutnya.`,
+      'system'
+    );
   };
 
   const handleDeleteRoundsFrom = (roundId: number) => {
@@ -7969,7 +8143,7 @@ export default function App() {
     );
   };
 
-  const handleNextRound = () => {
+  const handleNextRound = async () => {
     const now = Date.now();
     if (!tournament.rounds) return;
     if (needsRegenerateFromRound !== null) {
@@ -8034,75 +8208,8 @@ export default function App() {
       setTournament(prev => ({ ...prev, rounds: finalizedRounds, endedAt: now }));
       addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
 
-      // Save tournament to history
+      // Save tournament to history. Aggregate stats are handled by Cloud Functions.
       if (user) {
-        // Calculate MMR Change for the user
-        const userInTournament = tournament.players?.find(p => p && p.name === user.displayName);
-        let mmrChange = 0;
-        let matchesPlayedCount = 0;
-
-        if (userInTournament) {
-          finalizedRounds.forEach(round => {
-            if (!round || !round.matches) return;
-            round.matches.forEach(match => {
-              if (!match || !match.teamA || !match.teamB) return;
-              const isTeamA = match.teamA.players?.some(p => p && p.id === userInTournament.id);
-              const isTeamB = match.teamB.players?.some(p => p && p.id === userInTournament.id);
-
-              if (isTeamA || isTeamB) {
-                matchesPlayedCount += 1;
-                const userScore = isTeamA ? match.teamA.score : match.teamB.score;
-                const opponentScore = isTeamA ? match.teamB.score : match.teamA.score;
-                const isWin = userScore > opponentScore;
-                const scoreDiff = Math.abs(userScore - opponentScore);
-
-                // For now, assume neutral underdog/favorite status as we don't have other players' MMRs
-                mmrChange += calculateMMRChange(isWin, scoreDiff, false, false);
-              }
-            });
-          });
-
-          // Update user MMR and Location Activity in Firestore
-          const newMMR = Math.max(0, (user.mmr || 0) + mmrChange);
-
-          // Dynamic Origin Logic
-          const locationActivity = { ...(user.locationActivity || {}) };
-          if (tournament.location) {
-            locationActivity[tournament.location] = (locationActivity[tournament.location] || 0) + 1;
-          }
-
-          // Find most frequent location
-          let mostFrequentLocation = user.region || tournament.location || '';
-          let maxCount = 0;
-          Object.entries(locationActivity).forEach(([loc, count]) => {
-            const c = count as number;
-            if (c > maxCount) {
-              maxCount = c;
-              mostFrequentLocation = loc;
-            }
-          });
-
-          // Update region if threshold met (e.g. 3 games) or if it's the first few games
-          const newRegion = maxCount >= 3 ? mostFrequentLocation : (user.region || tournament.location || '');
-
-          const updatedUserData = {
-            mmr: newMMR,
-            totalMatches: Math.max(0, Number(user.totalMatches || 0) + matchesPlayedCount),
-            locationActivity,
-            region: newRegion
-          };
-
-          setUser(prev => ({ ...prev, ...updatedUserData }));
-          setDoc(doc(db, 'users', user.uid), updatedUserData, { merge: true })
-            .catch(err => console.error('Error updating user stats:', err));
-
-          addNotification(
-            'Statistik Terupdate!',
-            `MMR: ${newMMR} (${mmrChange >= 0 ? '+' : ''}${mmrChange}). Active region: ${newRegion.split(',')[0]}.`,
-            'achievement'
-          );
-        }
-
         const historyItem: TournamentHistory = {
           id: tournament.id || Math.random().toString(36).substr(2, 9),
           userId: user.uid,
@@ -8120,16 +8227,15 @@ export default function App() {
           numPlayers: tournament.players.length,
           rounds: finalizedRounds,
           players: tournament.players,
+          courtChanges: normalizeCourtChanges(tournament.courtChanges),
           venueName: tournament.venueName,
           location: tournament.location
         };
-
         setTournaments(prev => [historyItem, ...prev]);
-
         setDoc(doc(db, 'tournaments', historyItem.id), {
           ...historyItem,
           date: serverTimestamp()
-        }).catch(err => console.error('Error saving tournament:', err));
+        }).catch((err) => console.error('Error saving tournament:', err));
       }
 
       setSelectedKlasemenTournament({
@@ -8381,6 +8487,54 @@ export default function App() {
     return true;
   };
 
+  const handleUpdateCourts = (requestedCourts: number) => {
+    const safeRequested = Number.isFinite(requestedCourts) ? Math.floor(requestedCourts) : NaN;
+    if (!Number.isFinite(safeRequested) || safeRequested < 1) return false;
+    const nextCourts = Math.max(1, Math.min(12, safeRequested));
+
+    if (nextCourts === tournament.courts) return true;
+
+    setTournament((prev) => {
+      const activeRoundIndex = prev.rounds.findIndex((round) => round.matches.some((match) => match.status === 'active'));
+      const latestLockedRoundIndex = prev.rounds.reduce((latestIdx, round, idx) => {
+        const hasPlayedMatch = (round.matches || []).some((match) => match.status !== 'pending');
+        return hasPlayedMatch ? idx : latestIdx;
+      }, -1);
+      const currentRoundIndex = activeRoundIndex !== -1 ? activeRoundIndex : latestLockedRoundIndex;
+      const effectiveFromRoundId = currentRoundIndex === -1 ? 1 : currentRoundIndex + 2;
+      const nextCourtChanges = [
+        ...(prev.courtChanges || []),
+        {
+          effectiveFromRoundId,
+          fromCourts: prev.courts,
+          toCourts: nextCourts,
+          changedAt: Date.now()
+        }
+      ];
+      const nextTournament = {
+        ...prev,
+        courts: nextCourts,
+        courtChanges: nextCourtChanges
+      };
+
+      if (prev.format === 'Americano' && prev.rounds.length > 0) {
+        return {
+          ...nextTournament,
+          rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds)
+        };
+      }
+
+      return nextTournament;
+    });
+
+    addNotification(
+      'Court Updated',
+      `Court count updated to ${nextCourts}. Changes apply starting from the next round.`,
+      'system'
+    );
+    return true;
+  };
+
   const handleUpdateMatchPlayScore = (matchId: string, team: 'A' | 'B') => {
     let setWinMessage: string | null = null;
 
@@ -8583,7 +8737,9 @@ export default function App() {
         onUpdateScore={() => { }}
         onNextRound={() => { }}
         onUpdateRounds={() => false}
+        onUpdateCourts={() => false}
         onUpdateActivePlayers={() => { }}
+        onAddManualPlayer={() => { }}
         onDeleteRoundsFrom={() => { }}
         needsRegenerateFromRound={null}
         onOpenStandings={() => { }}
@@ -8725,20 +8881,10 @@ export default function App() {
                 ...prev,
                 backgroundId: draftMatchBackgroundId
               }));
-              setScreen('preview');
-            }}
-          />
-        )}
-        {screen === 'preview' && (
-          <MatchPreviewScreen
-            onBack={() => setScreen('background-picker')}
-            onConfirm={() => {
               setActiveScreenTournament(null);
               setActiveBackScreen('dashboard');
               setScreen('active');
             }}
-            tournament={tournament}
-            selectedBackgroundId={draftMatchBackgroundId}
           />
         )}
         {screen === 'active' && (
@@ -8770,7 +8916,9 @@ export default function App() {
             onUpdateScore={handleUpdateScore}
             onNextRound={handleNextRound}
             onUpdateRounds={handleUpdateRounds}
+            onUpdateCourts={handleUpdateCourts}
             onUpdateActivePlayers={handleUpdateActivePlayers}
+            onAddManualPlayer={handleAddPlayerDuringActiveMatch}
             onDeleteRoundsFrom={handleDeleteRoundsFrom}
             needsRegenerateFromRound={needsRegenerateFromRound}
             onOpenStandings={handleOpenLiveStandings}
@@ -8851,7 +8999,7 @@ export default function App() {
         )}
       </div>
 
-      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'preview' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'global-ranking' && screen !== 'klasemen' && screen !== 'active' && (
+      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'global-ranking' && screen !== 'klasemen' && screen !== 'active' && (
         <BottomNav
           currentScreen={screen}
           setScreen={setScreen}

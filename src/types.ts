@@ -45,6 +45,13 @@ export interface Round {
   playersBye: Player[];
 }
 
+export interface CourtChange {
+  effectiveFromRoundId: number;
+  fromCourts: number;
+  toCourts: number;
+  changedAt: number;
+}
+
 export interface Tournament {
   id?: string;
   name: string;
@@ -58,6 +65,7 @@ export interface Tournament {
   totalPoints: number;
   players: Player[];
   inactivePlayerIds?: string[];
+  courtChanges?: CourtChange[];
   rounds: Round[];
   numRounds: number;
   venueName?: string;
@@ -81,6 +89,7 @@ export interface TournamentHistory {
   numPlayers: number;
   rounds?: Round[];
   players?: Player[];
+  courtChanges?: CourtChange[];
   venueName?: string;
   location?: string;
 }
@@ -131,7 +140,7 @@ export interface FriendRequest {
   resolvedAt?: any;
 }
 
-export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'preview' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'global-ranking' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
+export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'global-ranking' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
 
 export interface AppNotification {
   id: string;

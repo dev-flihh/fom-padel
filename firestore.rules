@@ -127,6 +127,39 @@ service cloud.firestore {
              data.numRounds is number && data.numPlayers is number;
     }
 
+    function isTournamentOwnerDoc(tournamentId) {
+      return isAuthenticated() &&
+        tournamentId is string &&
+        exists(/databases/$(database)/documents/tournaments/$(tournamentId)) &&
+        get(/databases/$(database)/documents/tournaments/$(tournamentId)).data.userId == request.auth.uid;
+    }
+
+    function isValidPlayerStats(data, userId) {
+      return data.uid is string &&
+             data.uid == userId &&
+             (!('displayName' in data) || data.displayName is string) &&
+             (!('photoURL' in data) || data.photoURL is string) &&
+             (!('region' in data) || data.region is string) &&
+             (!('mmr' in data) || data.mmr is number) &&
+             (!('totalMatches' in data) || data.totalMatches is number) &&
+             (!('wins' in data) || data.wins is number) &&
+             (!('losses' in data) || data.losses is number);
+    }
+
+    function isValidMatchLedger(data) {
+      return data.keys().hasAll(['id', 'uid', 'tournamentId', 'matchId', 'roundId', 'deltaMmr', 'hostUid']) &&
+             data.id is string &&
+             data.uid is string &&
+             data.tournamentId is string &&
+             data.matchId is string &&
+             data.roundId is number &&
+             data.deltaMmr is number &&
+             data.hostUid is string &&
+             (!('result' in data) || data.result in ['win', 'loss', 'draw']) &&
+             (!('scoreFor' in data) || data.scoreFor is number) &&
+             (!('scoreAgainst' in data) || data.scoreAgainst is number);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -217,6 +250,31 @@ service cloud.firestore {
       allow delete: if isAuthenticated() &&
                     resource.data.hostUid is string &&
                     resource.data.hostUid == request.auth.uid;
+    }
+
+    match /player_stats/{userId} {
+      allow read: if isAuthenticated();
+      // Server-controlled aggregate (written by Cloud Functions / Admin SDK).
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /player_match_ledger/{entryId} {
+      allow read: if isAuthenticated() &&
+        (
+          (resource.data.uid is string && resource.data.uid == request.auth.uid) ||
+          isAdmin()
+        );
+      // Server-controlled immutable ledger (written by Cloud Functions / Admin SDK).
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    match /tournament_stat_runs/{tournamentId} {
+      allow read: if isAuthenticated();
+      // Server-controlled idempotency marker (written by Cloud Functions / Admin SDK).
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     // Default deny

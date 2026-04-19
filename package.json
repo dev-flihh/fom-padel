@@ -11,7 +11,8 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "docs:sync:gdocs": "node scripts/sync-docs-to-gdocs.mjs",
-    "backfill:total-matches": "node scripts/backfill-total-matches.mjs"
+    "backfill:total-matches": "node scripts/backfill-total-matches.mjs",
+    "backfill:stats-ledger": "node scripts/backfill-player-stats-ledger.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
