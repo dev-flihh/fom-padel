@@ -1115,6 +1115,7 @@ const LoginScreen = () => {
     else if (err.code === 'auth/too-many-requests') setError('Too many attempts. Please wait and try again.');
     else if (err.code === 'auth/popup-blocked') setError('Login popup was blocked. Please allow popups and try again.');
     else if (err.code === 'auth/popup-closed-by-user') setError('Login was canceled before completion.');
+    else if (err.code === 'auth/missing-initial-state') setError('Google redirect login could not be completed in this browser. Please retry with popup login.');
     else if (err.code === 'auth/unauthorized-domain') setError('This domain is not authorized in Firebase Authentication.');
     else if (err.code === 'auth/account-exists-with-different-credential') setError('This email is linked to another sign-in method.');
     else setError('Something went wrong. Please try again.');
@@ -1195,28 +1196,24 @@ const LoginScreen = () => {
       }
     };
 
+    const canUseRedirectFallback = () => {
+      if (typeof window === 'undefined') return false;
+      try {
+        const probeKey = '__auth_redirect_probe__';
+        window.sessionStorage.setItem(probeKey, '1');
+        window.sessionStorage.removeItem(probeKey);
+      } catch {
+        return false;
+      }
+      const isStandalonePwa = window.matchMedia('(display-mode: standalone)').matches;
+      return !isStandalonePwa;
+    };
+
     setError('');
     setLoading(true);
     try {
-      const isLocalDevHost =
-        typeof window !== 'undefined' &&
-        (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-      const isMobileOrStandalone =
-        typeof window !== 'undefined' &&
-        (window.matchMedia('(display-mode: standalone)').matches ||
-          /iPhone|iPad|iPod|Android/i.test(window.navigator.userAgent));
-
-      if (isLocalDevHost) {
-        await signInWithPopup(auth, provider);
-        return;
-      }
-
-      if (isMobileOrStandalone) {
-        await prepareRedirectAuth();
-        await signInWithRedirect(auth, provider);
-        return;
-      }
-
+      // Prefer popup on all platforms to avoid redirect state-loss issues
+      // in storage-partitioned browsers.
       await signInWithPopup(auth, provider);
     } catch (err) {
       const authCode = (err as { code?: string })?.code;
@@ -1225,11 +1222,8 @@ const LoginScreen = () => {
         authCode === 'auth/cancelled-popup-request' ||
         authCode === 'auth/operation-not-supported-in-this-environment'
       ) {
-        if (
-          typeof window !== 'undefined' &&
-          (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-        ) {
-          setError(`${providerName} login popup was blocked on localhost. Please allow popups and try again.`);
+        if (!canUseRedirectFallback()) {
+          setError(`${providerName} login popup is unavailable in this browser. Please open this app in a regular browser tab and try again.`);
           return;
         }
         try {
