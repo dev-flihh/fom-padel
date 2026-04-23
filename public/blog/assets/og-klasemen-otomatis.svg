@@ -1,0 +1,20 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="630" fill="#111827"/>
+  <rect x="42" y="42" width="1116" height="546" rx="28" fill="url(#bg)"/>
+  <circle cx="1004" cy="126" r="170" fill="#FF7A1A" fill-opacity="0.18"/>
+  <circle cx="220" cy="558" r="170" fill="#9CA3AF" fill-opacity="0.12"/>
+  <text x="84" y="118" fill="#FDE3CF" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700" letter-spacing="2">FITUR</text>
+  <text x="84" y="210" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700">Klasemen otomatis:</text>
+  <text x="84" y="282" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700">dari skor masuk</text>
+  <text x="84" y="354" fill="white" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700">sampai podium siap</text>
+  <text x="84" y="430" fill="#E5E7EB" font-family="Arial, Helvetica, sans-serif" font-size="28">Biar penutupan session terasa rapi tanpa spreadsheet dadakan.</text>
+  <rect x="84" y="486" width="350" height="54" rx="27" fill="rgba(255,255,255,0.12)"/>
+  <text x="114" y="521" fill="#FFF7ED" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">FOM Play Blog</text>
+  <defs>
+    <linearGradient id="bg" x1="72" y1="64" x2="1126" y2="588" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#281B16"/>
+      <stop offset="0.45" stop-color="#1E2431"/>
+      <stop offset="1" stop-color="#141821"/>
+    </linearGradient>
+  </defs>
+</svg>

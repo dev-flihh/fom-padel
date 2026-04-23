@@ -155,9 +155,91 @@ service cloud.firestore {
              data.roundId is number &&
              data.deltaMmr is number &&
              data.hostUid is string &&
+             (!('playerName' in data) || data.playerName is string) &&
+             (!('tournamentName' in data) || data.tournamentName is string) &&
+             (!('matchSequence' in data) || data.matchSequence is number) &&
              (!('result' in data) || data.result in ['win', 'loss', 'draw']) &&
              (!('scoreFor' in data) || data.scoreFor is number) &&
-             (!('scoreAgainst' in data) || data.scoreAgainst is number);
+             (!('scoreAgainst' in data) || data.scoreAgainst is number) &&
+             (!('scoreDiff' in data) || data.scoreDiff is number) &&
+             (!('teamSummary' in data) || data.teamSummary is string) &&
+             (!('opponentSummary' in data) || data.opponentSummary is string) &&
+             (!('teamAverageMmr' in data) || data.teamAverageMmr is number) &&
+             (!('opponentAverageMmr' in data) || data.opponentAverageMmr is number) &&
+             (!('isUnderdog' in data) || data.isUnderdog is bool) &&
+             (!('isFavorite' in data) || data.isFavorite is bool) &&
+             (!('mmrBefore' in data) || data.mmrBefore is number) &&
+             (!('mmrAfter' in data) || data.mmrAfter is number) &&
+             (!('baseDeltaMmr' in data) || data.baseDeltaMmr is number) &&
+             (!('modifierDeltaMmr' in data) || data.modifierDeltaMmr is number) &&
+             (!('reasonCode' in data) || data.reasonCode is string) &&
+             (!('reasonLabel' in data) || data.reasonLabel is string) &&
+             (!('baseReasonLabel' in data) || data.baseReasonLabel is string) &&
+             (!('modifierCode' in data) || data.modifierCode is string) &&
+             (!('modifierLabel' in data) || data.modifierLabel is string);
+    }
+
+    function isValidFeedbackSubmission(data) {
+      return data.keys().hasAll([
+               'uid',
+               'displayName',
+               'username',
+               'email',
+               'category',
+               'message',
+               'screen',
+               'source',
+               'status',
+               'appVersion',
+               'providerIds',
+               'clientTimestamp',
+               'route',
+               'displayMode',
+               'viewport',
+               'userAgent',
+               'context',
+               'createdAt'
+             ]) &&
+             data.uid is string &&
+             data.uid == request.auth.uid &&
+             data.displayName is string &&
+             data.displayName.size() <= 100 &&
+             data.username is string &&
+             data.username.size() <= 30 &&
+             data.email is string &&
+             data.email == request.auth.token.email &&
+             data.category is string &&
+             data.category in ['bug', 'feature_request', 'ui_ux', 'other'] &&
+             data.message is string &&
+             data.message.size() > 0 &&
+             data.message.size() <= 1000 &&
+             data.screen is string &&
+             data.screen == 'profile' &&
+             data.source is string &&
+             data.source == 'profile_settings' &&
+             data.status is string &&
+             data.status == 'new' &&
+             data.appVersion is string &&
+             data.appVersion.size() <= 40 &&
+             data.providerIds is list &&
+             data.providerIds.size() <= 5 &&
+             data.clientTimestamp is string &&
+             data.clientTimestamp.size() <= 64 &&
+             data.route is string &&
+             data.route.size() <= 120 &&
+             data.displayMode is string &&
+             data.displayMode in ['browser', 'standalone', 'unknown'] &&
+             (
+               data.viewport == null ||
+               (data.viewport is string && data.viewport.size() <= 32)
+             ) &&
+             data.userAgent is string &&
+             data.userAgent.size() <= 1000 &&
+             data.context is map &&
+             (!('mmr' in data.context) || data.context.mmr is number) &&
+             (!('totalMatches' in data.context) || data.context.totalMatches is number) &&
+             (!('winRate' in data.context) || data.context.winRate is number) &&
+             data.createdAt == request.time;
     }
 
     // ===============================================================
@@ -166,9 +248,15 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      // Temporary unblock: allow owner to create/update own profile document.
-      // We keep admin-only delete and strict subcollection rules below.
-      allow create, update: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+        !('role' in request.resource.data);
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        (
+          !('role' in request.resource.data) ||
+          request.resource.data.role == resource.data.role
+        )
+      );
       allow delete: if isAdmin();
 
       match /friends/{friendId} {
@@ -275,6 +363,11 @@ service cloud.firestore {
       // Server-controlled idempotency marker (written by Cloud Functions / Admin SDK).
       allow create, update: if isAdmin();
       allow delete: if isAdmin();
+    }
+
+    match /feedback_submissions/{feedbackId} {
+      allow create: if isAuthenticated() && isValidFeedbackSubmission(request.resource.data);
+      allow read, update, delete: if isAdmin();
     }
 
     // Default deny

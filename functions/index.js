@@ -11,33 +11,162 @@ const db = getFirestore(undefined, DATABASE_ID);
 
 const isLikelyFirebaseUid = (value = '') => /^[A-Za-z0-9_-]{20,}$/.test(String(value).trim());
 const toSafeDocId = (value) => String(value || '').replace(/[^A-Za-z0-9_-]/g, '_');
-
-const calculateMMRChange = (isWin, scoreDiff, isUnderdog = false, isFavorite = false) => {
-  let change = 0;
-  if (isWin) {
-    change = scoreDiff >= 10 ? 40 : 25;
-    if (isUnderdog) change += 15;
-  } else {
-    change = scoreDiff >= 10 ? -35 : -20;
-    if (isFavorite) change -= 15;
-  }
-  return change;
+const toNumber = (value, fallback = 0) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
 };
 
-const collectTournamentAggregates = (tournamentData, tournamentId) => {
+const getBaseMMRChange = (isWin, scoreDiff) => {
+  if (isWin) return scoreDiff >= 10 ? 40 : 25;
+  return scoreDiff >= 10 ? -35 : -20;
+};
+
+const getModifierMMRChange = (isWin, isUnderdog, isFavorite) => {
+  if (isWin && isUnderdog) return 15;
+  if (!isWin && isFavorite) return -15;
+  return 0;
+};
+
+const calculateMMRChange = (isWin, scoreDiff, isUnderdog = false, isFavorite = false) => (
+  getBaseMMRChange(isWin, scoreDiff) + getModifierMMRChange(isWin, isUnderdog, isFavorite)
+);
+
+const buildResultReason = (isDraw, isWin, scoreDiff, isUnderdog, isFavorite) => {
+  if (isDraw) {
+    return {
+      reasonCode: 'draw',
+      reasonLabel: 'Draw',
+      baseReasonLabel: 'Draw',
+      modifierCode: 'none',
+      modifierLabel: '',
+    };
+  }
+
+  const dominant = scoreDiff >= 10;
+  const reasonCode = isWin
+    ? (dominant ? 'dominant_win' : 'standard_win')
+    : (dominant ? 'heavy_loss' : 'standard_loss');
+  const baseReasonLabel = isWin
+    ? (dominant ? 'Dominant Win' : 'Standard Win')
+    : (dominant ? 'Heavy Loss' : 'Standard Loss');
+  const modifierCode = isWin
+    ? (isUnderdog ? 'underdog_bonus' : 'none')
+    : (isFavorite ? 'favorite_penalty' : 'none');
+  const modifierLabel = modifierCode === 'underdog_bonus'
+    ? 'Underdog Bonus'
+    : modifierCode === 'favorite_penalty'
+      ? 'Favorite Penalty'
+      : '';
+
+  return {
+    reasonCode,
+    reasonLabel: modifierLabel ? `${baseReasonLabel} + ${modifierLabel}` : baseReasonLabel,
+    baseReasonLabel,
+    modifierCode,
+    modifierLabel,
+  };
+};
+
+const summarizePlayers = (players = []) => players
+  .map((player) => String(player?.name || '').trim())
+  .filter(Boolean)
+  .join(' / ');
+
+const getTeamAverageMmr = (players, runningMmrByUid) => {
+  if (!Array.isArray(players) || players.length === 0) return 0;
+  const total = players.reduce((sum, player) => sum + toNumber(runningMmrByUid.get(player.id), 0), 0);
+  return Math.round((total / players.length) * 100) / 100;
+};
+
+const getUniqueMatchPlayers = (players = []) => Array.from(
+  new Map(
+    (Array.isArray(players) ? players : [])
+      .filter((player) => player && typeof player?.id === 'string' && player.id.trim().length > 0)
+      .map((player) => [player.id, player])
+  ).values()
+);
+
+const collectParticipantUids = (tournamentData) => {
+  const uids = new Set();
+  const rounds = Array.isArray(tournamentData?.rounds) ? tournamentData.rounds : [];
+
+  for (const round of rounds) {
+    const matches = Array.isArray(round?.matches) ? round.matches : [];
+    for (const match of matches) {
+      const teamAPlayers = getUniqueMatchPlayers(match?.teamA?.players);
+      const teamBPlayers = getUniqueMatchPlayers(match?.teamB?.players);
+      for (const player of [...teamAPlayers, ...teamBPlayers]) {
+        const uid = typeof player?.id === 'string' ? player.id.trim() : '';
+        if (uid && isLikelyFirebaseUid(uid)) uids.add(uid);
+      }
+    }
+  }
+
+  return Array.from(uids);
+};
+
+const loadCurrentMmrByUid = async (uids) => {
+  if (!Array.isArray(uids) || uids.length === 0) return new Map();
+
+  const statsRefs = uids.map((uid) => db.collection('player_stats').doc(uid));
+  const userRefs = uids.map((uid) => db.collection('users').doc(uid));
+  const [statsDocs, userDocs] = await Promise.all([
+    db.getAll(...statsRefs),
+    db.getAll(...userRefs),
+  ]);
+
+  const baselineMmrByUid = new Map();
+  uids.forEach((uid, index) => {
+    const statsData = statsDocs[index]?.data() || {};
+    const userData = userDocs[index]?.data() || {};
+    const statsMmr = toNumber(statsData?.mmr, NaN);
+    const userMmr = toNumber(userData?.mmr, NaN);
+    baselineMmrByUid.set(
+      uid,
+      Number.isFinite(statsMmr) ? statsMmr : (Number.isFinite(userMmr) ? userMmr : 0)
+    );
+  });
+
+  return baselineMmrByUid;
+};
+
+const collectTournamentAggregates = (tournamentData, tournamentId, baselineMmrByUid = new Map()) => {
   const rounds = Array.isArray(tournamentData?.rounds) ? tournamentData.rounds : [];
   const format = tournamentData?.format || 'Americano';
+  const tournamentName = typeof tournamentData?.name === 'string' ? tournamentData.name : '';
   const hostUid = typeof tournamentData?.userId === 'string' ? tournamentData.userId : '';
   const participantMap = new Map();
   const ledgerEntries = [];
+  const runningMmrByUid = new Map(baselineMmrByUid);
+  let matchSequence = 0;
 
-  const upsertParticipant = (participant, ownScore, opponentScore, match, team) => {
+  const upsertParticipant = ({
+    participant,
+    ownScore,
+    opponentScore,
+    match,
+    team,
+    ownTeamPlayers,
+    opponentPlayers,
+    ownTeamAverageMmr,
+    opponentTeamAverageMmr,
+    isUnderdog,
+    isFavorite,
+  }) => {
     const uid = typeof participant?.id === 'string' ? participant.id.trim() : '';
     if (!uid || !isLikelyFirebaseUid(uid)) return;
 
-    const isDraw = ownScore === opponentScore;
-    const isWin = ownScore > opponentScore;
-    const deltaMmr = isDraw ? 0 : calculateMMRChange(isWin, Math.abs(ownScore - opponentScore), false, false);
+    const safeOwnScore = toNumber(ownScore, 0);
+    const safeOpponentScore = toNumber(opponentScore, 0);
+    const scoreDiff = Math.abs(safeOwnScore - safeOpponentScore);
+    const isDraw = safeOwnScore === safeOpponentScore;
+    const isWin = safeOwnScore > safeOpponentScore;
+    const currentMmrBefore = toNumber(runningMmrByUid.get(uid), 0);
+    const baseDeltaMmr = isDraw ? 0 : getBaseMMRChange(isWin, scoreDiff);
+    const modifierDeltaMmr = isDraw ? 0 : getModifierMMRChange(isWin, isUnderdog, isFavorite);
+    const deltaMmr = isDraw ? 0 : calculateMMRChange(isWin, scoreDiff, isUnderdog, isFavorite);
+    const mmrAfter = currentMmrBefore + deltaMmr;
+    const reason = buildResultReason(isDraw, isWin, scoreDiff, isUnderdog, isFavorite);
     const existing = participantMap.get(uid) || {
       uid,
       displayName: participant?.name || '',
@@ -46,52 +175,103 @@ const collectTournamentAggregates = (tournamentData, tournamentId) => {
       wins: 0,
       losses: 0,
       mmrDelta: 0,
+      latestMmr: currentMmrBefore,
     };
 
     existing.matches += 1;
     if (isWin) existing.wins += 1;
     if (!isWin && !isDraw) existing.losses += 1;
     existing.mmrDelta += deltaMmr;
+    existing.latestMmr = mmrAfter;
     if (!existing.displayName && participant?.name) existing.displayName = participant.name;
     if (!existing.photoURL && participant?.avatar) existing.photoURL = participant.avatar;
     participantMap.set(uid, existing);
+    runningMmrByUid.set(uid, mmrAfter);
 
     const ledgerId = toSafeDocId(`${tournamentId}_${match.id}_${uid}`);
     ledgerEntries.push({
       id: ledgerId,
       uid,
+      playerName: participant?.name || '',
       tournamentId,
+      tournamentName,
       matchId: match.id,
       roundId: Number(match.roundId || 0),
+      matchSequence,
       format,
       team,
-      scoreFor: Number(ownScore || 0),
-      scoreAgainst: Number(opponentScore || 0),
+      scoreFor: safeOwnScore,
+      scoreAgainst: safeOpponentScore,
+      scoreDiff,
       result: isDraw ? 'draw' : (isWin ? 'win' : 'loss'),
+      teamSummary: summarizePlayers(ownTeamPlayers),
+      opponentSummary: summarizePlayers(opponentPlayers),
+      teamAverageMmr: ownTeamAverageMmr,
+      opponentAverageMmr: opponentTeamAverageMmr,
+      isUnderdog: Boolean(!isDraw && isUnderdog),
+      isFavorite: Boolean(!isDraw && isFavorite),
+      mmrBefore: currentMmrBefore,
+      mmrAfter,
+      baseDeltaMmr,
+      modifierDeltaMmr,
+      reasonCode: reason.reasonCode,
+      reasonLabel: reason.reasonLabel,
+      baseReasonLabel: reason.baseReasonLabel,
+      modifierCode: reason.modifierCode,
+      modifierLabel: reason.modifierLabel,
       deltaMmr,
       hostUid,
       playedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
-      source: 'cloud_function_v1',
+      source: 'cloud_function_v2',
     });
   };
 
-  for (const round of rounds) {
+  for (const round of rounds.sort((a, b) => toNumber(a?.id, 0) - toNumber(b?.id, 0))) {
     const matches = Array.isArray(round?.matches) ? round.matches : [];
     for (const match of matches) {
       if (!match || match.status === 'pending') continue;
-      const teamAPlayersRaw = Array.isArray(match?.teamA?.players) ? match.teamA.players : [];
-      const teamBPlayersRaw = Array.isArray(match?.teamB?.players) ? match.teamB.players : [];
-      const teamAPlayers = Array.from(new Map(teamAPlayersRaw.map((p) => [p?.id, p])).values()).filter(Boolean);
-      const teamBPlayers = Array.from(new Map(teamBPlayersRaw.map((p) => [p?.id, p])).values()).filter(Boolean);
-      const teamAScore = Number(match?.teamA?.score || 0);
-      const teamBScore = Number(match?.teamB?.score || 0);
+      matchSequence += 1;
+      const teamAPlayers = getUniqueMatchPlayers(match?.teamA?.players).filter((player) => isLikelyFirebaseUid(player.id));
+      const teamBPlayers = getUniqueMatchPlayers(match?.teamB?.players).filter((player) => isLikelyFirebaseUid(player.id));
+      const teamAScore = toNumber(match?.teamA?.score, 0);
+      const teamBScore = toNumber(match?.teamB?.score, 0);
+      const teamAAverageMmr = getTeamAverageMmr(teamAPlayers, runningMmrByUid);
+      const teamBAverageMmr = getTeamAverageMmr(teamBPlayers, runningMmrByUid);
+      const teamAIsUnderdog = teamAAverageMmr < teamBAverageMmr;
+      const teamAIsFavorite = teamAAverageMmr > teamBAverageMmr;
+      const teamBIsUnderdog = teamBAverageMmr < teamAAverageMmr;
+      const teamBIsFavorite = teamBAverageMmr > teamAAverageMmr;
 
       for (const player of teamAPlayers) {
-        upsertParticipant(player, teamAScore, teamBScore, match, 'A');
+        upsertParticipant({
+          participant: player,
+          ownScore: teamAScore,
+          opponentScore: teamBScore,
+          match,
+          team: 'A',
+          ownTeamPlayers: teamAPlayers,
+          opponentPlayers: teamBPlayers,
+          ownTeamAverageMmr: teamAAverageMmr,
+          opponentTeamAverageMmr: teamBAverageMmr,
+          isUnderdog: teamAIsUnderdog,
+          isFavorite: teamAIsFavorite,
+        });
       }
       for (const player of teamBPlayers) {
-        upsertParticipant(player, teamBScore, teamAScore, match, 'B');
+        upsertParticipant({
+          participant: player,
+          ownScore: teamBScore,
+          opponentScore: teamAScore,
+          match,
+          team: 'B',
+          ownTeamPlayers: teamBPlayers,
+          opponentPlayers: teamAPlayers,
+          ownTeamAverageMmr: teamBAverageMmr,
+          opponentTeamAverageMmr: teamAAverageMmr,
+          isUnderdog: teamBIsUnderdog,
+          isFavorite: teamBIsFavorite,
+        });
       }
     }
   }
@@ -147,7 +327,9 @@ exports.onTournamentFinalized = onDocumentWritten(
 
     if (!shouldApply) return;
 
-    const aggregates = collectTournamentAggregates(after, tournamentId);
+    const participantUids = collectParticipantUids(after);
+    const baselineMmrByUid = await loadCurrentMmrByUid(participantUids);
+    const aggregates = collectTournamentAggregates(after, tournamentId, baselineMmrByUid);
     const batch = db.batch();
 
     for (const summary of aggregates.participantSummaries) {

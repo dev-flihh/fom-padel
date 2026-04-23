@@ -22,6 +22,15 @@ Main goals:
 ## 3. Environments and URLs
 - Primary hosting URL: `https://gen-lang-client-0996764238.web.app`
 - Custom domain target: `https://fomplay.asia` (when SSL fully active)
+- Hybrid homepage target: `https://fomplay.asia/`
+- Main app shell target: `https://fomplay.asia/app`
+- Shared match links remain query-based on current domain: `?shared={id}`
+
+## 3.1 Public route strategy
+- Root `/` is a hybrid homepage: branding, value explanation, feature summary, SEO text, and CTA to app.
+- App experience lives under `/app` while existing internal screen-state navigation remains in the React app shell.
+- Initial public routes implemented in the app shell include `/fitur`, `/format/americano`, `/format/mexicano`, `/format/match-play`, `/ranking`, `/faq`, and `/edukasi/perbedaan-americano-vs-mexicano`.
+- Public routes update page metadata dynamically and inject basic structured data for SEO.
 
 ## 4. Data Model (Canonical)
 From `src/types.ts`:
@@ -64,6 +73,7 @@ Features:
 - Google sign-in.
 - Forgot password.
 - OTP phone login flow scaffold.
+- Primary app entry route target: `/app`
 
 Rules:
 - Email provider must be enabled in Firebase Auth.

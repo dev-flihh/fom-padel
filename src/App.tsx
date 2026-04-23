@@ -26,6 +26,7 @@ import {
   Circle,
   Settings,
   LogOut,
+  SlidersHorizontal,
   MapPin,
   Award,
   TrendingUp,
@@ -34,28 +35,34 @@ import {
   Instagram,
   RefreshCw,
   Mail,
+  Inbox,
   Download,
   Building2,
   AlertTriangle,
+  CircleHelp,
   Globe,
+  type LucideIcon,
 } from 'lucide-react';
 import { cn } from './lib/utils';
-import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus, CourtChange } from './types';
+import { Screen, Player, Tournament, Match, Round, MatchFormat, RankingCriteria, AppNotification, ScoringType, TournamentHistory, RankTier, UserProfile, Friend, FriendRequest, FriendRequestStatus, CourtChange, PlayerMatchLedgerEntry } from './types';
 import { INITIAL_PLAYERS, INITIAL_TOURNAMENT } from './constants';
-import { auth, db, googleProvider, appleProvider } from './firebase';
+import { auth, db, storage, googleProvider, appleProvider } from './firebase';
 import { getScreenRoute, resolveTrackableButton, syncAnalyticsUser, trackButtonClick, trackPageView } from './analytics';
+import { ARCHIVE_BASE_PATH, TOP_LEVEL_PATHS, getTopLevelPath, type TopLevelRoute, type PublicTopLevelRoute, PUBLIC_PAGE_META, PUBLIC_SOCIAL_IMAGE_PATH, resolveTopLevelRoute, getCanonicalUrlForRoute, getPublicStructuredData, PublicMarketingRouter } from './marketing';
 import { RegionSelector } from './components/RegionSelector';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
   signOut,
+  fetchSignInMethodsForEmail,
   sendPasswordResetEmail,
-  updateProfile
+  updateProfile,
+  type AuthProvider
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp, collection, query, where, getDocs, orderBy, onSnapshot, documentId } from 'firebase/firestore';
+import { addDoc, doc, setDoc, getDoc, serverTimestamp, collection, query, where, getDocs, orderBy, onSnapshot, documentId } from 'firebase/firestore';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 const Logo = ({ className }: { className?: string }) => (
   <img
@@ -134,6 +141,207 @@ const getRankInfo = (mmr: number) => {
   const nextRank = RANK_TIERS[RANK_TIERS.indexOf(rank) + 1];
   const progress = nextRank ? ((mmr - rank.min) / (nextRank.min - rank.min)) * 100 : 100;
   return { ...rank, progress, nextRank };
+};
+
+const getLedgerEntryDate = (value?: any) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value?.toDate === 'function') {
+    const date = value.toDate();
+    return date instanceof Date && !Number.isNaN(date.getTime()) ? date : null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const getLedgerEntryTimestamp = (entry: Pick<PlayerMatchLedgerEntry, 'playedAt' | 'createdAt'>) => (
+  getLedgerEntryDate(entry.playedAt) || getLedgerEntryDate(entry.createdAt)
+);
+
+const formatMmrDelta = (value?: number) => {
+  const safeValue = Number(value || 0);
+  return `${safeValue >= 0 ? '+' : ''}${safeValue.toLocaleString()}`;
+};
+
+const formatLedgerEntryDate = (date: Date | null) => {
+  if (!date) return 'Unknown time';
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+};
+
+const getLedgerGroupLabel = (date: Date | null) => {
+  if (!date) return 'Unknown date';
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const diffDays = Math.round((startOfToday - startOfTarget) / (24 * 60 * 60 * 1000));
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return date.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric'
+  });
+};
+
+const getPasswordResetActionSettings = () => {
+  if (typeof window === 'undefined') return undefined;
+  return {
+    url: `${window.location.origin}/app`,
+    handleCodeInApp: false
+  };
+};
+
+const getProviderLabel = (providerId?: string) => {
+  if (providerId === 'google.com') return 'Google';
+  if (providerId === 'apple.com') return 'Apple';
+  if (providerId === 'password') return 'email and password';
+  return 'another sign-in method';
+};
+
+const withTimeout = async <T,>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
+const canUseSessionStorage = () => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const key = '__fom_auth_storage_check__';
+    window.sessionStorage.setItem(key, '1');
+    window.sessionStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const getSocialAuthBrowserWarning = () => {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return null;
+  if (!canUseSessionStorage()) {
+    return 'Google or Apple login cannot continue because this browser blocks temporary login storage. Please open FOM Play in Chrome or Safari, or use email login.';
+  }
+
+  const ua = navigator.userAgent.toLowerCase();
+  const isAndroidWebView = /\bwv\b/.test(ua) || /; wv\)/.test(ua);
+  const isInAppBrowser = /fbav|fban|fb_iab|instagram|line\/|micromessenger|tiktok|twitter|linkedinapp|whatsapp|telegram/.test(ua);
+
+  if (isAndroidWebView || isInAppBrowser) {
+    return 'Google or Apple login may fail in this in-app browser. Please open FOM Play in Chrome or Safari, or use email login.';
+  }
+
+  return null;
+};
+
+const ADMIN_EMAILS = ['falih.hrmn@gmail.com'];
+
+const isAdminEmail = (email?: string | null) => (
+  ADMIN_EMAILS.includes((email || '').trim().toLowerCase())
+);
+
+const resolveNotificationTone = (
+  notification: Pick<AppNotification, 'type' | 'tone'>
+): NonNullable<AppNotification['tone']> => {
+  if (notification.tone) return notification.tone;
+  if (notification.type === 'achievement') return 'achievement';
+  if (notification.type === 'match' || notification.type === 'tournament') return 'success';
+  return 'info';
+};
+
+const getNotificationVisuals = (notification: Pick<AppNotification, 'type' | 'tone'>) => {
+  const tone = resolveNotificationTone(notification);
+  if (tone === 'error') {
+    return {
+      tone,
+      cardClass: 'bg-[#fff6f5]/96 border-[#ef4444]/12',
+      iconWrapClass: 'bg-[#ef4444]/10 text-[#ef4444]',
+      titleClass: 'text-[#b42318]',
+      messageClass: 'text-[#b42318]/82',
+      dismissClass: 'text-[#b42318]/55',
+      unreadRowClass: 'bg-[#fff6f5]',
+      readRowClass: 'bg-white',
+      icon: AlertTriangle,
+    };
+  }
+  if (tone === 'success') {
+    return {
+      tone,
+      cardClass: 'bg-[#f4fbf6]/96 border-[#16a34a]/12',
+      iconWrapClass: 'bg-[#16a34a]/10 text-[#16a34a]',
+      titleClass: 'text-[#166534]',
+      messageClass: 'text-[#166534]/82',
+      dismissClass: 'text-[#166534]/55',
+      unreadRowClass: 'bg-[#f4fbf6]',
+      readRowClass: 'bg-white',
+      icon: Check,
+    };
+  }
+  if (tone === 'achievement') {
+    return {
+      tone,
+      cardClass: 'bg-[#fffaf0]/96 border-[#f59e0b]/14',
+      iconWrapClass: 'bg-[#f59e0b]/12 text-[#d97706]',
+      titleClass: 'text-[#92400e]',
+      messageClass: 'text-[#92400e]/82',
+      dismissClass: 'text-[#92400e]/55',
+      unreadRowClass: 'bg-[#fffaf0]',
+      readRowClass: 'bg-white',
+      icon: Award,
+    };
+  }
+  if (notification.type === 'match') {
+    return {
+      tone,
+      cardClass: 'bg-white/96 border-black/6',
+      iconWrapClass: 'bg-blue-500/10 text-blue-500',
+      titleClass: 'text-on-surface',
+      messageClass: 'text-on-surface/72',
+      dismissClass: 'text-ios-gray/55',
+      unreadRowClass: 'bg-blue-500/5',
+      readRowClass: 'bg-white',
+      icon: Trophy,
+    };
+  }
+  if (notification.type === 'tournament') {
+    return {
+      tone,
+      cardClass: 'bg-white/96 border-black/6',
+      iconWrapClass: 'bg-primary/10 text-primary',
+      titleClass: 'text-on-surface',
+      messageClass: 'text-on-surface/72',
+      dismissClass: 'text-ios-gray/55',
+      unreadRowClass: 'bg-primary/5',
+      readRowClass: 'bg-white',
+      icon: Zap,
+    };
+  }
+  return {
+    tone,
+    cardClass: 'bg-white/96 border-black/6',
+    iconWrapClass: 'bg-ios-gray/10 text-ios-gray',
+    titleClass: 'text-on-surface',
+    messageClass: 'text-on-surface/72',
+    dismissClass: 'text-ios-gray/55',
+    unreadRowClass: 'bg-ios-gray/5',
+    readRowClass: 'bg-white',
+    icon: Bell,
+  };
 };
 
 const MANUAL_PLAYER_ID_PREFIX = 'manual_';
@@ -951,59 +1159,143 @@ const buildCompletedMatchHistoryItems = (
   return items;
 };
 
+const getHistoryFormatTheme = (format: TournamentHistory['format']) => (
+  format === 'Americano'
+    ? {
+      badge: 'border-emerald-500/15 bg-emerald-500/10 text-emerald-700',
+      chip: 'border-emerald-500/10 bg-emerald-500/[0.06] text-emerald-700',
+      accent: 'text-emerald-700',
+      accentSoft: 'text-emerald-700/72',
+      surface: 'bg-[linear-gradient(135deg,rgba(16,185,129,0.11)_0%,rgba(255,255,255,0.98)_72%)]'
+    }
+    : format === 'Mexicano'
+      ? {
+        badge: 'border-primary/15 bg-primary/10 text-primary',
+        chip: 'border-primary/10 bg-primary/[0.06] text-primary',
+        accent: 'text-primary',
+        accentSoft: 'text-primary/72',
+        surface: 'bg-[linear-gradient(135deg,rgba(255,85,1,0.10)_0%,rgba(255,255,255,0.98)_72%)]'
+      }
+      : {
+        badge: 'border-blue-500/15 bg-blue-500/10 text-blue-700',
+        chip: 'border-blue-500/10 bg-blue-500/[0.06] text-blue-700',
+        accent: 'text-blue-700',
+        accentSoft: 'text-blue-700/72',
+        surface: 'bg-[linear-gradient(135deg,rgba(59,130,246,0.10)_0%,rgba(255,255,255,0.98)_72%)]'
+      }
+);
+
 const CompletedMatchHistoryCard = ({
   item,
   onClick,
   showTournamentMeta = true
 }: CompletedMatchHistoryCardProps) => {
-  const content = (
-    <>
-      <div className="flex justify-between items-start gap-3 mb-3">
-        <div className="min-w-0">
-          <span className="text-[10px] font-bold text-ios-gray uppercase tracking-wider mb-1 block">
-            {item.tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
-          </span>
-          <h4 className="text-[16px] font-bold text-on-surface leading-tight truncate">
-            {showTournamentMeta ? item.tournament.name : `Round ${item.roundId} • Court ${item.match.court}`}
-          </h4>
-          {showTournamentMeta && (
-            <span className="text-[12px] font-medium text-ios-gray truncate block">
-              Round {item.roundId} • Court {item.match.court}
-            </span>
+  const formatTheme = getHistoryFormatTheme(item.tournament.format);
+  const teamAScore = Number(item.match.teamA.score || 0);
+  const teamBScore = Number(item.match.teamB.score || 0);
+  const teamAWin = teamAScore > teamBScore;
+  const teamBWin = teamBScore > teamAScore;
+  const metaLabel = `Round ${item.roundId} • Court ${item.match.court}`;
+  const dateLabel = item.tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  const sharedButtonClass = 'w-full rounded-[24px] p-4 text-left border border-black/5 shadow-sm transition-all';
+
+  const renderPlayerStack = (players: Player[]) => (
+    <div className="flex -space-x-2">
+      {players.map((player, index) => (
+        <div
+          key={`${player.id}-${index}`}
+          className="h-8 w-8 overflow-hidden rounded-full border-2 border-white bg-ios-gray/10 flex items-center justify-center text-[10px] font-bold text-ios-gray shadow-sm"
+        >
+          {player.avatar ? (
+            <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+          ) : (
+            <span>{player.initials || player.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span>
           )}
         </div>
+      ))}
+    </div>
+  );
+
+  const renderTeamBlock = (
+    label: string,
+    players: Player[],
+    alignment: 'left' | 'right',
+    isWinner: boolean
+  ) => (
+    <div
+      className={cn(
+        'rounded-[18px] border px-3 py-3',
+        isWinner ? cn('bg-white shadow-sm', formatTheme.badge) : 'border-black/5 bg-white/75'
+      )}
+    >
+      <div className={cn('flex items-center gap-2.5', alignment === 'right' && 'sm:justify-end')}>
+        {alignment === 'left' && renderPlayerStack(players)}
+        <div className={cn('min-w-0 flex-1', alignment === 'right' && 'sm:text-right')}>
+          <p className={cn('text-[10px] font-bold uppercase tracking-[0.12em]', isWinner ? 'opacity-80' : 'text-ios-gray/72')}>
+            {label}
+          </p>
+          <p className={cn('mt-1 text-[13px] font-semibold leading-snug text-on-surface', alignment === 'right' && 'sm:truncate')}>
+            {players.map((player) => player.name.split(' ')[0]).join(' / ')}
+          </p>
+        </div>
+        {alignment === 'right' && renderPlayerStack(players)}
+      </div>
+    </div>
+  );
+
+  const content = (
+    <>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray">{dateLabel}</span>
+            <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em]', formatTheme.badge)}>
+              {item.tournament.format}
+            </span>
+          </div>
+          <h4 className="mt-2 text-[16px] font-bold leading-tight tracking-tight text-on-surface truncate">
+            {showTournamentMeta ? item.tournament.name : metaLabel}
+          </h4>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {showTournamentMeta && (
+              <span className="inline-flex rounded-full border border-black/5 bg-white/85 px-2.5 py-1 text-[10px] font-semibold tracking-[0.08em] text-ios-gray">
+                {metaLabel}
+              </span>
+            )}
+            <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.08em]', formatTheme.chip)}>
+              Final score
+            </span>
+          </div>
+        </div>
         {onClick && (
-          <div className="bg-surface p-1.5 rounded-full shrink-0">
-            <ChevronRight size={17} className="text-ios-gray" />
+          <div className="shrink-0 rounded-full border border-black/5 bg-white/85 p-2">
+            <ChevronRight size={17} className={cn(formatTheme.accent)} />
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-        <div className="min-w-0">
-          <p className="text-[11px] font-bold text-ios-gray uppercase tracking-wide mb-1">Team A</p>
-          <p className="text-sm font-semibold text-on-surface truncate">
-            {item.match.teamA.players.map((p) => p.name.split(' ')[0]).join(' / ')}
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+        <div className="rounded-[18px] border border-black/5 bg-white px-3 py-3 text-center shadow-sm sm:order-none">
+          <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-ios-gray/68">Score</p>
+          <div className="mt-1 text-[24px] leading-none font-display font-black tracking-tight tabular-nums whitespace-nowrap">
+            <span className={cn(teamAWin ? formatTheme.accent : 'text-on-surface')}>{teamAScore}</span>
+            <span className="mx-1 text-ios-gray/28">-</span>
+            <span className={cn(teamBWin ? formatTheme.accent : 'text-on-surface')}>{teamBScore}</span>
+          </div>
+          <p className="mt-1 text-[10px] font-semibold text-ios-gray/72">
+            {teamAWin ? 'Team A won' : teamBWin ? 'Team B won' : 'Draw'}
           </p>
         </div>
-        <div className="text-[20px] font-display font-black italic tracking-tighter whitespace-nowrap">
-          <span className="text-primary">{item.match.teamA.score}</span>
-          <span className="text-ios-gray/30 mx-1">-</span>
-          <span className="text-on-surface">{item.match.teamB.score}</span>
-        </div>
-        <div className="min-w-0 text-right">
-          <p className="text-[11px] font-bold text-ios-gray uppercase tracking-wide mb-1">Team B</p>
-          <p className="text-sm font-semibold text-on-surface truncate">
-            {item.match.teamB.players.map((p) => p.name.split(' ')[0]).join(' / ')}
-          </p>
-        </div>
+
+        {renderTeamBlock('Team A', item.match.teamA.players, 'left', teamAWin)}
+        {renderTeamBlock('Team B', item.match.teamB.players, 'right', teamBWin)}
       </div>
     </>
   );
 
   if (!onClick) {
     return (
-      <div className="w-full bg-white rounded-[20px] p-4 text-left shadow-sm border border-ios-gray/10">
+      <div className={cn(sharedButtonClass, 'p-3.5 sm:p-4', formatTheme.surface)}>
         {content}
       </div>
     );
@@ -1012,7 +1304,7 @@ const CompletedMatchHistoryCard = ({
   return (
     <button
       onClick={onClick}
-      className="w-full bg-white rounded-[20px] p-4 text-left shadow-sm border border-ios-gray/10 tap-target"
+      className={cn(sharedButtonClass, 'p-3.5 sm:p-4 tap-target active:scale-[0.99]', formatTheme.surface)}
     >
       {content}
     </button>
@@ -1022,35 +1314,62 @@ const CompletedMatchHistoryCard = ({
 const TournamentHistoryCard = ({
   tournament,
   onClick
-}: TournamentHistoryCardProps) => (
-  <button
-    onClick={onClick}
-    className="w-full bg-white rounded-[20px] p-4 text-left shadow-sm border border-ios-gray/10 tap-target"
-  >
-    <div className="flex justify-between items-start gap-3">
-      <div className="min-w-0">
-        <span className="text-[10px] font-bold text-ios-gray uppercase tracking-wider mb-1 block">
-          {tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
-        </span>
-        <h4 className="text-[17px] font-bold text-on-surface leading-tight truncate">{tournament.name}</h4>
+}: TournamentHistoryCardProps) => {
+  const formatTheme = getHistoryFormatTheme(tournament.format);
+  const completedMatches = buildCompletedMatchHistoryItems([tournament]).length;
+  const placeLabel = [tournament.venueName, tournament.location].filter(Boolean).join(' · ');
+
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'w-full rounded-[24px] sm:rounded-[28px] border border-black/5 p-3.5 sm:p-4 text-left tap-target transition-all active:scale-[0.99]',
+        formatTheme.surface
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[11px] font-semibold tracking-tight text-ios-gray">
+              {tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </span>
+            <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em]', formatTheme.badge)}>
+              {tournament.format}
+            </span>
+          </div>
+          <h4 className="mt-1.5 truncate text-[17px] sm:text-[19px] font-bold tracking-tight text-on-surface">{tournament.name}</h4>
+          <p className="mt-1 text-[12px] sm:text-[13px] leading-relaxed text-ios-gray">
+            {tournament.numPlayers} players • {tournament.numRounds} rounds • {completedMatches} completed matches
+          </p>
+          {placeLabel && (
+            <div className="mt-2.5 inline-flex max-w-full items-center gap-1.5 rounded-full border border-black/5 bg-white/80 px-2.5 py-1.5 text-[10px] sm:text-[11px] font-semibold tracking-tight text-ios-gray">
+              <MapPin size={12} className={cn('shrink-0', formatTheme.accentSoft)} />
+              <span className="truncate">{placeLabel}</span>
+            </div>
+          )}
+        </div>
+        <div className="shrink-0 rounded-full border border-black/5 bg-white/80 p-2">
+          <ChevronRight size={16} className={cn(formatTheme.accent)} />
+        </div>
       </div>
-      <div className="bg-surface p-1.5 rounded-full shrink-0">
-        <ChevronRight size={18} className="text-ios-gray" />
+
+      <div className="mt-3.5 grid grid-cols-3 gap-2">
+        <div className="rounded-[16px] sm:rounded-[18px] border border-black/5 bg-white/82 px-2.5 sm:px-3 py-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/72">Players</p>
+          <p className="mt-1 text-[14px] sm:text-[15px] font-bold tracking-tight text-on-surface tabular-nums">{tournament.numPlayers}</p>
+        </div>
+        <div className="rounded-[16px] sm:rounded-[18px] border border-black/5 bg-white/82 px-2.5 sm:px-3 py-2">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/72">Rounds</p>
+          <p className="mt-1 text-[14px] sm:text-[15px] font-bold tracking-tight text-on-surface tabular-nums">{tournament.numRounds}</p>
+        </div>
+        <div className={cn('rounded-[16px] sm:rounded-[18px] border px-2.5 sm:px-3 py-2', formatTheme.chip)}>
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] opacity-75">Matches</p>
+          <p className="mt-1 text-[14px] sm:text-[15px] font-bold tracking-tight tabular-nums">{completedMatches}</p>
+        </div>
       </div>
-    </div>
-    <div className="mt-3 flex flex-wrap gap-2">
-      <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-primary/10 bg-primary/5 text-[11px] font-bold text-primary">
-        Round {tournament.numRounds}
-      </span>
-      <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-ios-gray/10 bg-ios-gray/5 text-[11px] font-bold text-ios-gray">
-        {tournament.format}
-      </span>
-      <span className="inline-flex items-center px-3 py-1.5 rounded-xl border border-ios-gray/10 bg-ios-gray/5 text-[11px] font-bold text-ios-gray">
-        {tournament.numPlayers} Player
-      </span>
-    </div>
-  </button>
-);
+    </button>
+  );
+};
 
 const RankBadge = ({ mmr, size = 'md', showLabel = true }: { mmr: number, size?: 'sm' | 'md' | 'lg', showLabel?: boolean }) => {
   const rank = getRankInfo(mmr);
@@ -1078,6 +1397,42 @@ const getPlayersStorageKey = (uid: string) => `gas_padel_players_${uid}`;
 const getTournamentStorageKey = (uid: string) => `fom_play_active_tournament_${uid}`;
 const getTournamentHistoryStorageKey = (uid: string) => `fom_play_tournament_history_${uid}`;
 const getTournamentShareStorageKey = (uid: string, startedAt?: number) => `fom_play_share_id_${uid}_${startedAt || 'none'}`;
+const createFreshTournamentDraft = (): Tournament => ({
+  ...INITIAL_TOURNAMENT,
+  id: undefined,
+  name: '',
+  backgroundId: undefined,
+  startedAt: undefined,
+  endedAt: undefined,
+  players: [],
+  inactivePlayerIds: [],
+  courtChanges: [],
+  rounds: [],
+  venueName: '',
+  location: ''
+});
+const hasSetupDraftChanges = (tournament: Tournament) => {
+  const trimmedName = (tournament.name || '').trim();
+  const trimmedVenue = (tournament.venueName || '').trim();
+  const trimmedLocation = (tournament.location || '').trim();
+  const normalizedScoringType = tournament.scoringType || 'Golden Point';
+
+  return (
+    !tournament.startedAt &&
+    (
+      trimmedName.length > 0 ||
+      trimmedVenue.length > 0 ||
+      trimmedLocation.length > 0 ||
+      (tournament.players || []).length > 0 ||
+      tournament.format !== INITIAL_TOURNAMENT.format ||
+      tournament.criteria !== INITIAL_TOURNAMENT.criteria ||
+      normalizedScoringType !== 'Golden Point' ||
+      tournament.courts !== INITIAL_TOURNAMENT.courts ||
+      tournament.totalPoints !== INITIAL_TOURNAMENT.totalPoints ||
+      tournament.numRounds !== INITIAL_TOURNAMENT.numRounds
+    )
+  );
+};
 const DEFAULT_PLAYER_SEED_NAMES = new Set(INITIAL_PLAYERS.map((p) => p.name.toLowerCase()));
 const FALLBACK_MATCH_BACKGROUND = '/mockups/active-v2/images/match-01.jpg';
 const MATCH_BACKGROUND_POOLS: Record<MatchFormat, string[]> = {
@@ -1138,6 +1493,17 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
+const isAppShellQuery = (params: URLSearchParams) => {
+  const sharedId = params.get('shared');
+  const e2e = params.get('e2e');
+  return Boolean(
+    sharedId ||
+    e2e === 'finished-flow' ||
+    e2e === 'background-flow' ||
+    e2e === 'profile-flow'
+  );
+};
+
 const getInitialSharedContext = () => {
   const params = new URLSearchParams(window.location.search);
   const sharedId = params.get('shared');
@@ -1152,7 +1518,7 @@ const getInitialSharedContext = () => {
 const getInitialE2EScenario = () => {
   const params = new URLSearchParams(window.location.search);
   const scenario = params.get('e2e');
-  if (scenario === 'finished-flow' || scenario === 'background-flow') return scenario;
+  if (scenario === 'finished-flow' || scenario === 'background-flow' || scenario === 'profile-flow') return scenario;
   return null;
 };
 
@@ -1250,49 +1616,25 @@ const InstallAppButton = ({
 const BottomNav = ({
   currentScreen,
   setScreen,
-  unreadCount,
-  currentFormat,
-  hasActiveGame
+  unreadCount
 }: {
   currentScreen: Screen,
   setScreen: (s: Screen) => void,
-  unreadCount: number,
-  currentFormat: MatchFormat,
-  hasActiveGame: boolean
+  unreadCount: number
 }) => {
   const tabs: { id: Screen, label: string, icon: any }[] = [
     { id: 'dashboard', label: 'Home', icon: Home },
     { id: 'leaderboard', label: 'Ranking', icon: BarChart2 },
-    { id: 'active', label: 'Play', icon: Trophy },
-    { id: 'notifications', label: 'Alerts', icon: Bell },
+    { id: 'history', label: 'History', icon: Calendar },
     { id: 'profile', label: 'Profile', icon: User },
   ];
-  const mainTheme = currentFormat === 'Americano'
-    ? {
-      activeLive: "bg-[#18A486]/12 text-[#12806A] border border-[#18A486]/30",
-      activeIdle: "bg-[#18A486]/10 text-[#12806A] border border-[#18A486]/24",
-      idle: "bg-ios-gray/8 text-ios-gray"
-    }
-    : currentFormat === 'Mexicano'
-      ? {
-        activeLive: "bg-primary/12 text-primary border border-primary/25",
-        activeIdle: "bg-primary/10 text-primary border border-primary/22",
-        idle: "bg-ios-gray/8 text-ios-gray"
-      }
-      : {
-        activeLive: "bg-[#2F6FE4]/12 text-[#2F6FE4] border border-[#2F6FE4]/25",
-        activeIdle: "bg-[#2F6FE4]/10 text-[#2F6FE4] border border-[#2F6FE4]/22",
-        idle: "bg-ios-gray/8 text-ios-gray"
-      };
-
-  const mainActiveClass = hasActiveGame ? mainTheme.activeLive : mainTheme.activeIdle;
 
   return (
     <nav
       className="fixed inset-x-0 z-50 px-4"
       style={{ bottom: 'calc(var(--app-safe-bottom, 0px) + var(--app-bottom-nav-gap, 14px))' }}
     >
-      <div className="mx-auto w-full max-w-md rounded-full border border-white/70 bg-white/68 backdrop-blur-2xl supports-[backdrop-filter]:bg-white/58 px-2 py-2 shadow-[0_10px_28px_rgba(17,24,39,0.10)]">
+      <div className="mx-auto w-full max-w-md rounded-full border border-white/70 bg-white/68 backdrop-blur-2xl supports-[backdrop-filter]:bg-white/58 px-2 py-2 shadow-[0_8px_22px_rgba(17,24,39,0.08)]">
         <div className="flex items-center justify-between gap-1">
           {tabs.map((tab) => {
             const isActive = currentScreen === tab.id;
@@ -1303,20 +1645,14 @@ const BottomNav = ({
                 className={cn(
                   "relative h-10 transition-all duration-200 select-none",
                   isActive
-                    ? cn(
-                      "flex items-center gap-2 rounded-full px-3.5",
-                      tab.id === 'active' ? mainActiveClass : "bg-primary/12 text-primary border border-primary/25"
-                    )
-                    : cn(
-                      "w-10 rounded-full flex items-center justify-center",
-                      tab.id === 'active' ? mainTheme.idle : "bg-ios-gray/8 text-ios-gray"
-                    )
+                    ? "flex items-center gap-2 rounded-full border border-primary/12 bg-primary/[0.07] px-3.5 text-primary"
+                    : "w-10 rounded-full flex items-center justify-center bg-ios-gray/[0.06] text-ios-gray"
                 )}
                 aria-label={tab.label}
               >
                 <tab.icon size={18} strokeWidth={isActive ? 2.5 : 2.2} />
                 {isActive && <span className="text-[12px] font-semibold tracking-tight whitespace-nowrap">{tab.label}</span>}
-                {tab.id === 'notifications' && unreadCount > 0 && (
+                {tab.id === 'profile' && unreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-white">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
@@ -1339,7 +1675,14 @@ const LoginScreen = () => {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+
+  const changeMode = (nextMode: 'masuk' | 'daftar' | 'forgot') => {
+    setMode(nextMode);
+    setError('');
+    setNotice('');
+  };
 
   const handleAuthError = (err: any) => {
     console.error(err);
@@ -1353,9 +1696,10 @@ const LoginScreen = () => {
     else if (err.code === 'auth/too-many-requests') setError('Too many attempts. Please wait and try again.');
     else if (err.code === 'auth/popup-blocked') setError('Login popup was blocked. Please allow popups and try again.');
     else if (err.code === 'auth/popup-closed-by-user') setError('Login was canceled before completion.');
-    else if (err.code === 'auth/missing-initial-state') setError('Google redirect login could not be completed in this browser. Please retry with popup login.');
+    else if (err.code === 'auth/missing-initial-state') setError('Social login could not be completed because this browser lost the temporary login state. Please open FOM Play in Chrome or Safari, or use email login.');
     else if (err.code === 'auth/unauthorized-domain') setError('This domain is not authorized in Firebase Authentication.');
     else if (err.code === 'auth/account-exists-with-different-credential') setError('This email is linked to another sign-in method.');
+    else if (err.message?.includes('timed out')) setError('Authentication is taking too long. Please check your connection and try again.');
     else setError('Something went wrong. Please try again.');
   };
 
@@ -1369,7 +1713,11 @@ const LoginScreen = () => {
     setError('');
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, sanitizedEmail, password);
+      await withTimeout(
+        signInWithEmailAndPassword(auth, sanitizedEmail, password),
+        15000,
+        'Email login'
+      );
     } catch (err) {
       handleAuthError(err);
     } finally {
@@ -1397,12 +1745,16 @@ const LoginScreen = () => {
     setError('');
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, sanitizedEmail, password);
+      const userCredential = await withTimeout(
+        createUserWithEmailAndPassword(auth, sanitizedEmail, password),
+        15000,
+        'Email registration'
+      );
       await updateProfile(userCredential.user, { displayName: sanitizedName });
 
       // Best effort profile sync: auth account already exists even if Firestore write fails.
       try {
-        await setDoc(doc(db, 'users', userCredential.user.uid), {
+        await withTimeout(setDoc(doc(db, 'users', userCredential.user.uid), {
           uid: userCredential.user.uid,
           email: userCredential.user.email || sanitizedEmail,
           displayName: sanitizedName,
@@ -1412,7 +1764,7 @@ const LoginScreen = () => {
           homeBase: 'Jakarta Selatan, DKI Jakarta',
           locationActivity: { 'Jakarta Selatan, DKI Jakarta': 0 },
           createdAt: serverTimestamp(),
-        }, { merge: true });
+        }, { merge: true }), 8000, 'Register profile sync');
       } catch (profileErr) {
         console.error('Register profile sync error:', profileErr);
       }
@@ -1423,36 +1775,23 @@ const LoginScreen = () => {
     }
   };
 
-  const handleSocialAuth = async (provider: any, providerName: 'Google' | 'Apple') => {
-    const prepareRedirectAuth = async () => {
-      if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
-      try {
-        const registrations = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(registrations.map((registration) => registration.unregister()));
-      } catch (swErr) {
-        console.warn('Service worker cleanup before auth redirect failed:', swErr);
-      }
-    };
-
-    const canUseRedirectFallback = () => {
-      if (typeof window === 'undefined') return false;
-      try {
-        const probeKey = '__auth_redirect_probe__';
-        window.sessionStorage.setItem(probeKey, '1');
-        window.sessionStorage.removeItem(probeKey);
-      } catch {
-        return false;
-      }
-      const isStandalonePwa = window.matchMedia('(display-mode: standalone)').matches;
-      return !isStandalonePwa;
-    };
-
+  const handleSocialAuth = async (provider: AuthProvider, providerName: 'Google' | 'Apple') => {
     setError('');
     setLoading(true);
     try {
+      const browserWarning = getSocialAuthBrowserWarning();
+      if (browserWarning) {
+        setError(browserWarning);
+        return;
+      }
+
       // Prefer popup on all platforms to avoid redirect state-loss issues
       // in storage-partitioned browsers.
-      await signInWithPopup(auth, provider);
+      await withTimeout(
+        signInWithPopup(auth, provider),
+        15000,
+        `${providerName} login`
+      );
     } catch (err) {
       const authCode = (err as { code?: string })?.code;
       if (
@@ -1460,18 +1799,8 @@ const LoginScreen = () => {
         authCode === 'auth/cancelled-popup-request' ||
         authCode === 'auth/operation-not-supported-in-this-environment'
       ) {
-        if (!canUseRedirectFallback()) {
-          setError(`${providerName} login popup is unavailable in this browser. Please open this app in a regular browser tab and try again.`);
-          return;
-        }
-        try {
-          await prepareRedirectAuth();
-          await signInWithRedirect(auth, provider);
-          return;
-        } catch (redirectErr) {
-          handleAuthError(redirectErr);
-          return;
-        }
+        setError(`${providerName} login could not open in this browser. Please open FOM Play in Chrome or Safari, or use email login.`);
+        return;
       }
 
       handleAuthError(err);
@@ -1489,12 +1818,23 @@ const LoginScreen = () => {
       setError('Please enter your email first.');
       return;
     }
+    setNotice('');
     setError('');
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, sanitizedEmail);
-      alert('Password reset email has been sent.');
+      const signInMethods = await fetchSignInMethodsForEmail(auth, sanitizedEmail).catch(() => []);
+      if (signInMethods.length > 0 && !signInMethods.includes('password')) {
+        setError(`This account uses ${getProviderLabel(signInMethods[0])}. Please sign in with that method instead.`);
+        return;
+      }
+
+      await withTimeout(
+        sendPasswordResetEmail(auth, sanitizedEmail, getPasswordResetActionSettings()),
+        15000,
+        'Password reset'
+      );
       setMode('masuk');
+      setNotice(`We sent a reset link to ${sanitizedEmail}. Please check your inbox, spam, or promotions.`);
     } catch (err) {
       handleAuthError(err);
     } finally {
@@ -1507,7 +1847,9 @@ const LoginScreen = () => {
     const ua = navigator.userAgent.toLowerCase();
     const platform = (navigator.platform || '').toLowerCase();
     const vendor = (navigator.vendor || '').toLowerCase();
-    return /iphone|ipad|ipod|macintosh|mac os x/.test(ua) || platform.includes('mac') || vendor.includes('apple');
+    const isIOS = /iphone|ipad|ipod/.test(ua) || ['iphone', 'ipad', 'ipod'].includes(platform);
+    if (isIOS) return false;
+    return /macintosh|mac os x/.test(ua) || platform.includes('mac') || vendor.includes('apple');
   }, []);
 
   const socialCta = mode === 'daftar' ? 'Sign up with' : 'Continue with';
@@ -1515,7 +1857,9 @@ const LoginScreen = () => {
   const authHeading = mode === 'daftar' ? 'Create account' : mode === 'forgot' ? 'Reset password' : 'Welcome to FOM Play';
   const authSubtitle = mode === 'daftar'
     ? 'Create your account and start scoring in seconds.'
-    : 'Enter your account email to receive a reset link.';
+    : mode === 'forgot'
+      ? 'Use your account email. If you signed in with Google or Apple, continue with that method instead.'
+      : 'Enter your account email to receive a reset link.';
   const showModeSubtitle = !isLoginMode;
   const inputBaseClass = "w-full h-14 rounded-full border border-black/16 bg-white/78 px-5 text-[15px] font-medium text-on-surface placeholder:text-on-surface/40 outline-none focus:border-primary/45 focus:ring-2 focus:ring-primary/12 transition-all";
   const passwordFieldClass = `${inputBaseClass} pr-12`;
@@ -1556,7 +1900,7 @@ const LoginScreen = () => {
               <p className="text-[14px] text-on-surface/56 font-medium pt-1">
                 Don&apos;t have an account?{' '}
                 <button
-                  onClick={() => setMode('daftar')}
+                  onClick={() => changeMode('daftar')}
                   className="text-primary font-semibold underline underline-offset-2"
                 >
                   Sign up
@@ -1567,7 +1911,7 @@ const LoginScreen = () => {
               <p className="text-[14px] text-on-surface/56 font-medium">
                 Already have an account?{' '}
                 <button
-                  onClick={() => setMode('masuk')}
+                  onClick={() => changeMode('masuk')}
                   className="text-primary font-semibold underline underline-offset-2"
                 >
                   Sign in
@@ -1577,6 +1921,11 @@ const LoginScreen = () => {
           </header>
 
           <section className={cn("space-y-4", isLoginMode ? "mt-8" : "mt-7")}>
+            {notice && (
+              <div className="p-3 bg-primary/8 border border-primary/14 rounded-2xl text-primary text-[12px] font-semibold text-center">
+                {notice}
+              </div>
+            )}
             {error && (
               <div className="p-3 bg-error/10 border border-error/20 rounded-2xl text-error text-[12px] font-semibold text-center">
                 {error}
@@ -1588,7 +1937,11 @@ const LoginScreen = () => {
                 <div>
                   <input
                     value={name}
-                    onChange={(e) => setName(e.target.value)}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      if (error) setError('');
+                      if (notice) setNotice('');
+                    }}
                     className={inputBaseClass}
                     placeholder="Full name"
                     type="text"
@@ -1599,7 +1952,11 @@ const LoginScreen = () => {
               <div>
                 <input
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (error) setError('');
+                    if (notice) setNotice('');
+                  }}
                   className={inputBaseClass}
                   placeholder="Email"
                   type="email"
@@ -1611,7 +1968,11 @@ const LoginScreen = () => {
                   <div className="relative">
                     <input
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        if (error) setError('');
+                        if (notice) setNotice('');
+                      }}
                       className={passwordFieldClass}
                       placeholder="Password"
                       type={showPassword ? "text" : "password"}
@@ -1640,7 +2001,7 @@ const LoginScreen = () => {
               {mode === 'masuk' && (
                 <div className="pt-1.5 flex justify-center">
                   <button
-                    onClick={() => setMode('forgot')}
+                    onClick={() => changeMode('forgot')}
                     className="text-[13px] font-semibold text-primary/90 hover:text-primary transition-colors"
                   >
                     Forgot Password?
@@ -1687,7 +2048,7 @@ const LoginScreen = () => {
               <p className="text-[12px] text-on-surface/60 font-medium">
                 Remember your password?{' '}
                 <button
-                  onClick={() => setMode('masuk')}
+                  onClick={() => changeMode('masuk')}
                   className="text-primary font-semibold underline underline-offset-2"
                 >
                   Back to login
@@ -1732,7 +2093,8 @@ const DashboardScreen = ({
 }) => {
   const activeRound = tournament.rounds?.find(r => r && r.matches && r.matches.some(m => m && m.status === 'active'));
   const activeMatches = activeRound ? activeRound.matches.filter(m => m && m.status === 'active') : [];
-  const recentTournaments = useMemo(() => sortTournamentsByNewest(tournaments).slice(0, 5), [tournaments]);
+  const featuredActiveMatch = activeMatches[0] || null;
+  const recentTournaments = useMemo(() => sortTournamentsByNewest(tournaments).slice(0, 3), [tournaments]);
   const currentMmr = Number.isFinite(Number(user?.mmr)) ? Number(user.mmr) : 0;
   const currentRank = getRankInfo(currentMmr);
   const [mmrDelta7d, setMmrDelta7d] = useState(0);
@@ -1783,176 +2145,150 @@ const DashboardScreen = ({
 
   return (
     <div className="pb-32">
-      <header className="ios-blur sticky top-0 w-full z-50 flex items-center px-4 h-14 border-b-0">
-        <div className="flex items-center justify-between w-full">
-          <div className="flex items-center gap-2">
+      <main className="max-w-2xl mx-auto px-4 pt-5 sm:pt-6 space-y-5">
+        <section className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
             <Logo className="h-8 w-auto" />
+            <div className="flex items-center gap-1.5">
+              <InstallAppButton
+                compact
+                className="bg-white text-primary border-primary/20"
+              />
+              <button
+                onClick={onNotifications}
+                className="relative flex h-11 w-11 items-center justify-center rounded-2xl border border-black/5 bg-ios-gray/5 tap-target transition-all active:scale-[0.98]"
+                aria-label="Open notifications"
+              >
+                <Bell size={19} className="text-on-surface" />
+                {unreadCount > 0 && (
+                  <span className="absolute right-1.5 top-1.5 min-w-[16px] h-4 px-1 bg-error text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-white">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            <InstallAppButton
-              compact
-              className="bg-white text-primary border-primary/20"
-            />
-            <button
-              onClick={onNotifications}
-              className="tap-target flex items-center justify-center p-2 relative"
-            >
-              <Bell size={24} className="text-primary" />
-              {unreadCount > 0 && (
-                <span className="absolute top-1.5 right-1.5 w-3 h-3 bg-error text-white text-[8px] font-bold rounded-full flex items-center justify-center border border-white">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
-          </div>
-        </div>
-      </header>
 
-      <main className="pt-3 max-w-2xl mx-auto px-4 space-y-6">
-        <section>
-          <div>
-            <h2 className="text-ios-gray text-[11px] font-semibold uppercase tracking-wide mb-0.5">
-              Hi, {user?.displayName || 'Padel Player'}
-            </h2>
-            <h1 className="text-[clamp(22px,5.9vw,28px)] leading-[1.12] font-display font-bold tracking-tight text-on-surface whitespace-nowrap">
-              Ready For Today&apos;s Win?
+          <div className="space-y-1.5">
+            <p className="text-[13px] font-semibold tracking-tight text-ios-gray/85">
+              Welcome back, {user?.displayName || 'Padel Player'}
+            </p>
+            <h1 className="text-[clamp(26px,7vw,34px)] leading-[1.05] font-display font-black tracking-tight text-on-surface">
+              Ready for your next match?
             </h1>
-
-            <button
-              onClick={onOpenRankingForMe}
-              className="mt-2.5 w-full tap-target text-left"
-            >
-              <div className="grid grid-cols-2 gap-2">
-                <div className="rounded-2xl border border-primary/15 bg-primary/5 px-2.5 py-2 min-h-[78px] flex flex-col justify-center">
-                  <p className="text-[9px] font-black uppercase tracking-wider text-primary">MMR</p>
-                  <div className="mt-1 inline-flex items-baseline gap-1.5 flex-wrap">
-                    <span className="text-[20px] leading-none font-display font-black tracking-tight text-on-surface">
-                      {currentMmr.toLocaleString()}
-                    </span>
-                    <span className="text-[11px] leading-none font-bold tracking-tight text-ios-gray">
-                      {isMmrDeltaLoading ? '...' : mmrDeltaLabel}
-                    </span>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-ios-gray/15 bg-ios-gray/5 px-2.5 py-2 min-h-[78px] flex flex-col justify-center">
-                  <p className="text-[9px] font-black uppercase tracking-wider text-ios-gray">Rank</p>
-                  <div className="mt-1 inline-flex items-center gap-1.5">
-                    <currentRank.icon size={13} className="text-on-surface" />
-                    <span className="text-[20px] leading-none font-display font-black tracking-tight text-on-surface">
-                      {currentRank.name}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </button>
           </div>
         </section>
 
-        <section>
+        <section className="space-y-3">
           <div
             onClick={onStartMatch}
-            className="cta-shimmer w-full bg-primary text-white px-5 py-[17px] rounded-3xl flex items-center justify-between tap-target cursor-pointer shadow-[0_14px_24px_rgba(255,85,1,0.24)]"
+            className="w-full rounded-[24px] border border-primary/15 bg-primary px-5 py-4 text-white tap-target cursor-pointer shadow-[0_8px_18px_rgba(255,85,1,0.12)] transition-all active:scale-[0.99]"
           >
-            <div className="text-left relative z-[1]">
-              <span className="block text-[20px] leading-tight font-display font-bold tracking-tight">Start New Match</span>
-              <span className="text-[12px] font-semibold opacity-85">Set scores and opponents</span>
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-left">
+                <span className="block text-[22px] leading-tight font-display font-black tracking-tight">Start Match</span>
+                <span className="mt-1 block text-[12px] font-semibold text-white/78">Set players and start scoring.</span>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/12">
+                <PlusCircle size={24} />
+              </div>
             </div>
-            <PlusCircle size={30} className="relative z-[1]" />
           </div>
+
+          <button
+            onClick={onOpenRankingForMe}
+            className="w-full rounded-[16px] border border-black/5 bg-ios-gray/[0.04] px-3.5 py-2.5 text-left tap-target transition-all active:scale-[0.99]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Current Rating</p>
+                <div className="mt-1 flex items-end gap-2">
+                  <span className="text-[24px] leading-none font-display font-black tracking-tight text-on-surface tabular-nums">
+                    {currentMmr.toLocaleString()}
+                  </span>
+                  <span className="pb-0.5 text-[12px] font-semibold tracking-tight text-ios-gray">MMR</span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-ios-gray">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-black/5 bg-white/90 px-2.5 py-1 font-semibold tracking-tight text-on-surface/88">
+                    <currentRank.icon size={12} className="text-on-surface" />
+                    {currentRank.name}
+                  </span>
+                  <span className="font-semibold tracking-tight tabular-nums text-ios-gray/90">
+                    {isMmrDeltaLoading ? 'Loading trend...' : mmrDeltaLabel}
+                  </span>
+                </div>
+              </div>
+              <div className="inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold tracking-tight text-on-surface/60">
+                Ranking
+                <ChevronRight size={14} className="text-ios-gray/55" />
+              </div>
+            </div>
+          </button>
         </section>
 
-        {activeMatches.length > 0 && (
+        {featuredActiveMatch && (
           <section>
-            <div
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-[18px] font-bold tracking-tight text-on-surface">Continue Match</h2>
+              </div>
+              {activeMatches.length > 1 && (
+                <span className="shrink-0 rounded-full border border-black/5 bg-ios-gray/[0.04] px-3 py-1.5 text-[11px] font-semibold tracking-tight text-ios-gray">
+                  {activeMatches.length} active
+                </span>
+              )}
+            </div>
+            <button
               onClick={onContinueMatch}
-              className="flex justify-between items-center mb-3 cursor-pointer group"
+              className="w-full rounded-[22px] border border-black/5 bg-ios-gray/[0.045] px-4 py-4 text-left tap-target transition-all active:scale-[0.99]"
             >
-              <h2 className="text-[18px] font-bold tracking-tight text-on-surface">Active Matches</h2>
-              <button className="text-primary text-[12px] font-bold tap-target px-1.5 group-hover:underline">View All</button>
-            </div>
-            <div className="flex overflow-x-auto gap-3 no-scrollbar pb-1.5 snap-x snap-mandatory">
-              {activeMatches.map((match) => (
-                <div
-                  key={match.id}
-                  onClick={onContinueMatch}
-                  className={cn(
-                    "bg-white p-4 rounded-3xl shadow-sm border border-ios-gray/10 shrink-0 cursor-pointer tap-target snap-start",
-                    activeMatches.length === 1 ? "w-full" : "w-[84vw] max-w-[356px]"
-                  )}
-                >
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="min-w-0 pr-2">
-                      <span className="inline-block px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-bold rounded-md mb-1 uppercase">{tournament.name}</span>
-                      <h3 className="text-[16px] leading-tight font-bold truncate">Round {match.roundId}: Court {match.court}</h3>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-wider">DURASI</span>
-                      <span className="text-sm font-semibold text-primary">{match.duration || '00:00'}</span>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 mb-6">
-                    <div className="flex flex-col items-center gap-1.5 min-w-0">
-                      <div className="flex -space-x-3">
-                        {match.teamA.players?.map((p, idx) => (
-                          <div key={idx} className="w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold">
-                            {p?.initials}
-                          </div>
-                        ))}
-                      </div>
-                      <span className="text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none">
-                        {match.teamA.players?.map(p => p?.name?.split(' ')[0]).join(' & ')}
-                      </span>
-                    </div>
-                    <div className="flex flex-col items-center min-w-[84px]">
-                      <div className="text-[30px] leading-none font-display font-black italic tracking-tighter">
-                        <span className="text-primary">{match.teamA.score}</span>
-                        <span className="text-ios-gray/30 mx-1">-</span>
-                        <span className="text-on-surface">{match.teamB.score}</span>
-                      </div>
-                      <span className="text-[10px] font-bold text-ios-gray tracking-wide">SKOR</span>
-                    </div>
-                    <div className="flex flex-col items-center gap-1.5 min-w-0">
-                      <div className="flex -space-x-3">
-                        {match.teamB.players?.map((p, idx) => (
-                          <div key={idx} className="w-9 h-9 rounded-full border-2 border-white bg-ios-gray/20 flex items-center justify-center text-[10px] font-bold">
-                            {p?.initials}
-                          </div>
-                        ))}
-                      </div>
-                      <span className="text-[11px] font-bold text-ios-gray uppercase text-center truncate w-full leading-none">
-                        {match.teamB.players?.map(p => p?.name?.split(' ')[0]).join(' & ')}
-                      </span>
-                    </div>
-                  </div>
-                  <div
-                    className="w-full bg-on-surface text-white py-2.5 rounded-2xl font-bold text-[12px] flex items-center justify-center gap-2"
-                  >
-                    <span>Continue Scoring</span>
-                    <ChevronRight size={16} />
-                  </div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="inline-flex rounded-full border border-primary/15 bg-primary/5 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                    {tournament.name}
+                  </span>
+                  <h3 className="mt-2 text-[18px] leading-tight font-bold tracking-tight text-on-surface">
+                    Round {featuredActiveMatch.roundId} · Court {featuredActiveMatch.court}
+                  </h3>
+                  <p className="mt-1 text-[13px] text-ios-gray">
+                    {featuredActiveMatch.teamA.players?.map((p) => p?.name?.split(' ')[0]).join(' & ')} vs {featuredActiveMatch.teamB.players?.map((p) => p?.name?.split(' ')[0]).join(' & ')}
+                  </p>
                 </div>
-              ))}
-            </div>
+                <div className="shrink-0 text-right">
+                  <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Live score</p>
+                  <p className="mt-1 text-[28px] leading-none font-display font-black tracking-tight tabular-nums text-on-surface">
+                    <span className="text-primary">{featuredActiveMatch.teamA.score}</span>
+                    <span className="mx-1 text-ios-gray/35">-</span>
+                    <span>{featuredActiveMatch.teamB.score}</span>
+                  </p>
+                  <p className="mt-1 text-[12px] font-semibold text-ios-gray">{featuredActiveMatch.duration || '00:00'}</p>
+                </div>
+              </div>
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full border border-black/5 bg-white px-3 py-2 text-[12px] font-semibold text-on-surface/88">
+                Continue scoring
+                <ChevronRight size={14} />
+              </div>
+            </button>
           </section>
         )}
 
         <section className="pb-2">
-          <div
-            onClick={onOpenHistoryList}
-            className="flex justify-between items-center mb-3 cursor-pointer group"
-          >
-            <h2 className="text-[18px] font-bold tracking-tight text-on-surface">Recent History</h2>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-[18px] font-bold tracking-tight text-on-surface">Recent History</h2>
+            </div>
             <button
-              className="text-primary text-[12px] font-bold tap-target px-1.5 group-hover:underline"
+              onClick={onOpenHistoryList}
+              className="shrink-0 rounded-full border border-black/5 bg-ios-gray/5 px-3 py-2 text-[12px] font-semibold text-on-surface tap-target transition-all active:scale-[0.98]"
             >
               View All
             </button>
           </div>
           <div className="flex flex-col gap-3">
             {recentTournaments.length === 0 ? (
-              <div className="bg-white border border-ios-gray/10 rounded-3xl p-8 text-center shadow-sm">
-                <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-                <p className="text-ios-gray font-medium">No match history yet.</p>
+              <div className="rounded-[28px] border border-ios-gray/10 bg-ios-gray/[0.03] p-8 text-center">
+                <Trophy size={36} className="text-ios-gray/20 mx-auto mb-3" />
+                <p className="text-ios-gray font-medium">No finished matches yet.</p>
               </div>
             ) : (
               recentTournaments.map((item) => (
@@ -2114,7 +2450,7 @@ const AddPlayerModal = ({ isOpen, onClose, onAdd }: { isOpen: boolean, onClose: 
   );
 };
 
-const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, setTournament, allPlayers, setAllPlayers, onAddNotification, currentUser }: {
+const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, setTournament, allPlayers, setAllPlayers, onAddNotification, currentUser, focusSection, onFocusHandled }: {
   onBack: () => void,
   onGenerate: (t: Tournament) => void,
   onOpenFriends: () => void,
@@ -2123,19 +2459,10 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   allPlayers: Player[],
   setAllPlayers: React.Dispatch<React.SetStateAction<Player[]>>,
   onAddNotification: (title: string, message: string, type: AppNotification['type']) => void,
-  currentUser: any
+  currentUser: any,
+  focusSection?: 'players' | null,
+  onFocusHandled?: () => void
 }) => {
-  const sanitizeInitialCourtText = (value?: string) => {
-    if (!value) return '';
-    const lower = value.toLowerCase();
-    const looksLikeGenericCityRegion =
-      value.includes(',') &&
-      !lower.includes('padel') &&
-      !lower.includes('court') &&
-      !lower.includes('arena');
-    return looksLikeGenericCityRegion ? '' : value;
-  };
-
   type CourtSuggestion = {
     id: string;
     name: string;
@@ -2153,6 +2480,8 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     });
     return Array.from(deduped.values());
   };
+  const sortPlayersByName = (players: Player[]) =>
+    [...players].sort((a, b) => (a?.name || '').localeCompare(b?.name || '', undefined, { sensitivity: 'base' }));
 
   const [selectedPlayers, setSelectedPlayers] = useState<Player[]>(() => dedupePlayersById(tournament.players || []));
   const [format, setFormat] = useState<MatchFormat>(tournament.format);
@@ -2161,13 +2490,13 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   const [courts, setCourts] = useState(tournament.courts);
   const [points, setPoints] = useState(tournament.totalPoints);
   const [numRounds, setNumRounds] = useState(tournament.numRounds || 5);
-  const [gameName, setGameName] = useState(tournament.name || '');
-  const [venueName, setVenueName] = useState(tournament.venueName || '');
+  const [gameName, setGameName] = useState(() => ((tournament.name || '').trim() === INITIAL_TOURNAMENT.name ? '' : (tournament.name || '')));
+  const [venueName, setVenueName] = useState(() => tournament.venueName || '');
   const [customModalType, setCustomModalType] = useState<'courts' | 'rounds' | 'points' | null>(null);
   const [customModalValue, setCustomModalValue] = useState('');
   const customInputRef = useRef<HTMLInputElement>(null);
-  const [location, setLocation] = useState(sanitizeInitialCourtText(tournament.location));
-  const [courtQuery, setCourtQuery] = useState(sanitizeInitialCourtText(tournament.location));
+  const [location, setLocation] = useState(() => tournament.location || '');
+  const [courtQuery, setCourtQuery] = useState(() => tournament.location || '');
   const [courtSuggestions, setCourtSuggestions] = useState<CourtSuggestion[]>([]);
   const [isSearchingCourts, setIsSearchingCourts] = useState(false);
   const [courtSearchError, setCourtSearchError] = useState('');
@@ -2187,6 +2516,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   } | null>(null);
   const [dismissPlayerDataNotice, setDismissPlayerDataNotice] = useState(false);
   const lastPlayerDataIssueSignatureRef = useRef('');
+  const playersSectionRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const uid = auth.currentUser?.uid || currentUser?.uid;
@@ -2226,16 +2556,6 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     return 0;
   };
 
-  const sortedFriends = useMemo(() => {
-    return [...friends].sort((a, b) => {
-      const aRecent = Math.max(toMillis((a as any).lastPlayedAt), toMillis((a as any).addedAt));
-      const bRecent = Math.max(toMillis((b as any).lastPlayedAt), toMillis((b as any).addedAt));
-      if (bRecent !== aRecent) return bRecent - aRecent;
-      return (a.displayName || '').localeCompare(b.displayName || '');
-    });
-  }, [friends]);
-
-  const quickFriends = sortedFriends.slice(0, 8);
   const resolveLiveMmr = (uid: string, fallback = 0) => {
     const fromMap = liveMmrByUid[uid];
     if (Number.isFinite(fromMap)) return Math.max(0, Number(fromMap));
@@ -2420,8 +2740,66 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     });
   }, [selectedPlayers, setTournament]);
 
+  useEffect(() => {
+    const normalizedName = gameName;
+    const normalizedVenue = venueName;
+    const normalizedLocation = location.trim();
+
+    setTournament((prev) => {
+      const prevName = (prev.name || '').trim() === INITIAL_TOURNAMENT.name ? '' : (prev.name || '');
+      const prevVenue = prev.venueName || '';
+      const prevLocation = prev.location || '';
+      const prevScoringType = prev.scoringType || 'Golden Point';
+
+      if (
+        prevName === normalizedName &&
+        prev.format === format &&
+        prev.criteria === criteria &&
+        prevScoringType === scoringType &&
+        prev.courts === courts &&
+        prev.totalPoints === points &&
+        prev.numRounds === numRounds &&
+        prevVenue === normalizedVenue &&
+        prevLocation === normalizedLocation
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        name: normalizedName,
+        format,
+        criteria,
+        scoringType,
+        courts,
+        totalPoints: points,
+        numRounds,
+        venueName: normalizedVenue,
+        location: normalizedLocation
+      };
+    });
+  }, [gameName, venueName, location, format, criteria, scoringType, courts, points, numRounds, setTournament]);
+
+  useEffect(() => {
+    if (focusSection !== 'players') return;
+
+    const scrollId = window.setTimeout(() => {
+      playersSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      onFocusHandled?.();
+    }, 80);
+
+    return () => window.clearTimeout(scrollId);
+  }, [focusSection, onFocusHandled]);
+
   const minPlayersNeeded = courts * 4;
   const isReady = selectedPlayers.length >= minPlayersNeeded;
+  const sortedSelectedPlayers = useMemo(() => sortPlayersByName(selectedPlayers), [selectedPlayers]);
+  const availablePlayers = useMemo(
+    () => sortPlayersByName(
+      normalizedAllPlayers.filter((player) => !selectedPlayers.some((selected) => selected?.id === player.id))
+    ),
+    [normalizedAllPlayers, selectedPlayers]
+  );
 
   const mapToCourtSuggestions = (items: any[], queryLower: string): CourtSuggestion[] => {
     const cityLikeTypes = new Set([
@@ -2624,13 +3002,6 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
     stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
   });
 
-  const markFriendUsed = (friendUid: string) => {
-    const uid = auth.currentUser?.uid || currentUser?.uid;
-    if (!uid) return;
-    setDoc(doc(db, 'users', uid, 'friends', friendUid), { lastPlayedAt: serverTimestamp() }, { merge: true })
-      .catch((err) => console.error('Error updating friend recency in settings:', err));
-  };
-
   const handleAddPlayer = (newPlayer: Player) => {
     setAllPlayers(prev => dedupePlayersById([newPlayer, ...prev]));
     setSelectedPlayers(prev => dedupePlayersById([newPlayer, ...prev]));
@@ -2652,7 +3023,7 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
   const handleGenerate = () => {
     const updatedTournament: Tournament = {
       ...tournament,
-      name: gameName.trim() || tournament.name || 'Game Padel',
+      name: gameName.trim() || 'Padel Match',
       format,
       criteria,
       scoringType,
@@ -2719,298 +3090,305 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
       ? "bg-primary text-white border-primary shadow-md shadow-primary/20"
       : "bg-white text-on-surface border-ios-gray/15"
   );
+  const optionPillClass = (active: boolean) => cn(
+    "flex h-12 w-full min-w-0 items-center justify-center rounded-full border px-4 text-center text-[13px] font-semibold tracking-tight whitespace-nowrap transition-all tap-target",
+    active
+      ? "border-primary/15 bg-primary/10 text-primary"
+      : "border-black/5 bg-white text-on-surface/75"
+  );
+
+  const missingPlayersCount = Math.max(0, minPlayersNeeded - selectedPlayers.length);
+  const selectedPlayersHelper = isReady
+    ? `Ready for ${courts} court${courts > 1 ? 's' : ''} with ${selectedPlayers.length} players.`
+    : `Add ${missingPlayersCount} more player${missingPlayersCount > 1 ? 's' : ''} for ${courts} court${courts > 1 ? 's' : ''}.`;
+  const setupSummaryLabel = isReady
+    ? `Ready for ${courts} court${courts > 1 ? 's' : ''} with ${selectedPlayers.length} players.`
+    : `Add ${missingPlayersCount} more player${missingPlayersCount > 1 ? 's' : ''} to generate this match.`;
+  const structureSummaryLabel = format === 'Match Play'
+    ? `${courts}C • ${numRounds}R`
+    : `${courts}C • ${numRounds}R • ${points}P`;
+  const blockClass = "rounded-[28px] border border-black/5 bg-white px-4 py-4";
+  const blockEyebrowClass = "text-[11px] font-semibold tracking-tight text-ios-gray/72";
+  const blockTitleClass = "mt-1 text-[18px] leading-tight font-bold tracking-tight text-on-surface";
+  const fieldShellClass = "rounded-2xl border border-black/5 bg-ios-gray/[0.045] px-4 py-3.5";
 
   return (
-    <div className="pb-32 bg-white min-h-screen">
+    <div className="bg-white min-h-screen pb-44">
       <nav
         className="ios-blur sticky top-0 z-50 w-full"
         style={{ paddingTop: 'var(--app-safe-top, 0px)' }}
       >
-        <div className="flex justify-between items-center w-full px-4 h-14">
-          <div className="flex items-center gap-2">
+        <div className="mx-auto flex w-full max-w-md items-center px-4 h-15 min-h-[60px] border-b border-black/5">
+          <div className="flex items-center gap-2 min-w-0">
             <button onClick={onBack} className="tap-target p-2 -ml-2">
               <ChevronLeft size={24} className="text-primary" />
             </button>
-            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Match Settings</h1>
+            <div className="min-w-0">
+              <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Set Up Match</h1>
+              <p className="text-[12px] font-medium tracking-tight text-ios-gray">Match Info · Rules · Players</p>
+            </div>
           </div>
-          <button
-            onClick={handleGenerate}
-            disabled={!isReady}
-            className={cn("font-bold tap-target px-2 transition-colors", !isReady ? "text-ios-gray/40" : "text-primary")}
-          >
-            Generate
-          </button>
         </div>
       </nav>
 
-      <main className="max-w-md mx-auto px-4 py-6 space-y-8">
-        <section className="space-y-3">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Nama Game</h2>
-          <div className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm">
-            <input
-              type="text"
-              value={gameName}
-              onChange={(e) => setGameName(e.target.value)}
-              placeholder="Contoh: Friday Padel Match"
-              className="w-full text-sm font-bold text-on-surface bg-transparent outline-none"
-            />
-          </div>
-        </section>
+      <main className="max-w-md mx-auto px-4 py-4 space-y-4">
+        <section className={blockClass}>
+          <p className={blockEyebrowClass}>Match Info</p>
+          <h2 className={blockTitleClass}>Name it and set the location.</h2>
 
-        <section className="space-y-3">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Nama Court Padel</h2>
-          <div className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm">
-            <input
-              type="text"
-              value={venueName}
-              onChange={(e) => setVenueName(e.target.value)}
-              placeholder="Contoh: Star Padel Karawaci"
-              className="w-full text-sm font-bold text-on-surface bg-transparent outline-none"
-            />
-          </div>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">City</h2>
-          <div className="relative">
-            <div className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm">
-              <div className="flex items-start gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                  <Building2 size={19} />
-                </div>
-                <div className="flex-1">
-                  <p className="text-[11px] font-semibold text-ios-gray mb-1">
-                    Enter your playing city
-                  </p>
-                  <input
-                    type="text"
-                    value={courtQuery}
-                    onChange={(e) => {
-                      setCourtQuery(e.target.value);
-                      setSelectedCourtId(null);
-                      setShowCourtSuggestions(true);
-                    }}
-                    onFocus={() => setShowCourtSuggestions(true)}
-                    onBlur={() => {
-                      setTimeout(() => setShowCourtSuggestions(false), 150);
-                    }}
-                    placeholder="Contoh: Tangerang"
-                    className="w-full text-sm font-bold text-on-surface bg-transparent outline-none"
-                  />
-                  {courtSearchProvider !== 'none' && (
-                    <p className="text-[10px] font-medium text-primary/80 mt-1">
-                      Sumber: {courtSearchProvider === 'google' ? 'Google Maps' : 'OpenStreetMap'}
-                    </p>
-                  )}
-                </div>
-              </div>
+          <div className="mt-4 space-y-3">
+            <div className={fieldShellClass}>
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Match Name</p>
+              <input
+                type="text"
+                value={gameName}
+                onChange={(e) => setGameName(e.target.value)}
+                placeholder="Friday Padel Match"
+                className="mt-1 w-full bg-transparent text-[15px] font-semibold text-on-surface outline-none"
+              />
             </div>
 
-            {showCourtSuggestions && (
-              <div className="absolute z-30 mt-2 w-full bg-white border border-ios-gray/10 rounded-2xl shadow-lg overflow-hidden">
-                {!isSearchingCourts && !courtSearchError && courtQuery.trim().length < 3 && (
-                  <div className="px-4 py-3 text-[12px] text-ios-gray font-medium flex items-center gap-2">
-                    <Search size={14} className="text-ios-gray/70" />
-                    Start typing a city name to search...
+            <div className={fieldShellClass}>
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Venue</p>
+              <input
+                type="text"
+                value={venueName}
+                onChange={(e) => setVenueName(e.target.value)}
+                placeholder="Star Padel Karawaci"
+                className="mt-1 w-full bg-transparent text-[15px] font-semibold text-on-surface outline-none"
+              />
+            </div>
+
+            <div className="relative">
+              <div className={fieldShellClass}>
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-primary/10 text-primary shrink-0">
+                    <Building2 size={18} />
                   </div>
-                )}
-                {isSearchingCourts && (
-                  <div className="px-4 py-3 text-[12px] text-ios-gray font-medium flex items-center gap-2">
-                    <RefreshCw size={14} className="animate-spin text-ios-gray/70" />
-                    Searching courts...
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Area / City</p>
+                    <input
+                      type="text"
+                      value={courtQuery}
+                      onChange={(e) => {
+                        setCourtQuery(e.target.value);
+                        setSelectedCourtId(null);
+                        setShowCourtSuggestions(true);
+                      }}
+                      onFocus={() => setShowCourtSuggestions(true)}
+                      onBlur={() => {
+                        setTimeout(() => setShowCourtSuggestions(false), 150);
+                      }}
+                    placeholder="Tangerang"
+                    className="mt-1 w-full bg-transparent text-[15px] font-semibold text-on-surface outline-none"
+                  />
+                    {courtSearchProvider !== 'none' && (
+                      <p className="mt-1 text-[10px] font-medium text-primary/80">
+                        Source: {courtSearchProvider === 'google' ? 'Google Maps' : 'OpenStreetMap'}
+                      </p>
+                    )}
                   </div>
-                )}
-                {courtSearchError && (
-                  <div className="px-4 py-3 text-[12px] text-error font-medium">{courtSearchError}</div>
-                )}
-                {!isSearchingCourts && !courtSearchError && courtSuggestions.length === 0 && courtQuery.trim().length >= 3 && (
-                  <div className="px-4 py-3 text-[12px] text-ios-gray font-medium">No matching courts found.</div>
-                )}
-                {!isSearchingCourts && !courtSearchError && courtSuggestions.map((suggestion) => (
+                </div>
+              </div>
+
+              {showCourtSuggestions && (
+                <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-2xl border border-ios-gray/10 bg-white shadow-lg">
+                  {!isSearchingCourts && !courtSearchError && courtQuery.trim().length < 3 && (
+                    <div className="flex items-center gap-2 px-4 py-3 text-[12px] font-medium text-ios-gray">
+                      <Search size={14} className="text-ios-gray/70" />
+                      Start typing an area or city...
+                    </div>
+                  )}
+                  {isSearchingCourts && (
+                    <div className="flex items-center gap-2 px-4 py-3 text-[12px] font-medium text-ios-gray">
+                      <RefreshCw size={14} className="animate-spin text-ios-gray/70" />
+                      Searching areas...
+                    </div>
+                  )}
+                  {courtSearchError && (
+                    <div className="px-4 py-3 text-[12px] font-medium text-error">{courtSearchError}</div>
+                  )}
+                  {!isSearchingCourts && !courtSearchError && courtSuggestions.length === 0 && courtQuery.trim().length >= 3 && (
+                    <div className="px-4 py-3 text-[12px] font-medium text-ios-gray">No matching places found.</div>
+                  )}
+                  {!isSearchingCourts && !courtSearchError && courtSuggestions.map((suggestion) => (
+                    <button
+                      key={suggestion.id}
+                      onClick={() => handleSelectCourtSuggestion(suggestion)}
+                      className={cn(
+                        "w-full border-b border-ios-gray/10 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-surface",
+                        selectedCourtId === suggestion.id && "bg-primary/5"
+                      )}
+                    >
+                      <p className="truncate text-[13px] font-semibold text-on-surface">{suggestion.name}</p>
+                      {suggestion.address && (
+                        <p className="truncate text-[11px] text-ios-gray">{suggestion.address}</p>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className={blockClass}>
+          <p className={blockEyebrowClass}>Rules</p>
+          <h2 className={blockTitleClass}>Set the format and scoring.</h2>
+
+          <div className="mt-4 space-y-4">
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-3">
+                {formatChips.map(({ value, label, icon: Icon }) => (
                   <button
-                    key={suggestion.id}
-                    onClick={() => handleSelectCourtSuggestion(suggestion)}
+                    key={value}
+                    onClick={() => setFormat(value)}
                     className={cn(
-                      "w-full text-left px-4 py-3 border-b last:border-b-0 border-ios-gray/10 hover:bg-surface transition-colors",
-                      selectedCourtId === suggestion.id && "bg-primary/5"
+                      "tap-target flex min-h-[96px] flex-col items-center justify-center gap-2 rounded-2xl border p-4 text-center transition-all",
+                      format === value
+                        ? "border-primary/15 bg-primary/[0.06]"
+                        : "border-black/5 bg-white text-on-surface/78"
                     )}
                   >
-                    <p className="text-[13px] font-semibold text-on-surface truncate">{suggestion.name}</p>
-                    {suggestion.address && (
-                      <p className="text-[11px] text-ios-gray truncate">{suggestion.address}</p>
-                    )}
+                    <Icon size={22} className={format === value ? "text-primary" : "text-on-surface"} />
+                    <span className={cn("text-[12px] font-semibold leading-tight", format === value && "text-primary")}>
+                      {label}
+                    </span>
                   </button>
                 ))}
               </div>
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Match Format</h2>
-          <div className="grid grid-cols-3 gap-3">
-            {formatChips.map(({ value, label, icon: Icon }) => (
-              <button
-                key={value}
-                onClick={() => setFormat(value)}
-                className={cn(
-                  "p-4 rounded-xl border flex flex-col items-center justify-center gap-2 transition-all tap-target",
-                  format === value
-                    ? "bg-white border-2 border-primary shadow-sm"
-                    : "bg-white border-ios-gray/10 opacity-70"
-                )}
-              >
-                <Icon size={22} className={format === value ? "text-primary" : "text-on-surface"} />
-                <span className={cn("text-[11px] font-semibold text-center leading-tight", format === value && "text-primary font-bold")}>
-                  {label}
-                </span>
-              </button>
-            ))}
-          </div>
-          <div className="bg-primary/5 p-4 rounded-xl border border-primary/10">
-            <p className="text-[12px] text-primary font-medium leading-relaxed">
-              {format === 'Mexicano' ? "Mexicano mode rotates opponents based on set-by-set point performance." :
-                format === 'Americano' ? "Americano mode randomizes player pairings every round." :
-                  "Match Play uses traditional padel scoring (Set & Game)."}
-            </p>
-          </div>
-        </section>
-
-        {format === 'Match Play' && (
-          <section className="space-y-4">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Metode Skor (Deuce)</h2>
-            <div className="bg-ios-gray/10 p-1 rounded-xl flex items-center h-11">
-              {(['Golden Point', 'Advantage'] as ScoringType[]).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setScoringType(t)}
-                  className={cn(
-                    "flex-1 h-full rounded-[10px] text-sm font-medium transition-all",
-                    scoringType === t ? "bg-primary text-white font-bold shadow-sm" : "text-on-surface/60"
-                  )}
-                >
-                  {t}
-                </button>
-              ))}
             </div>
-            <p className="text-[11px] text-on-surface/70 font-medium text-center px-1">
-              {scoringType === 'Golden Point' ? "One deciding point at 40-40 (Punto de Oro)." : "A team must lead by 2 points after 40-40 (Ad-In/Ad-Out)."}
-            </p>
-          </section>
-        )}
 
-        <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Kriteria Ranking</h2>
-          <div className="bg-ios-gray/10 p-1 rounded-xl flex items-center h-11">
-            {(['Matches Won', 'Points Won'] as RankingCriteria[]).map((c) => (
-              <button
-                key={c}
-                onClick={() => setCriteria(c)}
-                className={cn(
-                  "flex-1 h-full rounded-[10px] text-sm font-medium transition-all",
-                  criteria === c ? "bg-primary text-white font-bold shadow-sm" : "text-on-surface/60"
-                )}
-              >
-                {c}
-              </button>
-            ))}
-          </div>
-          <p className="text-[11px] text-on-surface/70 font-medium text-center px-1">
-            {criteria === 'Points Won' ? "Winner is determined by total points scored." : "Winner is determined by total matches won."}
-          </p>
-        </section>
-
-        <section className="space-y-4">
-          <div className="flex justify-between items-center px-1">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Jumlah Court</h2>
-          </div>
-          <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                onClick={() => {
-                  setCourts(n);
-                }}
-                className={cn(circleChipClass(courts === n), "tap-target")}
-              >
-                <span className="text-[18px] font-bold">{n}</span>
-              </button>
-            ))}
-            <button
-              onClick={() => openCustomModal('courts')}
-              className={cn(circleChipClass(![1, 2, 3, 4, 5].includes(courts)), "tap-target")}
-            >
-              <span className="text-[10px] font-bold uppercase tracking-wide">Custom</span>
-            </button>
-          </div>
-          {![1, 2, 3, 4, 5].includes(courts) && (
-            <div className="bg-primary/8 border border-primary/15 rounded-xl p-3">
-              <span className="text-[12px] font-semibold text-primary">Custom selected: {courts} courts</span>
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-4">
-          <div className="flex justify-between items-center px-1">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Number of Rounds</h2>
-          </div>
-          <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
-            {[3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-              <button
-                key={n}
-                onClick={() => {
-                  setNumRounds(n);
-                }}
-                className={cn(circleChipClass(numRounds === n), "tap-target")}
-              >
-                <span className="text-[18px] font-bold">{n}</span>
-              </button>
-            ))}
-            <button
-              onClick={() => openCustomModal('rounds')}
-              className={cn(circleChipClass(![3, 4, 5, 6, 7, 8, 9, 10].includes(numRounds)), "tap-target")}
-            >
-              <span className="text-[10px] font-bold uppercase tracking-wide">Custom</span>
-            </button>
-          </div>
-          {![3, 4, 5, 6, 7, 8, 9, 10].includes(numRounds) && (
-            <div className="bg-primary/8 border border-primary/15 rounded-xl p-3">
-              <span className="text-[12px] font-semibold text-primary">Custom selected: {numRounds} rounds</span>
-            </div>
-          )}
-        </section>
-
-        <section className="space-y-4">
-          <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60 px-1">Advanced Settings</h2>
-          <div className="bg-white rounded-xl overflow-hidden border border-ios-gray/10 shadow-sm p-4">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-[13px] font-semibold">Set Total Points</span>
-              <span className="text-[13px] font-bold text-primary">{points} points</span>
-            </div>
-            <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
-              {[16, 21, 24, 32].map((p) => (
-                <button
-                  key={p}
-                  onClick={() => {
-                    setPoints(p);
-                  }}
-                  className={cn(circleChipClass(points === p), "tap-target")}
-                >
-                  <span className="text-[16px] font-bold">{p}</span>
-                </button>
-              ))}
-              <button
-                onClick={() => openCustomModal('points')}
-                className={cn(circleChipClass(![16, 21, 24, 32].includes(points)), "tap-target")}
-              >
-                <span className="text-[10px] font-bold uppercase tracking-wide">Custom</span>
-              </button>
-            </div>
-            {![16, 21, 24, 32].includes(points) && (
-              <div className="mt-3 bg-primary/8 border border-primary/15 rounded-xl p-3">
-                <span className="text-[12px] font-semibold text-primary">Custom selected: {points} points</span>
+            {format === 'Match Play' && (
+              <div className="space-y-3 rounded-2xl border border-ios-gray/10 bg-ios-gray/5 p-4">
+                <p className="text-[12px] font-semibold text-on-surface">Deuce Method</p>
+                <div className="flex h-11 items-center rounded-xl border border-black/5 bg-white p-1">
+                  {(['Golden Point', 'Advantage'] as ScoringType[]).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setScoringType(t)}
+                      className={cn(
+                        "h-full flex-1 rounded-[10px] text-sm font-medium transition-all",
+                        scoringType === t ? "bg-primary text-white font-bold" : "text-on-surface/60"
+                      )}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
+
+            <div className="space-y-3 rounded-2xl border border-ios-gray/10 bg-ios-gray/5 p-4">
+              <p className="text-[12px] font-semibold text-on-surface">Ranking Criteria</p>
+              <div className="flex h-11 items-center rounded-xl border border-black/5 bg-white p-1">
+                {(['Matches Won', 'Points Won'] as RankingCriteria[]).map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setCriteria(c)}
+                    className={cn(
+                      "h-full flex-1 rounded-[10px] text-sm font-medium transition-all",
+                      criteria === c ? "bg-primary text-white font-bold" : "text-on-surface/60"
+                    )}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-ios-gray/10 bg-ios-gray/[0.045] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[13px] font-semibold tracking-tight text-on-surface">Match Structure</p>
+                </div>
+                <span className="rounded-full border border-black/5 bg-white px-3 py-1.5 text-[11px] font-semibold tracking-tight text-ios-gray">
+                  {structureSummaryLabel}
+                </span>
+              </div>
+
+              <div className="mt-5 space-y-5">
+                <div>
+                  <p className="text-[12px] font-semibold tracking-tight text-ios-gray">Courts</p>
+                  <div className="mt-3 grid grid-cols-3 gap-2.5">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setCourts(n)}
+                        className={optionPillClass(courts === n)}
+                      >
+                        {n} {n === 1 ? 'Court' : 'Courts'}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => openCustomModal('courts')}
+                      className={optionPillClass(![1, 2, 3, 4, 5].includes(courts))}
+                    >
+                      Custom
+                    </button>
+                  </div>
+                  {![1, 2, 3, 4, 5].includes(courts) && (
+                    <p className="mt-2 text-[11px] font-medium tracking-tight text-ios-gray">Selected: {courts} courts</p>
+                  )}
+                </div>
+
+                <div className="border-t border-black/5 pt-5">
+                  <p className="text-[12px] font-semibold tracking-tight text-ios-gray">Rounds</p>
+                  <div className="mt-3 grid grid-cols-6 gap-2.5">
+                    {[3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setNumRounds(n)}
+                        className={cn(optionPillClass(numRounds === n), "px-0")}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => openCustomModal('rounds')}
+                      className={cn(
+                        optionPillClass(![3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(numRounds)),
+                        "col-span-2"
+                      )}
+                    >
+                      Custom
+                    </button>
+                  </div>
+                  {![3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(numRounds) && (
+                    <p className="mt-2 text-[11px] font-medium tracking-tight text-ios-gray">Selected: {numRounds} rounds</p>
+                  )}
+                </div>
+
+                {format !== 'Match Play' && (
+                  <div className="border-t border-black/5 pt-5">
+                    <p className="text-[12px] font-semibold tracking-tight text-ios-gray">Total Points</p>
+                    <div className="mt-3 grid grid-cols-3 gap-2.5">
+                      {[4, 5, 16, 21].map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setPoints(p)}
+                          className={optionPillClass(points === p)}
+                        >
+                          {p} pts
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => openCustomModal('points')}
+                        className={cn(
+                          optionPillClass(![4, 5, 16, 21].includes(points)),
+                          "col-span-2"
+                        )}
+                      >
+                        Custom
+                      </button>
+                    </div>
+                    {![4, 5, 16, 21].includes(points) && (
+                      <p className="mt-2 text-[11px] font-medium tracking-tight text-ios-gray">Selected: {points} points</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </section>
 
@@ -3064,143 +3442,126 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
           )}
         </AnimatePresence>
 
-        <section className="space-y-4">
-          <div className="flex items-center justify-between px-1">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Friends</h2>
-            <button
-              type="button"
-              onClick={onOpenFriends}
-              className="text-[11px] font-bold text-primary tap-target"
-            >
-              View All
-            </button>
-          </div>
+        <section ref={playersSectionRef} className={cn(blockClass, "pb-5")}>
+          <p className={blockEyebrowClass}>Players</p>
+          <h2 className={blockTitleClass}>Choose the players.</h2>
 
-          {loadingFriends ? (
-            <div className="bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm flex items-center gap-2 text-ios-gray text-sm">
-              <RefreshCw size={14} className="animate-spin" />
-              <span className="font-medium">Loading friends...</span>
-            </div>
-          ) : sortedFriends.length === 0 ? (
-            <button
-              type="button"
-              onClick={onOpenFriends}
-              className="w-full bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm text-left tap-target"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                  <Users size={20} />
-                </div>
-                <div>
-                  <p className="text-[14px] font-bold text-on-surface">No friends yet</p>
-                  <p className="text-[12px] font-medium text-ios-gray">Tap to add friends and quickly select them for a match.</p>
-                </div>
+          <div className="mt-4 rounded-2xl border border-black/5 bg-white p-3.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[12px] font-semibold text-on-surface">Selected Players</p>
+                <p className="mt-2 text-[22px] font-bold tracking-tight text-on-surface">
+                  {selectedPlayers.length} selected
+                </p>
+                <p className="mt-1 text-[12px] font-medium leading-relaxed text-ios-gray">
+                  {selectedPlayersHelper}
+                </p>
               </div>
-            </button>
-          ) : (
-            <div className="space-y-2.5">
-              <div className="flex overflow-x-auto gap-3 pb-2 no-scrollbar">
-                {quickFriends.map((friend) => {
-                  const isSelected = selectedPlayers.some((p) => p.id === friend.uid);
-                  const friendMmr = resolveLiveMmr(friend.uid, friend.mmr || 0);
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <span className={cn(
+                  "rounded-full px-3 py-1.5 text-[11px] font-semibold tracking-tight",
+                  isReady ? "bg-primary/[0.08] text-primary" : "bg-error/[0.07] text-error"
+                )}>
+                  {isReady ? 'Ready' : `${missingPlayersCount} left`}
+                </span>
+              </div>
+            </div>
+
+            {selectedPlayers.length === 0 ? (
+              <p className="mt-3 text-[12px] font-medium text-ios-gray">
+                No players selected yet.
+              </p>
+            ) : (
+              <div className="mt-3 flex flex-wrap gap-2.5">
+                {sortedSelectedPlayers.map((player) => {
+                  const isSelf = player.id === (auth.currentUser?.uid || currentUser?.uid);
                   return (
-                    <button
-                      key={friend.uid}
-                      onClick={() => {
-                        togglePlayer(friendToPlayer(friend));
-                        markFriendUsed(friend.uid);
-                      }}
-                      className={cn(
-                        "min-w-[108px] bg-white border rounded-2xl p-2.5 text-left tap-target transition-all",
-                        isSelected ? "border-primary shadow-sm" : "border-ios-gray/10"
-                      )}
+                    <div
+                      key={player.id}
+                      className="inline-flex min-h-9 min-w-0 items-center gap-2 rounded-full bg-ios-gray/[0.045] pl-2.5 pr-1.5 py-1.5"
                     >
-                      <div className="flex items-center gap-2.5">
-                        <div className={cn(
-                          "w-11 h-11 rounded-full overflow-hidden flex items-center justify-center shrink-0 border",
-                          isSelected ? "border-primary/50" : "border-ios-gray/10"
-                        )}>
-                          {friend.photoURL ? (
-                            <img src={friend.photoURL} className="w-full h-full object-cover" />
-                          ) : (
-                            <div className="w-full h-full rounded-full bg-ios-gray/10 flex items-center justify-center text-[12px] font-bold text-ios-gray">
-                              {(friend.displayName || 'T').slice(0, 1).toUpperCase()}
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[12px] font-bold text-on-surface truncate">{friend.displayName}</p>
-                          <p className="text-[10px] font-semibold text-ios-gray truncate">
-                            {friendMmr > 0 ? getRankInfo(friendMmr).name : 'No rank yet'}
-                          </p>
-                        </div>
+                      <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-[11px] font-bold text-primary shrink-0">
+                        {player.avatar ? (
+                          <img src={player.avatar} alt={player.name} className="h-full w-full object-cover" />
+                        ) : (
+                          player.initials
+                        )}
                       </div>
-                    </button>
+                      <span className="max-w-[120px] truncate text-[12px] font-semibold text-on-surface">
+                        {player.name}
+                      </span>
+                      {isSelf && (
+                        <span className="inline-flex items-center rounded-full border border-primary/15 bg-primary/[0.06] px-2 py-0.5 text-[10px] font-semibold tracking-tight text-primary">
+                          You
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => togglePlayer(player)}
+                        className="tap-target inline-flex h-6 w-6 items-center justify-center rounded-full border border-black/5 bg-white text-ios-gray/60 transition-colors hover:text-on-surface"
+                        aria-label={`Remove ${player.name} from selected players`}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
-              {sortedFriends.length > quickFriends.length && (
-                <button
-                  type="button"
-                  onClick={onOpenFriends}
-                  className="w-full h-10 rounded-xl border border-ios-gray/15 bg-white text-[12px] font-bold text-primary tap-target"
-                >
-                  View all friends ({sortedFriends.length})
-                </button>
-              )}
-            </div>
-          )}
-        </section>
+            )}
+          </div>
 
-        <section className="space-y-4 pb-8">
-          <div className="flex justify-between items-end px-1">
-            <div className="space-y-1">
-              <h2 className="text-[11px] font-bold uppercase tracking-wider text-on-surface/60">Player List</h2>
-              <div className="flex items-center gap-2">
-                <span className={cn(
-                  "text-2xl font-black tracking-tighter",
-                  isReady ? "text-primary" : "text-error"
-                )}>
-                  {selectedPlayers.length}
-                </span>
-                <div className="flex flex-col -space-y-1">
-                  <span className="text-[10px] font-black text-on-surface/40 uppercase tracking-widest">
-                    Player
-                  </span>
-                  <span className="text-[10px] font-bold text-on-surface/20 uppercase tracking-widest">
-                    Min. {minPlayersNeeded}
-                  </span>
+          <div className="mt-5">
+            <p className="px-1 text-[11px] font-semibold tracking-tight text-ios-gray">Add Players</p>
+            <div className="mt-2 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={onOpenFriends}
+              className="tap-target w-full rounded-2xl border border-black/5 bg-white px-4 py-3.5 text-left transition-all active:scale-[0.99]"
+            >
+              <div className="flex h-full flex-col items-start justify-between gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-ios-gray/[0.08] text-on-surface">
+                  <Users size={17} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold leading-tight text-on-surface">Choose Friends</p>
                 </div>
               </div>
-            </div>
+            </button>
             <button
               onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center gap-1.5 bg-primary/10 text-primary px-5 py-2.5 rounded-full text-[12px] font-bold uppercase tracking-wider tap-target transition-all active:scale-95 shadow-sm shadow-primary/5"
+              className="tap-target w-full rounded-2xl border border-black/5 bg-white px-4 py-3.5 text-left transition-all active:scale-[0.99]"
             >
-              <Plus size={16} strokeWidth={3} />
-              <span>Add</span>
+              <div className="flex h-full flex-col items-start justify-between gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-ios-gray/[0.08] text-on-surface">
+                  <Plus size={16} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold leading-tight text-on-surface">Add New Player</p>
+                </div>
+              </div>
             </button>
+            </div>
           </div>
 
           {playerDataNotice && !dismissPlayerDataNotice && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
-              <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
-                <AlertTriangle size={18} className="text-amber-600" />
+            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-amber-200/60 bg-amber-50/50 px-3.5 py-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100/90 shrink-0">
+                <AlertTriangle size={16} className="text-amber-600" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-bold text-amber-900 leading-tight">Player data was briefly out of sync and has been fixed automatically.</p>
-                <p className="mt-1 text-[11px] font-medium text-amber-800 leading-tight">
+                <p className="text-[13px] font-bold leading-tight text-amber-900">Player list was synced.</p>
+                <p className="mt-1 text-[11px] font-medium leading-tight text-amber-800">
                   {[
-                    playerDataNotice.missingFromList > 0 ? `${playerDataNotice.missingFromList} players restored to the list` : null,
+                    playerDataNotice.missingFromList > 0 ? `${playerDataNotice.missingFromList} players restored` : null,
                     playerDataNotice.duplicateInSelected > 0 ? `${playerDataNotice.duplicateInSelected} selected duplicates removed` : null,
                     playerDataNotice.duplicateInList > 0 ? `${playerDataNotice.duplicateInList} list duplicates removed` : null
-                  ].filter(Boolean).join(' | ')}
+                  ].filter(Boolean).join(' · ')}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setDismissPlayerDataNotice(true)}
-                className="p-1.5 rounded-lg text-amber-700/80 hover:text-amber-900 tap-target"
+                className="tap-target rounded-lg p-1.5 text-amber-700/80 hover:text-amber-900"
                 aria-label="Close player data sync notice"
               >
                 <X size={16} />
@@ -3208,84 +3569,119 @@ const MatchSettingsScreen = ({ onBack, onGenerate, onOpenFriends, tournament, se
             </div>
           )}
 
-          <AnimatePresence mode="wait">
-            {!isReady && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="bg-error/5 border border-error/10 p-4 rounded-2xl flex items-center gap-4"
-              >
-                <div className="w-10 h-10 rounded-full bg-error/10 flex items-center justify-center shrink-0">
-                  <Users size={20} className="text-error" />
-                </div>
-                <div className="space-y-0.5">
-                  <p className="text-[13px] text-error font-bold leading-tight">
-                    Butuh {minPlayersNeeded - selectedPlayers.length} player lagi
-                  </p>
-                  <p className="text-[11px] text-error/60 font-medium leading-tight">
-                    Minimal 4 player per court ({courts} court = {minPlayersNeeded} player)
-                  </p>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[12px] font-semibold text-on-surface">Available Players</p>
+                <p className="mt-1 text-[11px] font-medium text-ios-gray">Add players who are not in the match yet.</p>
+              </div>
+              {availablePlayers.length > 0 && (
+                <span className="shrink-0 rounded-full bg-ios-gray/[0.05] px-2.5 py-1 text-[11px] font-medium tracking-tight text-ios-gray">
+                  {availablePlayers.length}
+                </span>
+              )}
+            </div>
 
-          <div className="space-y-3">
-            {normalizedAllPlayers.map((player) => {
-              const isSelected = selectedPlayers.find(p => p && p.id === player.id);
-              const isSelf = player.id === (auth.currentUser?.uid || currentUser?.uid);
-              return (
-                <div key={player.id} className="relative group">
-                  <div
-                    onClick={() => togglePlayer(player)}
-                    className={cn(
-                      "w-full p-4 rounded-xl flex items-center justify-between border transition-all cursor-pointer",
-                      isSelected ? "bg-white border-primary shadow-sm" : "bg-white border-ios-gray/10 opacity-60"
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-10 h-10 rounded-full flex items-center justify-center font-bold overflow-hidden",
-                        isSelected ? "bg-primary text-white" : "bg-ios-gray/10 text-ios-gray"
-                      )}>
-                        {player.avatar ? (
-                          <img src={player.avatar} alt={player.name} className="w-full h-full object-cover" />
-                        ) : (
-                          player.initials
-                        )}
-                      </div>
-                      <div className="text-left">
-                        <span className="text-[14px] font-semibold block">{player.name}</span>
-                        {isSelf && (
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-primary/80">You</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {!isSelf && (
-                        <button
-                          onClick={(e) => handleRemovePlayer(e, player.id)}
-                          className="p-2 text-ios-gray/40 hover:text-error transition-colors tap-target"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+            {loadingFriends && availablePlayers.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-2xl border border-ios-gray/10 bg-ios-gray/5 p-4 text-sm text-ios-gray">
+                <RefreshCw size={14} className="animate-spin" />
+                <span className="font-medium">Loading players...</span>
+              </div>
+            ) : availablePlayers.length === 0 ? (
+              <div className="rounded-2xl border border-ios-gray/10 bg-ios-gray/5 p-4">
+                <p className="text-[14px] font-bold text-on-surface">No more players to add</p>
+                <p className="mt-1 text-[12px] font-medium text-ios-gray">Add a new player or remove someone from the selected list.</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+              {availablePlayers.map((player) => {
+                const isSelf = player.id === (auth.currentUser?.uid || currentUser?.uid);
+                return (
+                  <div key={player.id} className="relative group">
+                    <div
+                      className={cn(
+                        "flex w-full items-center justify-between rounded-2xl border px-4 py-3 transition-all",
+                        "border-ios-gray/10 bg-white"
                       )}
-                      {isSelected ? (
-                        <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center">
-                          <Check size={14} className="text-white" />
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={cn(
+                          "flex h-10 w-10 items-center justify-center overflow-hidden rounded-full font-bold shrink-0",
+                          "bg-ios-gray/10 text-ios-gray"
+                        )}>
+                          {player.avatar ? (
+                            <img src={player.avatar} alt={player.name} className="w-full h-full object-cover" />
+                          ) : (
+                            player.initials
+                          )}
                         </div>
-                      ) : (
-                        <div className="w-6 h-6 border-2 border-ios-gray/20 rounded-full" />
-                      )}
+                        <div className="min-w-0 text-left">
+                          <span className="block truncate text-[14px] font-semibold text-on-surface">{player.name}</span>
+                          {isSelf && (
+                            <span className="mt-1 inline-flex rounded-full border border-primary/15 bg-primary/[0.06] px-2 py-0.5 text-[10px] font-semibold tracking-tight text-primary">
+                              You
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        {!isSelf && (
+                          <button
+                            type="button"
+                            onClick={(e) => handleRemovePlayer(e, player.id)}
+                            className="tap-target inline-flex h-8 items-center rounded-full border border-black/5 bg-ios-gray/[0.04] px-3 text-[12px] font-semibold tracking-tight text-ios-gray/70 transition-colors hover:border-error/15 hover:bg-error/[0.05] hover:text-error"
+                          >
+                            <Trash2 size={14} className="mr-1.5" />
+                            Remove
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => togglePlayer(player)}
+                          className="tap-target inline-flex h-8 items-center rounded-full bg-primary px-3.5 text-[12px] font-semibold tracking-tight text-white shadow-[0_8px_18px_rgba(255,85,1,0.14)] transition-transform active:scale-[0.98]"
+                        >
+                          Add
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+              </div>
+            )}
           </div>
         </section>
       </main>
+
+      <div
+        className="fixed inset-x-0 z-40 border-t border-ios-gray/10 bg-white/95 backdrop-blur"
+        style={{ bottom: 'calc(var(--app-safe-bottom, 0px))' }}
+      >
+        <div className="mx-auto w-full max-w-md px-4 py-3">
+          <div className="flex items-center gap-3 rounded-[24px] border border-black/5 bg-white px-3.5 py-3">
+            <div className="min-w-0 flex-1">
+              <p className={cn(
+                "truncate text-[13px] font-semibold leading-tight",
+                isReady ? "text-on-surface" : "text-error"
+              )}>
+                {setupSummaryLabel}
+              </p>
+              <p className="mt-0.5 text-[11px] text-ios-gray">
+                {format === 'Match Play'
+                  ? `${format} · ${numRounds} rounds`
+                  : `${format} · ${numRounds} rounds · ${points} points`}
+              </p>
+            </div>
+            <button
+              onClick={handleGenerate}
+              disabled={!isReady}
+              className="h-12 shrink-0 rounded-2xl bg-primary px-5 text-[14px] font-bold text-white shadow-[0_8px_18px_rgba(255,85,1,0.16)] tap-target transition-all disabled:opacity-40 disabled:shadow-none disabled:active:scale-100"
+            >
+              Generate Match
+            </button>
+          </div>
+        </div>
+      </div>
 
       <AnimatePresence>
         {isAddModalOpen && (
@@ -5378,25 +5774,51 @@ const NotificationsScreen = ({ notifications, onMarkAsRead, onClearAll, onBack }
   onClearAll: () => void,
   onBack: () => void
 }) => {
+  const sortedNotifications = useMemo(
+    () => [...notifications].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()),
+    [notifications]
+  );
+  const unreadCount = sortedNotifications.filter((notif) => !notif.read).length;
+  const formatRelativeNotificationTime = (timestamp: Date) => {
+    const diffMs = timestamp.getTime() - Date.now();
+    const diffMinutes = Math.round(diffMs / 60000);
+    const absMinutes = Math.abs(diffMinutes);
+    const rtf = new Intl.RelativeTimeFormat('id', { style: 'short' });
+
+    if (absMinutes < 60) {
+      return rtf.format(diffMinutes, 'minute');
+    }
+
+    const diffHours = Math.round(diffMinutes / 60);
+    const absHours = Math.abs(diffHours);
+    if (absHours < 24) {
+      return rtf.format(diffHours, 'hour');
+    }
+
+    const diffDays = Math.round(diffHours / 24);
+    if (Math.abs(diffDays) < 7) {
+      return rtf.format(diffDays, 'day');
+    }
+
+    return timestamp.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
   return (
     <div className="bg-white min-h-screen pb-32">
-      <header className="ios-blur sticky top-0 z-50 flex justify-between items-center w-full px-4 h-14 border-b border-ios-gray/10">
-        <div className="flex items-center gap-2">
+      <header className="ios-blur sticky top-0 z-50 flex items-center w-full px-4 h-14 border-b border-ios-gray/10">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button onClick={onBack} className="tap-target p-2 -ml-2">
             <ChevronLeft size={24} className="text-on-surface" />
           </button>
-          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Notifications</h1>
+          <h1 className="text-[17px] font-bold tracking-tight text-on-surface truncate">Notifications</h1>
         </div>
-        <button
-          onClick={onClearAll}
-          className="text-[13px] font-bold text-primary tap-target px-2"
-        >
-          Delete All
-        </button>
       </header>
 
-      <main className="max-w-md mx-auto py-4">
-        {notifications.length === 0 ? (
+      <main className="max-w-md mx-auto px-4 py-4 space-y-4">
+        {sortedNotifications.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
             <div className="w-20 h-20 bg-ios-gray/5 rounded-full flex items-center justify-center mb-4">
               <Bell size={40} className="text-ios-gray/30" />
@@ -5407,50 +5829,85 @@ const NotificationsScreen = ({ notifications, onMarkAsRead, onClearAll, onBack }
             </p>
           </div>
         ) : (
-          <div className="space-y-1">
-            {notifications.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()).map((notif) => (
-              <button
-                key={notif.id}
-                onClick={() => onMarkAsRead(notif.id)}
-                className={cn(
-                  "w-full p-4 flex gap-4 text-left transition-colors border-b border-ios-gray/5",
-                  !notif.read ? "bg-primary/5" : "bg-white"
-                )}
-              >
-                <div className={cn(
-                  "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
-                  notif.type === 'match' ? "bg-blue-500/10 text-blue-500" :
-                    notif.type === 'tournament' ? "bg-primary/10 text-primary" :
-                      notif.type === 'achievement' ? "bg-yellow-500/10 text-yellow-500" :
-                        "bg-ios-gray/10 text-ios-gray"
-                )}>
-                  {notif.type === 'match' ? <Trophy size={24} /> :
-                    notif.type === 'tournament' ? <Zap size={24} /> :
-                      notif.type === 'achievement' ? <Award size={24} /> :
-                        <Bell size={24} />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-start mb-1">
-                    <h4 className={cn("text-[15px] truncate pr-2", !notif.read ? "font-bold text-on-surface" : "font-semibold text-on-surface/70")}>
-                      {notif.title}
-                    </h4>
-                    <span className="text-[10px] font-bold text-ios-gray/50 whitespace-nowrap mt-1 uppercase tracking-wider">
-                      {new Intl.RelativeTimeFormat('id', { style: 'short' }).format(
-                        Math.round((notif.timestamp.getTime() - Date.now()) / 60000),
-                        'minute'
-                      )}
-                    </span>
-                  </div>
-                  <p className={cn("text-[13px] leading-snug line-clamp-2", !notif.read ? "text-on-surface/80 font-medium" : "text-on-surface/40")}>
-                    {notif.message}
+          <>
+            <section className="rounded-[24px] border border-black/5 bg-surface px-4 py-3.5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Inbox</p>
+                  <p className="mt-1 text-[14px] font-semibold tracking-tight text-on-surface">
+                    {unreadCount > 0
+                      ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
+                      : 'All caught up'}
                   </p>
                 </div>
-                {!notif.read && (
-                  <div className="w-2 h-2 bg-primary rounded-full mt-2 shrink-0" />
-                )}
-              </button>
-            ))}
-          </div>
+                <button
+                  onClick={onClearAll}
+                  className="shrink-0 rounded-full border border-black/5 bg-white px-3 py-2 text-[12px] font-semibold tracking-tight text-ios-gray tap-target transition-all active:scale-[0.98]"
+                >
+                  Clear all
+                </button>
+              </div>
+            </section>
+
+            <div className="overflow-hidden rounded-[24px] border border-black/5 bg-white">
+            {sortedNotifications.map((notif, index) => {
+              const visuals = getNotificationVisuals(notif);
+              const Icon = visuals.icon;
+              const timeLabel = formatRelativeNotificationTime(notif.timestamp);
+
+              return (
+                <button
+                  key={notif.id}
+                  onClick={() => onMarkAsRead(notif.id)}
+                  className={cn(
+                    'w-full px-4 py-3.5 flex gap-3.5 text-left transition-colors',
+                    index !== sortedNotifications.length - 1 && 'border-b border-ios-gray/5',
+                    !notif.read ? visuals.unreadRowClass : visuals.readRowClass
+                  )}
+                >
+                  <div className={cn('w-11 h-11 rounded-2xl flex items-center justify-center shrink-0', visuals.iconWrapClass)}>
+                    <Icon size={22} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-3">
+                      <h4 className={cn(
+                        'text-[15px] leading-tight truncate pr-2',
+                        !notif.read ? `font-bold ${visuals.titleClass}` : 'font-semibold text-on-surface/70'
+                      )}>
+                        {notif.title}
+                      </h4>
+                      <span className="mt-0.5 whitespace-nowrap text-[11px] font-medium tracking-tight text-ios-gray/65">
+                        {timeLabel}
+                      </span>
+                    </div>
+                    <p className={cn(
+                      'mt-1 text-[13px] leading-snug line-clamp-2',
+                      !notif.read ? `font-medium ${visuals.messageClass}` : 'text-on-surface/40'
+                    )}>
+                      {notif.message}
+                    </p>
+                  </div>
+                  {!notif.read && (
+                    <div className={cn(
+                      'w-2 h-2 rounded-full mt-2.5 shrink-0',
+                      visuals.tone === 'error'
+                        ? 'bg-[#ef4444]'
+                        : visuals.tone === 'success'
+                          ? 'bg-[#16a34a]'
+                          : visuals.tone === 'achievement'
+                            ? 'bg-[#f59e0b]'
+                            : notif.type === 'match'
+                              ? 'bg-blue-500'
+                              : notif.type === 'tournament'
+                                ? 'bg-primary'
+                                : 'bg-ios-gray'
+                    )} />
+                  )}
+                </button>
+              );
+            })}
+            </div>
+          </>
         )}
       </main>
     </div>
@@ -5467,34 +5924,95 @@ const HistoryScreen = ({
   onOpenTournament: (tournament: TournamentHistory) => void;
 }) => {
   const sortedTournaments = useMemo(() => sortTournamentsByNewest(tournaments), [tournaments]);
+  const totalCompletedMatches = useMemo(
+    () => sortedTournaments.reduce((sum, tournament) => sum + buildCompletedMatchHistoryItems([tournament]).length, 0),
+    [sortedTournaments]
+  );
+  const totalPlayers = useMemo(
+    () => sortedTournaments.reduce((sum, tournament) => sum + Number(tournament.numPlayers || 0), 0),
+    [sortedTournaments]
+  );
+  const latestEventLabel = sortedTournaments[0]?.date
+    ? sortedTournaments[0].date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
 
   return (
     <div className="bg-white min-h-screen pb-32">
-      <header className="ios-blur sticky top-0 w-full z-50 flex items-center justify-between px-4 h-14 border-b border-ios-gray/10">
-        <button onClick={onBack} className="text-primary flex items-center -ml-2 tap-target p-2">
-          <ChevronLeft size={24} />
-        </button>
-        <h1 className="font-bold text-[17px] tracking-tight">Match History</h1>
-        <div className="w-10" />
-      </header>
+      <main className="max-w-2xl mx-auto px-4 pt-4 sm:pt-6 space-y-4 sm:space-y-5">
+        <section className="overflow-hidden rounded-[28px] sm:rounded-[32px] border border-black/5 bg-white p-4 sm:p-5 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold tracking-tight text-primary/80">History</p>
+              <h1 className="mt-1 text-[clamp(24px,7vw,36px)] leading-[1.02] font-display font-black tracking-tight text-on-surface">
+                Match archive.
+              </h1>
+              <p className="mt-1.5 max-w-md text-[13px] sm:text-[14px] leading-relaxed text-ios-gray">
+                Semua event yang sudah selesai terkumpul di sini, jadi lebih gampang buat cek recap, standings, dan detail per ronde.
+              </p>
+            </div>
+            <div className="shrink-0 rounded-[18px] sm:rounded-[20px] border border-black/5 bg-surface px-3 py-2 text-right">
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Events</p>
+              <p className="mt-1 text-[20px] sm:text-[24px] leading-none font-display font-black tracking-tight tabular-nums text-on-surface">
+                {sortedTournaments.length}
+              </p>
+            </div>
+          </div>
 
-      <main className="pt-6 px-5 max-w-lg mx-auto">
-        {sortedTournaments.length === 0 ? (
-          <div className="bg-white border border-ios-gray/10 rounded-[20px] p-8 text-center shadow-sm">
-            <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-            <p className="text-ios-gray font-medium">No match history yet.</p>
+          <div className="mt-3.5 grid grid-cols-3 gap-2">
+            <div className="rounded-[16px] sm:rounded-[20px] border border-black/5 bg-surface px-2.5 sm:px-3 py-2.5 sm:py-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/70">Matches</p>
+              <p className="mt-1 text-[16px] sm:text-[18px] leading-none font-display font-black tracking-tight text-on-surface tabular-nums">
+                {totalCompletedMatches}
+              </p>
+            </div>
+            <div className="rounded-[16px] sm:rounded-[20px] border border-black/5 bg-surface px-2.5 sm:px-3 py-2.5 sm:py-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/70">Players</p>
+              <p className="mt-1 text-[16px] sm:text-[18px] leading-none font-display font-black tracking-tight text-on-surface tabular-nums">
+                {totalPlayers}
+              </p>
+            </div>
+            <div className="rounded-[16px] sm:rounded-[20px] border border-black/5 bg-surface px-2.5 sm:px-3 py-2.5 sm:py-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/70">Latest</p>
+              <p className="mt-1 text-[12px] sm:text-[13px] leading-tight font-semibold tracking-tight text-on-surface">
+                {latestEventLabel || 'Belum ada'}
+              </p>
+            </div>
           </div>
-        ) : (
-          <div className="space-y-3">
-            {sortedTournaments.map((item) => (
-              <TournamentHistoryCard
-                key={item.id}
-                tournament={item}
-                onClick={() => onOpenTournament(item)}
-              />
-            ))}
+        </section>
+
+        <section className="space-y-3">
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Archive List</p>
+              <h2 className="mt-1 text-[17px] sm:text-[18px] font-bold tracking-tight text-on-surface">Completed events</h2>
+            </div>
+            {sortedTournaments.length > 0 && (
+              <span className="shrink-0 rounded-full border border-black/5 bg-surface px-2.5 py-1.5 text-[10px] sm:text-[11px] font-semibold tracking-tight text-ios-gray">
+                newest first
+              </span>
+            )}
           </div>
-        )}
+
+          {sortedTournaments.length === 0 ? (
+            <div className="rounded-[28px] border border-dashed border-black/8 bg-surface p-10 text-center">
+              <Trophy size={40} className="mx-auto mb-3 text-ios-gray/20" />
+              <h3 className="text-[18px] font-bold tracking-tight text-on-surface">No history yet</h3>
+              <p className="mx-auto mt-2 max-w-sm text-[14px] font-medium leading-relaxed text-ios-gray">
+                Completed events will show up here once your matches are finalized.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {sortedTournaments.map((item) => (
+                <TournamentHistoryCard
+                  key={item.id}
+                  tournament={item}
+                  onClick={() => onOpenTournament(item)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );
@@ -5515,6 +6033,33 @@ const HistoryDetailScreen = ({
     () => buildCompletedMatchHistoryItems([tournament]),
     [tournament]
   );
+  const matchesByRound = useMemo(() => {
+    const grouped = new Map<number, CompletedMatchHistoryItem[]>();
+    completedMatches.forEach((item) => {
+      const roundItems = grouped.get(item.roundId) || [];
+      roundItems.push(item);
+      grouped.set(item.roundId, roundItems);
+    });
+    return Array.from(grouped.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([roundId, items]) => ({ roundId, items }));
+  }, [completedMatches]);
+  const formatTheme = getHistoryFormatTheme(tournament.format);
+  const eventMeta = [tournament.venueName, tournament.location].filter(Boolean).join(' · ');
+  const [focusedRoundId, setFocusedRoundId] = useState<number | null>(null);
+  const roundSectionRefs = useRef<Record<number, HTMLElement | null>>({});
+
+  useEffect(() => {
+    setFocusedRoundId(matchesByRound[0]?.roundId ?? null);
+  }, [matchesByRound]);
+
+  const handleFocusRound = (roundId: number) => {
+    setFocusedRoundId(roundId);
+    roundSectionRefs.current[roundId]?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start'
+    });
+  };
 
   return (
     <div className="bg-white min-h-screen pb-32">
@@ -5522,38 +6067,65 @@ const HistoryDetailScreen = ({
         <button onClick={onBack} className="text-primary flex items-center -ml-2 tap-target p-2">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="font-bold text-[17px] tracking-tight">History Details</h1>
+        <h1 className="font-bold text-[17px] tracking-tight">History Detail</h1>
         <div className="w-10" />
       </header>
 
-      <main className="pt-6 px-5 space-y-8 max-w-lg mx-auto">
-        <div className="bg-primary/5 p-6 rounded-[32px] border border-primary/10">
-          <h2 className="text-2xl font-bold text-on-surface mb-1">{tournament.name}</h2>
-          <div className="flex items-center gap-3 text-ios-gray font-medium text-sm">
+      <main className="pt-4 px-4 space-y-4 max-w-2xl mx-auto">
+        <div className="overflow-hidden rounded-[28px] sm:rounded-[30px] border border-black/5 bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Event Summary</p>
+            <span className={cn('inline-flex rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em]', formatTheme.chip)}>
+              {tournament.format}
+            </span>
+          </div>
+          <h2 className="mt-2 text-[28px] leading-tight font-display font-black tracking-tight text-on-surface">
+            {tournament.name}
+          </h2>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-[13px] font-medium text-ios-gray">
             <Calendar size={14} />
             <span>{tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+            {eventMeta && (
+              <>
+                <span className="h-1 w-1 rounded-full bg-ios-gray/45" />
+                <span className="truncate">{eventMeta}</span>
+              </>
+            )}
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <div className="bg-white/60 p-3 rounded-2xl border border-ios-gray/5">
-              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-widest mb-1">Format</span>
-              <span className="text-sm font-bold text-on-surface">{tournament.format}</span>
+
+          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+            <div className="rounded-[18px] sm:rounded-[20px] border border-black/5 bg-surface px-3 py-3">
+              <span className="block text-[11px] font-semibold tracking-tight text-ios-gray">Format</span>
+              <span className="mt-1 block text-[14px] font-semibold tracking-tight text-on-surface">{tournament.format}</span>
             </div>
-            <div className="bg-white/60 p-3 rounded-2xl border border-ios-gray/5">
-              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-widest mb-1">Player</span>
-              <span className="text-sm font-bold text-on-surface">{tournament.numPlayers} Players</span>
+            <div className="rounded-[18px] sm:rounded-[20px] border border-black/5 bg-surface px-3 py-3">
+              <span className="block text-[11px] font-semibold tracking-tight text-ios-gray">Players</span>
+              <span className="mt-1 block text-[14px] font-semibold tracking-tight text-on-surface">{tournament.numPlayers}</span>
+            </div>
+            <div className="rounded-[18px] sm:rounded-[20px] border border-black/5 bg-surface px-3 py-3">
+              <span className="block text-[11px] font-semibold tracking-tight text-ios-gray">Rounds</span>
+              <span className="mt-1 block text-[14px] font-semibold tracking-tight text-on-surface">{tournament.numRounds}</span>
+            </div>
+            <div className="rounded-[18px] sm:rounded-[20px] border border-black/5 bg-surface px-3 py-3">
+              <span className="block text-[11px] font-semibold tracking-tight text-ios-gray">Matches</span>
+              <span className="mt-1 block text-[14px] font-semibold tracking-tight text-on-surface">{completedMatches.length}</span>
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+
+          <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             <button
               onClick={onViewFinalStandings}
-              className="w-full h-11 rounded-xl border border-primary/20 bg-white/80 text-primary text-[13px] font-bold inline-flex items-center justify-center gap-2 tap-target"
+              className={cn(
+                'w-full h-12 rounded-[18px] border text-[13px] font-semibold tracking-tight inline-flex items-center justify-center gap-2 tap-target shadow-sm',
+                formatTheme.chip
+              )}
             >
               <Trophy size={16} />
               View Final Standings
             </button>
             <button
               onClick={onViewMatchDetails}
-              className="w-full h-11 rounded-xl border border-ios-gray/20 bg-white text-on-surface text-[13px] font-bold inline-flex items-center justify-center gap-2 tap-target"
+              className="w-full h-12 rounded-[18px] border border-black/5 bg-surface text-[13px] font-semibold tracking-tight text-on-surface/88 inline-flex items-center justify-center gap-2 tap-target shadow-sm"
             >
               <Zap size={16} />
               Round Details
@@ -5562,51 +6134,174 @@ const HistoryDetailScreen = ({
         </div>
 
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[13px] font-bold uppercase tracking-wide text-ios-gray">Completed Matches</h3>
-            <span className="text-[12px] font-bold text-ios-gray">{completedMatches.length} Match</span>
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Completed Matches</p>
+              <h3 className="mt-1 text-[18px] font-bold tracking-tight text-on-surface">
+                Match history
+              </h3>
+              <p className="mt-1 text-[13px] leading-relaxed text-ios-gray">
+                Skor final tiap court dan ronde, supaya recap pertandingan lebih cepat dipindai.
+              </p>
+            </div>
+            <span className="shrink-0 rounded-full border border-black/5 bg-surface px-3 py-1.5 text-[11px] font-semibold tracking-tight text-ios-gray">
+              {completedMatches.length} {completedMatches.length === 1 ? 'match' : 'matches'}
+            </span>
           </div>
 
+          {matchesByRound.length > 0 && (
+            <div className="-mx-1 overflow-x-auto px-1 pb-1 no-scrollbar">
+              <div className="flex w-max gap-2">
+              {matchesByRound.map((group) => (
+                <button
+                  key={group.roundId}
+                  type="button"
+                  onClick={() => handleFocusRound(group.roundId)}
+                  className={cn(
+                    'inline-flex items-center gap-2 rounded-full border bg-white px-3 py-1.5 text-[11px] font-semibold tracking-tight shadow-sm tap-target transition-all active:scale-[0.98]',
+                    focusedRoundId === group.roundId ? formatTheme.badge : formatTheme.chip
+                  )}
+                >
+                  <span>Round {group.roundId}</span>
+                  <span className="h-1 w-1 rounded-full bg-current opacity-40" />
+                  <span>{group.items.length} match{group.items.length === 1 ? '' : 'es'}</span>
+                </button>
+              ))}
+              </div>
+            </div>
+          )}
+
           {completedMatches.length === 0 ? (
-            <div className="bg-white rounded-[20px] p-6 text-center shadow-sm border border-ios-gray/10">
-              <p className="text-ios-gray font-medium">No completed matches in this history yet.</p>
+            <div className="rounded-[24px] border border-dashed border-black/8 bg-surface p-8 text-center">
+              <p className="text-[14px] font-medium text-ios-gray">No completed matches in this history yet.</p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {completedMatches.map((item) => (
-                <CompletedMatchHistoryCard
-                  key={item.id}
-                  item={item}
-                  showTournamentMeta={false}
-                />
+            <div className="space-y-4">
+              {matchesByRound.map((group) => (
+                <section
+                  key={group.roundId}
+                  ref={(node) => {
+                    roundSectionRefs.current[group.roundId] = node;
+                  }}
+                  className="rounded-[26px] border border-black/5 bg-[linear-gradient(180deg,rgba(249,250,251,0.98)_0%,rgba(255,255,255,0.98)_100%)] p-3.5"
+                >
+                  <div className="mb-3 flex items-center justify-between gap-3 px-1">
+                    <div>
+                      <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Round Group</p>
+                      <h4 className="mt-0.5 text-[16px] font-bold tracking-tight text-on-surface">
+                        Round {group.roundId}
+                      </h4>
+                    </div>
+                    <span className={cn('shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold tracking-tight', formatTheme.badge)}>
+                      {group.items.length} match{group.items.length === 1 ? '' : 'es'}
+                    </span>
+                  </div>
+
+                  <div className="space-y-3">
+                    {group.items.map((item) => (
+                      <CompletedMatchHistoryCard
+                        key={item.id}
+                        item={item}
+                        showTournamentMeta={false}
+                      />
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           )}
+        </section>
+
+        <section className="rounded-[24px] border border-black/5 bg-surface p-3.5">
+          <div>
+            <p className="text-[11px] font-semibold tracking-tight text-ios-gray">More Details</p>
+            <p className="mt-1 text-[13px] font-semibold tracking-tight text-on-surface">
+              Open standings or round-by-round details if you need the full breakdown.
+            </p>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+            <button
+              onClick={onViewFinalStandings}
+              className="w-full h-11 rounded-full border border-primary/12 bg-white text-[13px] font-semibold tracking-tight text-primary inline-flex items-center justify-center gap-2 tap-target"
+            >
+              <Trophy size={16} />
+              View Final Standings
+            </button>
+            <button
+              onClick={onViewMatchDetails}
+              className="w-full h-11 rounded-full border border-black/5 bg-white text-[13px] font-semibold tracking-tight text-on-surface/88 inline-flex items-center justify-center gap-2 tap-target"
+            >
+              <Zap size={16} />
+              Round Details
+            </button>
+          </div>
         </section>
       </main>
     </div>
   );
 };
 
-const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUser, onOpenHistoryMatch, onOpenHistoryList, addNotification, onFriends }: {
+const ProfileScreen = ({ onLogout, user, tournaments, setUser, addNotification, onOpenMmrHistory, onOpenNotifications, onOpenFriends, unreadCount }: {
   onLogout: () => void,
-  onRequestPermission: () => void,
   user: any,
   tournaments: TournamentHistory[],
   setUser: React.Dispatch<React.SetStateAction<any>>,
-  onOpenHistoryMatch: (t: TournamentHistory) => void,
-  onOpenHistoryList: () => void,
   addNotification: (title: string, message: string, type: AppNotification['type']) => void,
-  onFriends: () => void
+  onOpenMmrHistory: () => void,
+  onOpenNotifications: () => void,
+  onOpenFriends: () => void,
+  unreadCount: number
 }) => {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [isFeedbackInboxOpen, setIsFeedbackInboxOpen] = useState(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [isRegionSelectorOpen, setIsRegionSelectorOpen] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState<'bug' | 'feature_request' | 'ui_ux' | 'other'>('bug');
+  const [feedbackMessage, setFeedbackMessage] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [isSubmittingPasswordReset, setIsSubmittingPasswordReset] = useState(false);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [feedbackInboxItems, setFeedbackInboxItems] = useState<any[]>([]);
+  const [isFeedbackInboxLoading, setIsFeedbackInboxLoading] = useState(false);
+  const [feedbackInboxStatusFilter, setFeedbackInboxStatusFilter] = useState<'all' | 'new' | 'reviewed' | 'resolved'>('all');
+  const [feedbackInboxCategoryFilter, setFeedbackInboxCategoryFilter] = useState<'all' | 'bug' | 'feature_request' | 'ui_ux' | 'other'>('all');
+  const [updatingFeedbackId, setUpdatingFeedbackId] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [editData, setEditData] = useState({
     displayName: user?.displayName || '',
     username: user?.username || '',
     phoneNumber: user?.phoneNumber || '',
     homeBase: user?.homeBase || user?.region || 'Jakarta Selatan, DKI Jakarta'
   });
+  const feedbackCategories = [
+    { value: 'bug' as const, label: 'Bug' },
+    { value: 'feature_request' as const, label: 'Feature' },
+    { value: 'ui_ux' as const, label: 'UI/UX' },
+    { value: 'other' as const, label: 'Other' }
+  ];
+  const trimmedFeedbackMessage = feedbackMessage.trim();
+  const canSubmitFeedback = trimmedFeedbackMessage.length > 0 && !isSubmittingFeedback;
+  const accountEmail = (user?.email || '').trim().toLowerCase();
+  const canSendPasswordReset = Boolean(accountEmail) && !isSubmittingPasswordReset;
+  const isAdminUser = user?.role === 'admin' || isAdminEmail(accountEmail);
+  const getFeedbackClientContext = () => {
+    if (typeof window === 'undefined') {
+      return {
+        route: '/profile',
+        displayMode: 'unknown',
+        viewport: null,
+        userAgent: '',
+      };
+    }
+
+    return {
+      route: window.location.pathname || '/profile',
+      displayMode: window.matchMedia?.('(display-mode: standalone)').matches ? 'standalone' : 'browser',
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      userAgent: window.navigator.userAgent,
+    };
+  };
 
   const handleSaveProfile = async () => {
     try {
@@ -5616,6 +6311,124 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
       addNotification('Profile Updated', 'Your profile information has been saved successfully.', 'system');
     } catch (err) {
       console.error('Save profile error:', err);
+    }
+  };
+
+  const resizeProfilePhoto = (file: File): Promise<{ blob: Blob; dataUrl: string }> => (
+    new Promise((resolve, reject) => {
+      const image = new Image();
+      const reader = new FileReader();
+      const cleanup = () => {
+        URL.revokeObjectURL(image.src);
+      };
+
+      reader.onerror = () => reject(reader.error || new Error('Unable to read selected image.'));
+      reader.onload = () => {
+        const objectUrl = URL.createObjectURL(file);
+        image.onload = () => {
+          try {
+            const maxSide = 640;
+            const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+            const width = Math.max(1, Math.round(image.width * scale));
+            const height = Math.max(1, Math.round(image.height * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error('Unable to prepare image canvas.');
+            ctx.drawImage(image, 0, 0, width, height);
+
+            const makeBlob = (quality: number): Promise<Blob> => (
+              new Promise((blobResolve, blobReject) => {
+                canvas.toBlob((blob) => {
+                  if (blob) blobResolve(blob);
+                  else blobReject(new Error('Unable to compress selected image.'));
+                }, 'image/jpeg', quality);
+              })
+            );
+
+            (async () => {
+              let blob = await makeBlob(0.82);
+              let quality = 0.72;
+              while (blob.size > 850000 && quality >= 0.42) {
+                blob = await makeBlob(quality);
+                quality -= 0.1;
+              }
+              const dataUrl = canvas.toDataURL('image/jpeg', Math.max(quality + 0.1, 0.42));
+              cleanup();
+              resolve({ blob, dataUrl });
+            })().catch((err) => {
+              cleanup();
+              reject(err);
+            });
+          } catch (err) {
+            cleanup();
+            reject(err);
+          }
+        };
+        image.onerror = () => {
+          cleanup();
+          reject(new Error('Selected file is not a readable image.'));
+        };
+        image.src = objectUrl;
+      };
+      reader.readAsArrayBuffer(file);
+    })
+  );
+
+  const handleUploadProfilePhoto = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || isUploadingPhoto) return;
+    if (!user?.uid) {
+      addNotification('Upload Photo', 'Please sign in again before updating your photo.', 'system');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      addNotification('Upload Photo', 'Please choose an image file.', 'system');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      addNotification('Upload Photo', 'Image is too large. Please choose a photo under 8 MB.', 'system');
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+    try {
+      const { blob, dataUrl } = await resizeProfilePhoto(file);
+      let photoURL = dataUrl;
+
+      try {
+        const photoRef = storageRef(storage, `profile-photos/${user.uid}/avatar.jpg`);
+        await uploadBytes(photoRef, blob, {
+          contentType: 'image/jpeg',
+          customMetadata: { ownerUid: user.uid }
+        });
+        photoURL = await getDownloadURL(photoRef);
+      } catch (storageErr) {
+        console.warn('Profile photo Storage upload failed, using Firestore data URL fallback:', storageErr);
+        if (dataUrl.length > 880000) {
+          throw new Error('Compressed image is too large for profile fallback storage.');
+        }
+      }
+
+      const profilePayload = {
+        photoURL,
+        updatedAt: serverTimestamp()
+      };
+      await setDoc(doc(db, 'users', user.uid), profilePayload, { merge: true });
+      if (auth.currentUser && auth.currentUser.uid === user.uid) {
+        await updateProfile(auth.currentUser, { photoURL }).catch((authErr) => {
+          console.warn('Auth profile photo sync failed:', authErr);
+        });
+      }
+      setUser(prev => ({ ...prev, photoURL }));
+      addNotification('Upload Photo', 'Your profile photo has been updated.', 'system');
+    } catch (err) {
+      console.error('Upload profile photo error:', err);
+      addNotification('Upload Photo', 'Unable to update photo right now. Please try another image.', 'system');
+    } finally {
+      setIsUploadingPhoto(false);
     }
   };
   const [ssotStats, setSsotStats] = useState<{
@@ -5648,6 +6461,34 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
     });
     return () => unsubscribe();
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (!isAdminUser || !isFeedbackInboxOpen) {
+      setFeedbackInboxItems([]);
+      setIsFeedbackInboxLoading(false);
+      return;
+    }
+
+    setIsFeedbackInboxLoading(true);
+    const feedbackQuery = query(
+      collection(db, 'feedback_submissions'),
+      orderBy('createdAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(feedbackQuery, (snapshot) => {
+      setFeedbackInboxItems(snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      })));
+      setIsFeedbackInboxLoading(false);
+    }, (err) => {
+      console.error('Feedback inbox sync error:', err);
+      setIsFeedbackInboxLoading(false);
+      addNotification('Feedback Inbox', 'Unable to load feedback right now.', 'system');
+    });
+
+    return () => unsubscribe();
+  }, [addNotification, isAdminUser, isFeedbackInboxOpen]);
 
   const stats = useMemo(() => {
     const uid = user?.uid;
@@ -5745,119 +6586,726 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
     };
   }, [tournaments, user?.uid, user?.displayName, ssotStats?.totalMatches, ssotStats?.wins, ssotStats?.losses]);
 
-  const getTier = (matches: number) => {
-    if (matches >= 10) return { label: 'Silver Tier', color: 'bg-slate-400/10 text-slate-600' };
-    if (matches >= 1) return { label: 'Bronze Tier', color: 'bg-orange-400/10 text-orange-600' };
-    return { label: 'Newcomer', color: 'bg-ios-gray/10 text-ios-gray' };
+  const currentMmr = Number.isFinite(Number(user?.mmr)) ? Number(user.mmr) : 0;
+  const rankInfo = getRankInfo(currentMmr);
+  const rankProgress = Math.max(0, Math.min(100, Number.isFinite(rankInfo.progress) ? rankInfo.progress : 100));
+  const nextRankDelta = rankInfo.nextRank ? Math.max(0, rankInfo.nextRank.min - currentMmr) : 0;
+  const displayUsername = String(user?.username || 'user').trim() || 'user';
+  const displayEmail = String(user?.email || '').trim();
+  const getShortLocation = (value?: string) => (
+    String(value || '')
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean)[0] || ''
+  );
+  const homeBaseLabel = getShortLocation(user?.homeBase || user?.region) || 'Jakarta';
+  const activeZoneLabel = getShortLocation(user?.region);
+  const profileMetaCards: { label: string; value: string; icon: LucideIcon; tone: 'warm' | 'neutral' }[] = [
+    { label: 'Home Base', value: homeBaseLabel, icon: MapPin, tone: 'warm' },
+  ];
+  if (activeZoneLabel && activeZoneLabel !== homeBaseLabel) {
+    profileMetaCards.push({ label: 'Active Zone', value: activeZoneLabel, icon: Building2, tone: 'neutral' });
+  }
+  const hasSingleProfileMeta = profileMetaCards.length === 1;
+  const monthTrendValue = stats.currentMonthWins > 0 ? `${stats.currentMonthWins}` : '0';
+  const monthTrendHelper = stats.previousMonthWins > 0
+    ? `${stats.winChangePercent >= 0 ? '+' : ''}${stats.winChangePercent}% vs last month`
+    : stats.currentMonthWins > 0
+      ? 'First wins this month'
+      : 'No wins recorded';
+  const monthTrendTone = stats.winChangePercent > 0
+    ? 'text-emerald-600'
+    : stats.winChangePercent < 0
+      ? 'text-error'
+      : 'text-on-surface';
+
+  const handleChangePassword = async () => {
+    const email = (user?.email || '').trim().toLowerCase();
+    if (!email) {
+      addNotification('Change Password', 'Change password is coming soon.', 'system');
+      return;
+    }
+
+    const providerIds = (user?.providerData || []).map((provider: { providerId?: string }) => provider?.providerId).filter(Boolean);
+    if (providerIds.length > 0 && !providerIds.includes('password')) {
+      addNotification('Change Password', `This account uses ${getProviderLabel(providerIds[0])}. There is no password to reset here.`, 'system');
+      return;
+    }
+
+    setIsSubmittingPasswordReset(true);
+    try {
+      await sendPasswordResetEmail(auth, email, getPasswordResetActionSettings());
+      closeChangePasswordModal();
+      addNotification('Change Password', 'Password reset link has been sent. Please check inbox, spam, or promotions.', 'system');
+    } catch (err) {
+      console.error('Change password request error:', err);
+      addNotification('Change Password', 'Unable to send reset link right now. Please try again.', 'system');
+    } finally {
+      setIsSubmittingPasswordReset(false);
+    }
   };
 
-  const getStatus = (winRate: number, matches: number) => {
-    if (matches >= 10 && winRate >= 75) return { label: 'Pro Player', color: 'bg-primary/10 text-primary' };
-    if (matches >= 5) return { label: 'Veteran', color: 'bg-blue-500/10 text-blue-600' };
-    return { label: 'Challenger', color: 'bg-purple-500/10 text-purple-600' };
+  const handleComingSoon = (label: string) => {
+    addNotification(label, `${label} is coming soon.`, 'system');
   };
 
-  const tier = getTier(stats.matches);
-  const status = getStatus(stats.winRate, stats.matches);
-  const recentTournaments = useMemo(() => sortTournamentsByNewest(tournaments).slice(0, 3), [tournaments]);
+  const resetFeedbackForm = () => {
+    setFeedbackCategory('bug');
+    setFeedbackMessage('');
+  };
+
+  const closeFeedbackModal = () => {
+    if (isSubmittingFeedback) return;
+    setIsFeedbackOpen(false);
+    resetFeedbackForm();
+  };
+
+  const closeChangePasswordModal = () => {
+    if (isSubmittingPasswordReset) return;
+    setIsChangePasswordOpen(false);
+  };
+
+  const closeFeedbackInboxModal = () => {
+    setIsFeedbackInboxOpen(false);
+  };
+
+  const formatFeedbackDate = (value: any) => {
+    const date = value?.toDate ? value.toDate() : (value instanceof Date ? value : new Date(value));
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return 'Unknown time';
+    return date.toLocaleString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const getFeedbackCategoryLabel = (value: string) => {
+    if (value === 'feature_request') return 'Feature';
+    if (value === 'ui_ux') return 'UI/UX';
+    if (value === 'bug') return 'Bug';
+    return 'Other';
+  };
+
+  const getFeedbackStatusLabel = (value: string) => {
+    if (value === 'reviewed') return 'Reviewed';
+    if (value === 'resolved') return 'Resolved';
+    return 'New';
+  };
+
+  const getFeedbackStatusTone = (value: string) => {
+    if (value === 'resolved') return 'bg-primary/10 text-primary';
+    if (value === 'reviewed') return 'bg-ios-gray/12 text-on-surface/70';
+    return 'bg-[#fff3ec] text-primary';
+  };
+
+  const filteredFeedbackInboxItems = useMemo(() => (
+    feedbackInboxItems.filter((item) => {
+      const statusMatch = feedbackInboxStatusFilter === 'all' || item.status === feedbackInboxStatusFilter;
+      const categoryMatch = feedbackInboxCategoryFilter === 'all' || item.category === feedbackInboxCategoryFilter;
+      return statusMatch && categoryMatch;
+    })
+  ), [feedbackInboxCategoryFilter, feedbackInboxItems, feedbackInboxStatusFilter]);
+
+  const handleUpdateFeedbackStatus = async (feedbackId: string, status: 'reviewed' | 'resolved') => {
+    if (!isAdminUser) return;
+    setUpdatingFeedbackId(feedbackId);
+    try {
+      await setDoc(doc(db, 'feedback_submissions', feedbackId), {
+        status,
+        reviewedAt: serverTimestamp(),
+        reviewedBy: user?.uid || null,
+      }, { merge: true });
+      addNotification('Feedback Inbox', `Feedback marked as ${status}.`, 'system');
+    } catch (err) {
+      console.error('Feedback status update error:', err);
+      addNotification('Feedback Inbox', 'Unable to update feedback status right now.', 'system');
+    } finally {
+      setUpdatingFeedbackId(null);
+    }
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!trimmedFeedbackMessage) {
+      addNotification('Give Feedback', 'Please write a short message before sending.', 'system');
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+    try {
+      const providerIds = (user?.providerData || [])
+        .map((provider: { providerId?: string }) => provider?.providerId)
+        .filter(Boolean);
+      const clientContext = getFeedbackClientContext();
+      await addDoc(collection(db, 'feedback_submissions'), {
+        uid: user?.uid || null,
+        displayName: user?.displayName || '',
+        username: user?.username || '',
+        email: user?.email || '',
+        category: feedbackCategory,
+        message: trimmedFeedbackMessage,
+        screen: 'profile',
+        source: 'profile_settings',
+        status: 'new',
+        appVersion: '1.2.0-beta',
+        providerIds,
+        clientTimestamp: new Date().toISOString(),
+        route: clientContext.route,
+        displayMode: clientContext.displayMode,
+        viewport: clientContext.viewport,
+        userAgent: clientContext.userAgent,
+        context: {
+          mmr: currentMmr,
+          totalMatches: stats.matches,
+          winRate: stats.winRate,
+        },
+        createdAt: serverTimestamp()
+      });
+      closeFeedbackModal();
+      addNotification('Give Feedback', 'Thanks, feedback kamu sudah terkirim.', 'system');
+    } catch (err) {
+      console.error('Feedback submit error:', err);
+      addNotification('Give Feedback', 'Unable to send feedback right now. Please try again.', 'system');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
+  const accountItems = [
+    { label: 'Change Password', icon: Lock, onClick: () => setIsChangePasswordOpen(true), tone: 'default' as const },
+    { label: 'Privacy Policy', icon: Globe, onClick: () => handleComingSoon('Privacy Policy'), tone: 'default' as const },
+    { label: 'FAQ', icon: CircleHelp, onClick: () => handleComingSoon('FAQ'), tone: 'default' as const },
+  ];
+  const supportItems = [
+    { label: 'Give Feedback', icon: Mail, onClick: () => { resetFeedbackForm(); setIsFeedbackOpen(true); }, tone: 'default' as const }
+  ];
+  const adminItems = isAdminUser
+    ? [{ label: 'Feedback Inbox', icon: Inbox, onClick: () => setIsFeedbackInboxOpen(true), tone: 'default' as const }]
+    : [];
+  const settingsSections = [
+    {
+      label: 'Account',
+      description: '',
+      items: [
+        { label: 'Edit Profile', icon: Edit3, onClick: () => setIsEditingProfile(true), tone: 'default' as const },
+        { label: 'Friends', icon: Users, onClick: onOpenFriends, tone: 'default' as const },
+        ...accountItems
+      ],
+    },
+    {
+      label: 'Support',
+      description: '',
+      items: supportItems,
+    },
+    ...(adminItems.length > 0
+      ? [{
+        label: 'Admin',
+        description: '',
+        items: adminItems,
+      }]
+      : []),
+  ];
+  const renderActionRow = (
+    { label, icon: Icon, onClick, tone }: { label: string; icon: LucideIcon; onClick: () => void; tone: 'default' | 'danger' }
+  ) => (
+    <button
+      key={label}
+      onClick={onClick}
+      className="flex w-full items-center justify-between gap-3 bg-transparent px-4 py-2.5 text-left tap-target transition-colors active:bg-surface"
+    >
+      <span className="inline-flex items-center gap-3 min-w-0">
+        <span className={cn(
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+          tone === 'danger'
+            ? 'border-error/12 bg-error/[0.04] text-error/85'
+            : 'border-black/5 bg-surface text-on-surface/58'
+        )}>
+          <Icon size={15} />
+        </span>
+        <span
+          className={cn(
+            'text-[13px] font-semibold tracking-[-0.014em] truncate',
+            tone === 'danger' ? 'text-error' : 'text-on-surface'
+          )}
+        >
+          {label}
+        </span>
+      </span>
+      <ChevronRight
+        size={15}
+        className={cn(
+          'shrink-0',
+          tone === 'danger' ? 'text-error/35' : 'text-ios-gray/40'
+        )}
+      />
+    </button>
+  );
 
   return (
-    <div className="pb-32 bg-white min-h-screen">
-      <header className="ios-blur sticky top-0 w-full z-50 flex items-center justify-between px-4 h-14 border-b border-ios-gray/10">
-        <h1 className="font-bold text-[17px] tracking-tight ml-2">My Profile</h1>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setIsEditingProfile(true)}
-            className="tap-target p-2"
-          >
-            <Settings size={22} className="text-on-surface/70" />
-          </button>
-        </div>
-      </header>
+    <div className="ios-page pb-[calc(var(--app-safe-bottom,0px)+124px)]">
+      <main className="mx-auto max-w-2xl space-y-4.5 px-4 pt-5 sm:space-y-5 sm:pt-8">
+        <section className="relative overflow-hidden rounded-[28px] border border-black/5 bg-white p-4 shadow-[0_10px_26px_rgba(17,24,39,0.045)] sm:rounded-[30px] sm:p-5">
+          <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-primary/[0.08] via-primary/[0.02] to-transparent sm:h-28" />
+          <div className="absolute right-0 top-0 h-24 w-24 rounded-full bg-primary/[0.05] blur-3xl" />
 
-      <main className="max-w-2xl mx-auto">
-        {/* Profile Header */}
-        <section className="px-5 pt-8 pb-6 flex flex-col items-center text-center">
-          <div className="relative mb-4">
-            <div className="w-28 h-28 rounded-full bg-ios-gray/10 border-4 border-white shadow-xl overflow-hidden flex items-center justify-center">
-              {user?.photoURL ? (
-                <img src={user.photoURL} alt={user.displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <User size={60} className="text-ios-gray/30" />
-              )}
-            </div>
-            <button
-              onClick={() => {
-                addNotification('Upload Photo', 'Profile photo update is coming soon!', 'system');
-              }}
-              className="absolute bottom-1 right-1 bg-primary text-white p-2 rounded-full shadow-lg border-2 border-white tap-target"
-            >
-              <Camera size={16} />
-            </button>
-          </div>
-          <h2 className="text-2xl font-bold tracking-tight">{user?.displayName || 'Padel Player'}</h2>
-          <p className="text-sm font-bold text-ios-gray mb-4">@{user?.username || 'user'}</p>
-
-          <div className="flex flex-col items-center gap-2 mb-6">
-            <div className="flex items-center gap-2 bg-ios-gray/5 px-3 py-1.5 rounded-full border border-ios-gray/10">
-              <Home size={14} className="text-ios-gray" />
-              <span className="text-[11px] font-bold text-ios-gray">Home: {user?.homeBase?.split(',')[0] || user?.region?.split(',')[0] || 'Jakarta'}</span>
-            </div>
-            <div className="flex items-center gap-2 bg-primary/5 px-3 py-1.5 rounded-full border border-primary/10">
-              <Zap size={14} className="text-primary" />
-              <span className="text-[11px] font-bold text-primary">Active Zone: {user?.region?.split(',')[0] || 'Jakarta'}</span>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={onFriends}
-              className="px-6 py-2 bg-primary text-white rounded-full text-[12px] font-black uppercase tracking-widest shadow-lg shadow-primary/20 tap-target flex items-center gap-2"
-            >
-              <Users size={16} />
-              Friends
-            </button>
-            <button
-              onClick={() => {
-                addNotification('Share Profile', 'Your profile link has been copied!', 'system');
-              }}
-              className="px-6 py-2 bg-white border border-ios-gray/10 text-on-surface rounded-full text-[12px] font-black uppercase tracking-widest tap-target flex items-center gap-2"
-            >
-              <Share2 size={16} />
-              Share
-            </button>
-          </div>
-          <div className="mt-4 flex flex-col items-center gap-3 w-full max-w-[240px]">
-            <RankBadge mmr={user?.mmr || 0} size="lg" />
-
-            {/* MMR Progress Bar */}
-            {(() => {
-              const rankInfo = getRankInfo(user?.mmr || 0);
-              return (
-                <div className="w-full space-y-1.5">
-                  <div className="flex justify-between text-[10px] font-bold text-ios-gray uppercase tracking-widest">
-                    <span>{user?.mmr || 0} MMR</span>
-                    {rankInfo.nextRank && <span>{rankInfo.nextRank.min} MMR</span>}
-                  </div>
-                  <div className="h-2 w-full bg-ios-gray/10 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary transition-all duration-500"
-                      style={{ width: `${rankInfo.progress}%` }}
-                    />
-                  </div>
-                  {rankInfo.nextRank && (
-                    <p className="text-[9px] text-ios-gray font-medium text-center">
-                      {Math.max(0, rankInfo.nextRank.min - (user?.mmr || 0))} MMR to reach {rankInfo.nextRank.name}
-                    </p>
+          <div className="relative">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1 text-left">
+                <div className="flex items-center gap-2.5">
+                  <span className="inline-flex rounded-full border border-primary/10 bg-primary/[0.04] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-primary/88">
+                    Player Profile
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onOpenNotifications}
+                    aria-label="Open notifications"
+                    className="relative inline-flex h-8 w-8 items-center justify-center rounded-full border border-black/5 bg-white text-on-surface/68 tap-target active:bg-surface"
+                  >
+                    <Bell size={14} className="text-on-surface/64" />
+                    {unreadCount > 0 && (
+                      <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border border-white bg-error" />
+                    )}
+                  </button>
+                </div>
+                <h2 className="mt-3 text-[30px] leading-[0.98] font-display font-black tracking-[-0.045em] text-on-surface sm:text-[38px]">
+                  {user?.displayName || 'Padel Player'}
+                </h2>
+                <p className="mt-1.5 text-[14px] font-semibold tracking-tight text-on-surface/66 sm:mt-2">
+                  @{displayUsername}
+                </p>
+                <div className="mt-3">
+                  {displayEmail && (
+                    <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-black/5 bg-surface px-3 py-1.5 text-[11px] font-medium text-ios-gray sm:py-2 sm:text-[12px]">
+                      <Mail size={13} className="shrink-0 text-primary/62" />
+                      <span className="truncate">{displayEmail}</span>
+                    </div>
                   )}
                 </div>
-              );
-            })()}
+              </div>
+              <div className="relative shrink-0">
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  onChange={handleUploadProfilePhoto}
+                />
+                <div className="flex h-[76px] w-[76px] items-center justify-center overflow-hidden rounded-[24px] border border-black/5 bg-surface sm:h-[88px] sm:w-[88px] sm:rounded-[26px]">
+                  {user?.photoURL ? (
+                    <img src={user.photoURL} alt={user.displayName} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <User size={38} className="text-ios-gray/32 sm:hidden" />
+                  )}
+                  {!user?.photoURL && (
+                    <User size={42} className="hidden text-ios-gray/32 sm:block" />
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => photoInputRef.current?.click()}
+                  disabled={isUploadingPhoto}
+                  aria-label="Upload profile photo"
+                  className="absolute -bottom-1.5 -right-1.5 flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-primary text-white shadow-[0_8px_16px_rgba(230,94,20,0.16)] tap-target disabled:cursor-wait disabled:opacity-70 sm:-bottom-2 sm:-right-2 sm:h-9 sm:w-9"
+                >
+                  {isUploadingPhoto ? (
+                    <RefreshCw size={12} className="animate-spin sm:hidden" />
+                  ) : (
+                    <Camera size={12} className="sm:hidden" />
+                  )}
+                  {isUploadingPhoto ? (
+                    <RefreshCw size={13} className="hidden animate-spin sm:block" />
+                  ) : (
+                    <Camera size={13} className="hidden sm:block" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className={cn(
+              'mt-5 grid gap-3 sm:mt-5.5',
+              hasSingleProfileMeta ? 'grid-cols-1' : 'grid-cols-2'
+            )}>
+              {profileMetaCards.map(({ label, value, icon: Icon, tone }) => (
+                <div
+                  key={label}
+                  className={cn(
+                    'min-w-0 rounded-[20px] border px-3.5 py-3 sm:px-4 sm:py-3.5',
+                    tone === 'warm'
+                      ? 'border-primary/10 bg-primary/[0.03]'
+                      : 'border-black/5 bg-surface'
+                  )}
+                >
+                  <div className="flex items-center gap-2 text-[11px] font-semibold tracking-tight text-ios-gray">
+                    <Icon size={13} className={tone === 'warm' ? 'text-primary/75' : 'text-ios-gray/70'} />
+                    <span>{label}</span>
+                  </div>
+                  <p className="mt-1 truncate text-[13px] font-semibold tracking-tight text-on-surface sm:mt-1.5 sm:text-[14px]">
+                    {value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-black/5 bg-white p-4 shadow-[0_10px_26px_rgba(17,24,39,0.04)] sm:rounded-[30px] sm:p-5">
+          <div>
+            <div>
+              <h3 className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-ios-gray">
+                Match Performance
+              </h3>
+            </div>
+          </div>
+
+          <div className="mt-4.5 rounded-[24px] border border-primary/10 bg-primary/[0.03] p-4 sm:mt-5 sm:p-4.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">Current MMR</p>
+                <p className="mt-2 text-[38px] leading-none font-display font-black tracking-[-0.05em] text-on-surface tabular-nums sm:text-[40px]">
+                  {currentMmr.toLocaleString()}
+                </p>
+                <p className="mt-2 text-[13px] font-medium leading-relaxed text-on-surface/68">
+                  {rankInfo.nextRank
+                    ? `${nextRankDelta.toLocaleString()} MMR to reach ${rankInfo.nextRank.name}.`
+                    : 'You are already at the highest published tier.'}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-3 pt-0.5">
+                <button
+                  type="button"
+                  onClick={onOpenMmrHistory}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold tracking-tight text-primary tap-target active:text-primary/80"
+                >
+                  History
+                  <ChevronRight size={12} />
+                </button>
+                <div className="rounded-full bg-white px-3 py-1.5 ring-1 ring-black/5">
+                  <RankBadge mmr={currentMmr} size="sm" />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4.5">
+              <div className="mb-2 flex items-center justify-between gap-3 text-[10px] font-semibold tracking-tight text-ios-gray sm:text-[11px]">
+                <span>{rankInfo.name}</span>
+                <span>{rankInfo.nextRank ? rankInfo.nextRank.name : 'Maxed Out'}</span>
+              </div>
+              <div className="h-2 rounded-full bg-primary/[0.10]">
+                <div
+                  className="h-full rounded-full bg-primary/95 transition-[width]"
+                  style={{ width: `${rankProgress}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3.5 grid grid-cols-2 gap-3">
+            <div className="min-h-[88px] rounded-[22px] border border-black/5 bg-surface px-3.5 py-3 sm:px-4">
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Matches</p>
+              <p className="mt-1 text-[24px] leading-none font-display font-black tracking-[-0.04em] text-on-surface tabular-nums">
+                {stats.matches}
+              </p>
+              <p className="mt-1.5 text-[11px] font-medium tracking-tight text-ios-gray">
+                {stats.won}W • {stats.lost}L • {stats.draw}D
+              </p>
+            </div>
+            <div className="min-h-[88px] rounded-[22px] border border-black/5 bg-surface px-3.5 py-3 sm:px-4">
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Win Rate</p>
+              <p className="mt-1 text-[24px] leading-none font-display font-black tracking-[-0.04em] text-emerald-600 tabular-nums">
+                {stats.winRate}%
+              </p>
+              <p className="mt-1.5 text-[11px] font-medium tracking-tight text-ios-gray">
+                {stats.points} total points
+              </p>
+            </div>
+            <div className="col-span-2 min-h-[84px] rounded-[22px] border border-black/5 bg-surface px-3.5 py-3 sm:px-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold tracking-tight text-ios-gray">This Month</p>
+                  <p className={cn('mt-1 text-[24px] leading-none font-display font-black tracking-[-0.04em] tabular-nums', monthTrendTone)}>
+                    {monthTrendValue}
+                  </p>
+                  <p className="mt-1.5 text-[11px] font-medium tracking-tight text-ios-gray">
+                    {monthTrendHelper}
+                  </p>
+                </div>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-black/5 bg-white">
+                  <TrendingUp size={17} className={monthTrendTone} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[28px] border border-black/5 bg-white p-2.5 shadow-[0_10px_26px_rgba(17,24,39,0.04)] sm:rounded-[30px] sm:p-3.5">
+          <div className="overflow-hidden rounded-[24px] border border-black/5 bg-white">
+            {settingsSections.map((section, index) => (
+              <div key={section.label} className={cn(index > 0 && 'border-t border-black/5')}>
+                <div className={cn('px-4 pt-3', section.description ? 'pb-1.5' : 'pb-2')}>
+                  <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-ios-gray">{section.label}</p>
+                  {section.description && (
+                    <p className="mt-1 text-[12px] leading-[1.5] text-ios-gray">{section.description}</p>
+                  )}
+                </div>
+                <div className="overflow-hidden bg-white">
+                  <div className="divide-y divide-black/5">
+                    {section.items.map(renderActionRow)}
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            <div className="border-t border-black/5">
+              <div className="px-4 pb-2 pt-3">
+                <p className="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-ios-gray">Session</p>
+              </div>
+              <div className="bg-white">
+                {renderActionRow({ label: 'Sign Out', icon: LogOut, onClick: onLogout, tone: 'danger' })}
+              </div>
+            </div>
           </div>
         </section>
 
         {/* Edit Profile Modal */}
         <AnimatePresence>
+          {isChangePasswordOpen && (
+            <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={closeChangePasswordModal}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                className="relative w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl"
+              >
+                <div className="flex justify-between items-start gap-4 mb-5">
+                  <div>
+                    <h3 className="text-[22px] font-bold tracking-tight text-on-surface">Change Password</h3>
+                    <p className="text-[13px] text-ios-gray mt-1">Kami akan kirim reset link ke email akun kamu.</p>
+                  </div>
+                  <button
+                    onClick={closeChangePasswordModal}
+                    className="p-2 bg-ios-gray/5 rounded-full tap-target"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="rounded-3xl bg-ios-gray/5 border border-ios-gray/10 px-4 py-3 mb-5">
+                  <p className="text-[10px] font-black text-ios-gray uppercase tracking-[0.16em] mb-1">Email</p>
+                  <p className="text-[14px] font-semibold text-on-surface break-all">
+                    {user?.email || 'No email connected'}
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleChangePassword}
+                  disabled={!canSendPasswordReset}
+                  className="w-full h-12 rounded-2xl bg-primary text-white font-black shadow-lg shadow-primary/20 tap-target disabled:opacity-60 disabled:shadow-none disabled:active:scale-100"
+                >
+                  {isSubmittingPasswordReset ? 'Sending...' : 'Send Reset Link'}
+                </button>
+              </motion.div>
+            </div>
+          )}
+          {isFeedbackOpen && (
+            <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={closeFeedbackModal}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                className="relative w-full max-w-md bg-white rounded-[32px] p-6 shadow-2xl"
+              >
+                <div className="flex justify-between items-start gap-4 mb-5">
+                  <div>
+                    <h3 className="text-[22px] font-bold tracking-tight text-on-surface">Give Feedback</h3>
+                    <p className="text-[13px] text-ios-gray mt-1">Punya bug, ide, atau masukan? Tulis singkat aja.</p>
+                  </div>
+                  <button
+                    onClick={closeFeedbackModal}
+                    className="p-2 bg-ios-gray/5 rounded-full tap-target"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {feedbackCategories.map((category) => (
+                    <button
+                      key={category.value}
+                      onClick={() => setFeedbackCategory(category.value)}
+                      className={cn(
+                        'px-3 py-2 rounded-full text-[12px] font-bold tap-target transition-all',
+                        feedbackCategory === category.value
+                          ? 'bg-primary text-white shadow-lg shadow-primary/20'
+                          : 'bg-ios-gray/5 text-on-surface border border-ios-gray/10'
+                      )}
+                    >
+                      {category.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mb-5">
+                  <textarea
+                    value={feedbackMessage}
+                    onChange={(e) => setFeedbackMessage(e.target.value)}
+                    rows={4}
+                    placeholder="Contoh: tombol save kadang tidak responsif"
+                    className="w-full resize-none bg-ios-gray/5 border border-ios-gray/10 rounded-3xl px-4 py-3 text-[14px] text-on-surface font-medium leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
+
+                <button
+                  onClick={handleSubmitFeedback}
+                  disabled={!canSubmitFeedback}
+                  className="w-full h-12 rounded-2xl bg-primary text-white font-black shadow-lg shadow-primary/20 tap-target disabled:opacity-60 disabled:shadow-none disabled:active:scale-100"
+                >
+                  {isSubmittingFeedback ? 'Sending...' : 'Send Feedback'}
+                </button>
+              </motion.div>
+            </div>
+          )}
+          {isFeedbackInboxOpen && (
+            <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={closeFeedbackInboxModal}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                className="relative w-full max-w-lg bg-white rounded-[32px] p-6 shadow-2xl max-h-[82vh] flex flex-col"
+              >
+                <div className="flex justify-between items-start gap-4 mb-5">
+                  <div>
+                    <h3 className="text-[22px] font-bold tracking-tight text-on-surface">Feedback Inbox</h3>
+                    <p className="text-[13px] text-ios-gray mt-1">Masukan terbaru dari user FOM Play.</p>
+                  </div>
+                  <button
+                    onClick={closeFeedbackInboxModal}
+                    className="p-2 bg-ios-gray/5 rounded-full tap-target"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-1 -mr-1 space-y-3">
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      {(['all', 'new', 'reviewed', 'resolved'] as const).map((status) => (
+                        <button
+                          key={status}
+                          onClick={() => setFeedbackInboxStatusFilter(status)}
+                          className={cn(
+                            'px-3 py-2 rounded-full text-[11px] font-bold tap-target transition-all',
+                            feedbackInboxStatusFilter === status
+                              ? 'bg-primary text-white shadow-lg shadow-primary/20'
+                              : 'bg-ios-gray/5 text-on-surface border border-ios-gray/10'
+                          )}
+                        >
+                          {status === 'all' ? 'All Status' : getFeedbackStatusLabel(status)}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {([{ value: 'all', label: 'All Type' }, ...feedbackCategories.map((category) => ({ value: category.value, label: category.label }))] as const).map((category) => (
+                        <button
+                          key={category.value}
+                          onClick={() => setFeedbackInboxCategoryFilter(category.value)}
+                          className={cn(
+                            'px-3 py-2 rounded-full text-[11px] font-bold tap-target transition-all',
+                            feedbackInboxCategoryFilter === category.value
+                              ? 'bg-on-surface text-white'
+                              : 'bg-ios-gray/5 text-on-surface border border-ios-gray/10'
+                          )}
+                        >
+                          {category.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {isFeedbackInboxLoading ? (
+                    <div className="rounded-3xl bg-ios-gray/5 px-4 py-8 text-center">
+                      <p className="text-[13px] font-semibold text-ios-gray">Loading feedback...</p>
+                    </div>
+                  ) : filteredFeedbackInboxItems.length === 0 ? (
+                    <div className="rounded-3xl bg-ios-gray/5 px-4 py-8 text-center">
+                      <Inbox size={24} className="mx-auto text-ios-gray/35 mb-2" />
+                      <p className="text-[13px] font-semibold text-on-surface">Belum ada feedback yang cocok dengan filter ini.</p>
+                    </div>
+                  ) : (
+                    filteredFeedbackInboxItems.map((item) => (
+                      <article key={item.id} className="rounded-[24px] bg-ios-gray/5 px-4 py-3.5">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[14px] font-bold text-on-surface truncate">
+                              {item.displayName || item.username || item.email || 'Unknown user'}
+                            </p>
+                            <p className="text-[12px] text-ios-gray truncate">
+                              {item.email || '@' + (item.username || 'unknown')}
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-primary">
+                            {getFeedbackCategoryLabel(item.category)}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className={cn('inline-flex rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.14em]', getFeedbackStatusTone(item.status || 'new'))}>
+                            {getFeedbackStatusLabel(item.status || 'new')}
+                          </span>
+                        </div>
+                        <p className="mt-3 text-[14px] leading-relaxed text-on-surface">
+                          {item.message || '-'}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            onClick={() => handleUpdateFeedbackStatus(item.id, 'reviewed')}
+                            disabled={updatingFeedbackId === item.id || item.status === 'reviewed' || item.status === 'resolved'}
+                            className="h-8 px-3 rounded-full bg-white text-[11px] font-bold text-on-surface border border-ios-gray/10 tap-target disabled:opacity-50"
+                          >
+                            {updatingFeedbackId === item.id ? 'Updating...' : 'Mark Reviewed'}
+                          </button>
+                          <button
+                            onClick={() => handleUpdateFeedbackStatus(item.id, 'resolved')}
+                            disabled={updatingFeedbackId === item.id || item.status === 'resolved'}
+                            className="h-8 px-3 rounded-full bg-primary text-[11px] font-bold text-white tap-target disabled:opacity-50"
+                          >
+                            {updatingFeedbackId === item.id ? 'Updating...' : 'Mark Resolved'}
+                          </button>
+                        </div>
+                        <div className="mt-3 flex items-center justify-between gap-3 text-[11px] text-ios-gray">
+                          <span className="truncate">
+                            {item.source === 'profile_settings' ? 'Profile Settings' : item.source || 'Unknown source'}
+                          </span>
+                          <span className="shrink-0">
+                            {formatFeedbackDate(item.createdAt || item.clientTimestamp)}
+                          </span>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          )}
           {isEditingProfile && (
             <div className="fixed inset-0 z-[100] flex items-end justify-center p-4 sm:items-center">
               <motion.div
@@ -5939,231 +7387,658 @@ const ProfileScreen = ({ onLogout, onRequestPermission, user, tournaments, setUs
           onSelect={(region) => setEditData({ ...editData, homeBase: region })}
           currentValue={editData.homeBase}
         />
-
-        {/* Stats Grid */}
-        <section className="px-5 mb-8">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-white border border-ios-gray/10 rounded-2xl p-4 text-center shadow-sm">
-              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-widest mb-1">Matches</span>
-              <span className="text-xl font-display font-bold text-on-surface">{stats.matches}</span>
-            </div>
-            <div className="bg-white border border-ios-gray/10 rounded-2xl p-4 text-center shadow-sm">
-              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-widest mb-1">Win Rate</span>
-              <span className="text-xl font-display font-bold text-primary">{stats.winRate}%</span>
-            </div>
-            <div className="bg-white border border-ios-gray/10 rounded-2xl p-4 text-center shadow-sm">
-              <span className="block text-[10px] font-bold text-ios-gray uppercase tracking-widest mb-1">Points</span>
-              <span className="text-xl font-display font-bold text-on-surface">{stats.points}</span>
-            </div>
-          </div>
-        </section>
-
-        {/* Performance Visualization */}
-        <section className="px-5 mb-8">
-          <div className="bg-primary/5 border border-primary/10 rounded-3xl p-6 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary">
-                <Bell size={24} />
-              </div>
-              <div className="space-y-0.5">
-                <h4 className="text-[15px] font-bold text-on-surface">Push Notifications</h4>
-                <p className="text-[12px] text-on-surface/50 font-medium leading-tight">Get real-time score updates</p>
-              </div>
-            </div>
-            <button
-              onClick={onRequestPermission}
-              className="bg-primary text-white px-5 py-2.5 rounded-full text-[13px] font-bold shadow-lg shadow-primary/20 tap-target"
-            >
-              Enable
-            </button>
-          </div>
-        </section>
-
-        <section className="px-5 mb-10">
-          <div className="bg-white border border-ios-gray/10 rounded-3xl p-6 shadow-sm">
-            <div className="flex justify-between items-end mb-4">
-              <div>
-                <h3 className="text-sm font-bold text-ios-gray uppercase tracking-widest mb-1">Season Performance</h3>
-                <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-display font-black text-on-surface">{stats.won}</span>
-                  <span className="text-sm font-bold text-ios-gray">Wins</span>
-                </div>
-              </div>
-              <div className="text-right">
-                <div
-                  className={cn(
-                    "flex items-center gap-1 font-bold text-sm mb-1",
-                    stats.winChangePercent > 0
-                      ? "text-green-500"
-                      : stats.winChangePercent < 0
-                        ? "text-error"
-                        : "text-ios-gray"
-                  )}
-                >
-                  <TrendingUp size={16} />
-                  <span>{stats.winChangePercent > 0 ? `+${stats.winChangePercent}%` : `${stats.winChangePercent}%`}</span>
-                </div>
-                <span className="text-[10px] font-bold text-ios-gray uppercase tracking-widest">vs Last Month</span>
-              </div>
-            </div>
-
-            <div className="h-3 w-full bg-ios-gray/10 rounded-full overflow-hidden flex mb-4">
-              <div
-                className="h-full bg-primary"
-                style={{ width: `${stats.matches > 0 ? (stats.won / stats.matches) * 100 : 0}%` }}
-              />
-              <div
-                className="h-full bg-ios-gray/40"
-                style={{ width: `${stats.matches > 0 ? (stats.draw / stats.matches) * 100 : 0}%` }}
-              />
-              <div
-                className="h-full bg-ios-gray/20"
-                style={{ width: `${stats.matches > 0 ? (stats.lost / stats.matches) * 100 : 0}%` }}
-              />
-            </div>
-
-            <div className="flex justify-between text-[11px] font-bold uppercase tracking-tighter">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-primary" />
-                <span className="text-on-surface font-display">Win: {stats.won}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-ios-gray/40" />
-                <span className="text-ios-gray font-display">Draw: {stats.draw}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-ios-gray/20" />
-                <span className="text-ios-gray/40 font-display">Loss: {stats.lost}</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Recent Matches */}
-        <section className="mb-10">
-          <div
-            onClick={onOpenHistoryList}
-            className="px-5 flex justify-between items-center mb-4 cursor-pointer group"
-          >
-            <h2 className="text-xl font-bold tracking-tight">Latest Matches</h2>
-            <button
-              className="text-primary text-sm font-semibold tap-target px-2 group-hover:underline"
-            >
-              View All
-            </button>
-          </div>
-          <div className="px-5 flex flex-col gap-4">
-            {recentTournaments.length === 0 ? (
-              <div className="bg-white border border-ios-gray/10 rounded-2xl p-8 text-center shadow-sm">
-                <Trophy size={40} className="text-ios-gray/20 mx-auto mb-3" />
-                <p className="text-ios-gray font-medium">No match history yet.</p>
-              </div>
-            ) : (
-              recentTournaments.map((item) => (
-                <TournamentHistoryCard
-                  key={item.id}
-                  tournament={item}
-                  onClick={() => onOpenHistoryMatch(item)}
-                />
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* Logout Button */}
-        <section className="px-5 pb-12">
-          <button
-            onClick={onLogout}
-            className="w-full py-4 bg-ios-gray/5 text-error font-bold rounded-2xl flex items-center justify-center gap-2 tap-target border border-error/10"
-          >
-            <LogOut size={20} />
-            <span>Sign Out</span>
-          </button>
-          <p className="text-center text-[10px] text-ios-gray/40 mt-6 font-medium">FOM Play VERSION 1.2.0 (BETA)</p>
+        <section className="pb-0 pt-2">
+          <p className="text-center text-[10px] text-ios-gray/35 font-medium tracking-[0.02em]">FOM Play VERSION 1.2.0 (BETA)</p>
         </section>
       </main>
     </div>
   );
 };
 
-const RankDiscoveryScreen = ({ onBack }: { onBack: () => void }) => {
+const RankDiscoveryScreen = ({ currentUser, onBack, onOpenMmrHistory }: { currentUser: any; onBack: () => void; onOpenMmrHistory: () => void }) => {
+  const mmrScenarios: { label: string; detail: string; value: string; valueClass: string; rowClass?: string }[] = [
+    { label: 'Draw', detail: 'Match ends level', value: '0', valueClass: 'text-ios-gray' },
+    { label: 'Standard win', detail: 'Point gap of 1-9', value: '+25', valueClass: 'text-emerald-600' },
+    { label: 'Dominant win', detail: 'Point gap of 10+', value: '+40', valueClass: 'text-emerald-700' },
+    { label: 'Standard loss', detail: 'Point gap of 1-9', value: '-20', valueClass: 'text-error' },
+    { label: 'Heavy loss', detail: 'Point gap of 10+', value: '-35', valueClass: 'text-red-700' },
+    { label: 'Underdog bonus', detail: 'Win with a lower pre-match team average MMR', value: '+15', valueClass: 'text-primary', rowClass: 'bg-primary/[0.045]' },
+    { label: 'Favorite penalty', detail: 'Lose with a higher pre-match team average MMR', value: '-15', valueClass: 'text-error', rowClass: 'bg-error/[0.045]' },
+  ];
+  const currentMmr = Number.isFinite(Number(currentUser?.mmr)) ? Number(currentUser.mmr) : 0;
+  const currentMatches = Number.isFinite(Number(currentUser?.totalMatches)) ? Number(currentUser.totalMatches) : 0;
+  const currentRank = getRankInfo(currentMmr);
+  const hasNextTier = Boolean(currentRank.nextRank);
+  const pointsToNext = hasNextTier ? Math.max(0, currentRank.nextRank!.min - currentMmr) : 0;
+  const nextTierLabel = currentRank.nextRank?.name || 'Max Reached';
+
   return (
-    <div className="min-h-screen bg-surface pb-20">
-      <header className="ios-blur sticky top-0 w-full z-50 flex items-center px-4 h-14 border-b border-ios-gray/10">
+    <div className="min-h-screen bg-surface pb-24">
+      <header className="ios-blur sticky top-0 z-50 flex h-14 w-full items-center justify-between border-b border-ios-gray/10 px-4">
         <button onClick={onBack} className="tap-target p-2 -ml-2">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="font-bold text-[17px] tracking-tight ml-2">Sistem Ranking FOM</h1>
+        <h1 className="ml-2 flex-1 text-[17px] font-bold tracking-tight text-on-surface">Ranking System</h1>
       </header>
 
-      <main className="max-w-2xl mx-auto p-5">
-        <section className="mb-8">
-          <h2 className="text-xl font-bold mb-4">Urutan Ranking</h2>
-          <div className="space-y-3">
+      <main className="mx-auto max-w-2xl p-3.5">
+        <section className="mb-3 rounded-[24px] border border-black/5 bg-white px-4 py-4">
+          <div className="min-w-0">
+            <h2 className="text-[21px] leading-tight font-display font-black tracking-tight text-on-surface">
+              How MMR Works
+            </h2>
+            <p className="mt-2 max-w-md text-[13px] font-medium leading-relaxed text-ios-gray">
+              Your rating changes after each finalized match based on result, score margin, and pre-match team strength.
+            </p>
+          </div>
+
+          <div className="mt-4 rounded-[22px] border border-black/5 bg-surface p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Current Rating</p>
+                <p className="mt-1 text-[28px] leading-none font-display font-black italic tracking-tight text-on-surface">
+                  {currentMmr.toLocaleString()}
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <RankBadge mmr={currentMmr} size="sm" />
+                  <span className="text-[11px] font-semibold tracking-tight text-ios-gray">MMR</span>
+                </div>
+                <p className="mt-2 text-[13px] font-medium leading-relaxed text-ios-gray">
+                  {currentRank.nextRank
+                    ? `${pointsToNext.toLocaleString()} more MMR to reach ${currentRank.nextRank.name}.`
+                    : 'You are already at the highest published tier.'}
+                </p>
+              </div>
+              <div className="shrink-0 rounded-[18px] border border-black/5 bg-white px-3 py-2 text-right">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Next Tier</p>
+                <p className="mt-1 text-[18px] leading-none font-display font-black tracking-tight text-on-surface">
+                  {nextTierLabel}
+                </p>
+                <p className="mt-1 text-[11px] font-medium text-ios-gray">
+                  {hasNextTier ? `${pointsToNext.toLocaleString()} to go` : 'Highest published tier'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="rounded-[18px] border border-black/5 bg-white px-3 py-3">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Matches</p>
+                <p className="mt-1 text-[19px] leading-none font-display font-black tracking-tight text-on-surface">
+                  {currentMatches}
+                </p>
+              </div>
+              <div className="rounded-[18px] border border-black/5 bg-white px-3 py-3">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Rules</p>
+                <p className="mt-1 text-[13px] font-semibold text-on-surface">Per player • Auto finalize</p>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-col items-start gap-2.5 rounded-[18px] border border-black/5 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 text-[12px] font-medium leading-relaxed text-ios-gray">
+                Team matchup strength uses the average MMR of both teams before the match starts.
+              </p>
+              <button
+                type="button"
+                onClick={onOpenMmrHistory}
+                className="shrink-0 rounded-full border border-black/5 bg-white px-3 py-1.5 text-[11px] font-semibold tracking-tight text-ios-gray transition-colors active:bg-surface"
+              >
+                MMR History
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className="mb-3">
+          <div className="mb-2.5">
+            <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Core Outcomes</p>
+            <h2 className="mt-0.5 text-[18px] font-bold tracking-tight text-on-surface">What Changes Your Score</h2>
+            <p className="mt-1 text-[13px] font-medium leading-relaxed text-ios-gray">
+              These are the core match outcomes that move your personal MMR after a session is finalized.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {mmrScenarios.map((scenario) => (
+              <div
+                key={scenario.label}
+                className={cn(
+                  'flex items-center justify-between gap-3 rounded-2xl border border-black/5 bg-white px-4 py-3',
+                  scenario.rowClass
+                )}
+              >
+                <div className="min-w-0">
+                  <p className="text-[14px] font-semibold leading-tight text-on-surface">{scenario.label}</p>
+                  <p className="mt-1 text-[12px] font-medium leading-relaxed text-ios-gray">{scenario.detail}</p>
+                </div>
+                <div className={cn('shrink-0 text-[22px] leading-none font-display font-black italic tracking-tight', scenario.valueClass)}>
+                  {scenario.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-3 rounded-2xl border border-primary/10 bg-primary/[0.045] px-4 py-3">
+            <p className="text-[11px] font-semibold tracking-tight text-primary">Important</p>
+            <p className="mt-1 text-[13px] font-medium leading-relaxed text-on-surface/76">
+              Upset bonus and favorite penalty are decided from the average MMR of both teams before the match starts, not from the live leaderboard position after the match ends.
+            </p>
+          </div>
+        </section>
+
+        <section className="mb-3">
+          <div className="mb-2.5">
+            <div>
+              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Tier Ladder</p>
+              <p className="mt-0.5 text-[13px] font-semibold text-ios-gray">Each tier unlocks as your MMR climbs.</p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
             {RANK_TIERS.map((rank, i) => (
-              <div key={i} className="bg-white border border-ios-gray/10 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+              <div key={i} className="flex items-center justify-between rounded-2xl border border-black/5 bg-white px-4 py-3">
                 <div className="flex items-center gap-4">
-                  <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center", rank.color)}>
+                  <div className={cn("flex h-11 w-11 items-center justify-center rounded-xl border border-black/5", rank.color)}>
                     <rank.icon size={24} />
                   </div>
                   <div>
-                    <h4 className="font-bold text-on-surface">{rank.name}</h4>
-                    <p className="text-xs font-display text-ios-gray font-medium">
+                    <h4 className="text-[14px] font-bold text-on-surface">{rank.name}</h4>
+                    <p className="text-[13px] font-medium text-ios-gray">
                       {rank.min} - {rank.max === Infinity ? '∞' : rank.max} MMR
                     </p>
                   </div>
                 </div>
                 {rank.name === 'Hall of Fame' && (
-                  <span className="px-2 py-1 bg-primary/10 text-primary text-[9px] font-black rounded-lg uppercase">Top 100 Only</span>
+                  <span className="rounded-full border border-primary/15 bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-primary">
+                    Top 100 Only
+                  </span>
                 )}
               </div>
             ))}
           </div>
         </section>
-
-        <section className="mb-8">
-          <h2 className="text-xl font-bold mb-4">Perhitungan MMR</h2>
-          <div className="bg-white border border-ios-gray/10 rounded-3xl overflow-hidden shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-ios-gray/5 border-b border-ios-gray/10">
-                <tr>
-                  <th className="px-4 py-3 font-bold text-ios-gray uppercase text-[10px]">Skenario</th>
-                  <th className="px-4 py-3 font-bold text-ios-gray uppercase text-[10px] text-right">MMR</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-ios-gray/5">
-                <tr>
-                  <td className="px-4 py-3 font-medium">Menang Biasa (Selisih 1-9)</td>
-                  <td className="px-4 py-3 text-right font-display font-bold text-green-500">+25</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3 font-medium">Menang Telak (Selisih ≥ 10)</td>
-                  <td className="px-4 py-3 text-right font-display font-bold text-green-600">+40</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3 font-medium">Kalah Biasa (Selisih 1-9)</td>
-                  <td className="px-4 py-3 text-right font-display font-bold text-error">-20</td>
-                </tr>
-                <tr>
-                  <td className="px-4 py-3 font-medium">Kalah Telak (Selisih ≥ 10)</td>
-                  <td className="px-4 py-3 text-right font-display font-bold text-red-700">-35</td>
-                </tr>
-                <tr className="bg-primary/5">
-                  <td className="px-4 py-3 font-bold text-primary italic">Bonus Underdog (Lawan Rank Atas)</td>
-                  <td className="px-4 py-3 text-right font-display font-bold text-primary">+15</td>
-                </tr>
-                <tr className="bg-error/5">
-                  <td className="px-4 py-3 font-bold text-error italic">Penalti Favorit (Kalah Rank Bawah)</td>
-                  <td className="px-4 py-3 text-right font-display font-bold text-error">-15</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p className="mt-4 text-xs text-ios-gray font-medium leading-relaxed">
-            * MMR is updated automatically when a match session ends based on your individual performance in the team.
-          </p>
-        </section>
       </main>
+    </div>
+  );
+};
+
+const MMRHistoryScreen = ({ currentUser, onBack, onOpenRankDetails }: { currentUser: any; onBack: () => void; onOpenRankDetails: () => void }) => {
+  const uid = String(currentUser?.uid || '').trim();
+  const currentMmr = Number.isFinite(Number(currentUser?.mmr)) ? Number(currentUser.mmr) : 0;
+  const currentRank = getRankInfo(currentMmr);
+  const [entries, setEntries] = useState<PlayerMatchLedgerEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
+  const [rangeFilter, setRangeFilter] = useState<'7d' | '30d' | 'all'>('30d');
+  const [resultFilter, setResultFilter] = useState<'all' | 'win' | 'loss' | 'draw'>('all');
+
+  useEffect(() => {
+    if (!uid) {
+      setEntries([]);
+      setIsLoading(false);
+      setLoadError('');
+      return;
+    }
+
+    setIsLoading(true);
+    setLoadError('');
+    const unsubscribe = onSnapshot(
+      query(collection(db, PLAYER_MATCH_LEDGER_COLLECTION), where('uid', '==', uid)),
+      (snapshot) => {
+        const nextEntries = snapshot.docs
+          .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() } as PlayerMatchLedgerEntry))
+          .sort((a, b) => {
+            const aMillis = getLedgerEntryTimestamp(a)?.getTime() || 0;
+            const bMillis = getLedgerEntryTimestamp(b)?.getTime() || 0;
+            return bMillis - aMillis;
+          });
+
+        setEntries(nextEntries);
+        setIsLoading(false);
+      },
+      (error) => {
+        console.error('MMR history sync error:', error);
+        setEntries([]);
+        setLoadError('Unable to load your MMR history right now.');
+        setIsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [uid]);
+
+  const rangeOptions: { value: '7d' | '30d' | 'all'; label: string }[] = [
+    { value: '7d', label: '7D' },
+    { value: '30d', label: '30D' },
+    { value: 'all', label: 'All' },
+  ];
+  const resultOptions: { value: 'all' | 'win' | 'loss' | 'draw'; label: string }[] = [
+    { value: 'all', label: 'All' },
+    { value: 'win', label: 'Wins' },
+    { value: 'loss', label: 'Losses' },
+    { value: 'draw', label: 'Draws' },
+  ];
+
+  const summary = useMemo(() => {
+    const nowMs = Date.now();
+    const cutoff7d = nowMs - (7 * 24 * 60 * 60 * 1000);
+    const cutoff30d = nowMs - (30 * 24 * 60 * 60 * 1000);
+    let delta7d = 0;
+    let delta30d = 0;
+
+    entries.forEach((entry) => {
+      const timestamp = getLedgerEntryTimestamp(entry)?.getTime() || 0;
+      const delta = Number(entry.deltaMmr || 0);
+      if (timestamp >= cutoff7d) delta7d += delta;
+      if (timestamp >= cutoff30d) delta30d += delta;
+    });
+
+    return {
+      delta7d,
+      delta30d,
+      totalMatches: entries.length,
+      lastEntry: entries[0] || null
+    };
+  }, [entries]);
+
+  const filteredEntries = useMemo(() => {
+    const nowMs = Date.now();
+    const cutoffMs = rangeFilter === '7d'
+      ? nowMs - (7 * 24 * 60 * 60 * 1000)
+      : rangeFilter === '30d'
+        ? nowMs - (30 * 24 * 60 * 60 * 1000)
+        : 0;
+
+    return entries.filter((entry) => {
+      const timestamp = getLedgerEntryTimestamp(entry)?.getTime() || 0;
+      const matchesRange = rangeFilter === 'all' || timestamp >= cutoffMs;
+      const matchesResult = resultFilter === 'all' || entry.result === resultFilter;
+      return matchesRange && matchesResult;
+    });
+  }, [entries, rangeFilter, resultFilter]);
+
+  const groupedEntries = useMemo(() => {
+    const groups: { label: string; key: string; items: PlayerMatchLedgerEntry[] }[] = [];
+    filteredEntries.forEach((entry) => {
+      const timestamp = getLedgerEntryTimestamp(entry);
+      const key = timestamp
+        ? `${timestamp.getFullYear()}-${timestamp.getMonth()}-${timestamp.getDate()}`
+        : 'unknown';
+      const existingGroup = groups.find((group) => group.key === key);
+      if (existingGroup) {
+        existingGroup.items.push(entry);
+        return;
+      }
+      groups.push({
+        key,
+        label: getLedgerGroupLabel(timestamp),
+        items: [entry]
+      });
+    });
+    return groups;
+  }, [filteredEntries]);
+  const visibleEntryCount = filteredEntries.length;
+  const activeFilterCount = (rangeFilter !== '30d' ? 1 : 0) + (resultFilter !== 'all' ? 1 : 0);
+  const selectedRangeLabel = rangeOptions.find((option) => option.value === rangeFilter)?.label || '30D';
+  const selectedResultLabel = resultOptions.find((option) => option.value === resultFilter)?.label || 'All';
+  const resetFilters = () => {
+    setRangeFilter('30d');
+    setResultFilter('all');
+  };
+
+  return (
+    <div className="min-h-screen bg-surface pb-24">
+      <header className="ios-blur sticky top-0 z-50 flex h-14 w-full items-center justify-between border-b border-ios-gray/10 px-4">
+        <button onClick={onBack} className="tap-target p-2 -ml-2">
+          <ChevronLeft size={24} />
+        </button>
+        <h1 className="ml-2 flex-1 text-[17px] font-bold tracking-tight text-on-surface">MMR History</h1>
+        <div className="w-8" aria-hidden="true" />
+      </header>
+
+      <main className="mx-auto max-w-2xl p-3.5 space-y-3">
+        <section className="rounded-[24px] border border-black/5 bg-white px-4 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-[20px] leading-tight font-display font-black italic tracking-tight text-on-surface">
+                Your MMR
+              </h2>
+              <p className="mt-1 text-[13px] font-medium leading-relaxed text-ios-gray">
+                Current rating and recent trend.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenRankDetails}
+              className="shrink-0 rounded-full border border-black/5 bg-surface px-3 py-1.5 text-[11px] font-medium tracking-tight text-ios-gray transition-colors active:bg-white"
+            >
+              Ranking Guide
+            </button>
+          </div>
+
+          <div className="mt-3 rounded-[22px] border border-black/[0.045] bg-[#f7f7f9] px-3.5 py-3">
+            <div className="flex items-end justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Current Rating</p>
+                <p className="mt-1 text-[31px] leading-none font-display font-black italic tracking-tight tabular-nums text-on-surface">
+                  {currentMmr.toLocaleString()}
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <RankBadge mmr={currentMmr} size="sm" />
+                  <span className="text-[11px] font-semibold tracking-tight text-ios-gray">MMR</span>
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Latest Change</p>
+                <p className={cn(
+                  'mt-1 text-[24px] leading-none font-display font-black italic tracking-tight tabular-nums',
+                  Number(summary.lastEntry?.deltaMmr || 0) > 0
+                    ? 'text-emerald-600'
+                    : Number(summary.lastEntry?.deltaMmr || 0) < 0
+                      ? 'text-error'
+                      : 'text-on-surface'
+                )}>
+                  {summary.lastEntry ? formatMmrDelta(summary.lastEntry.deltaMmr) : '0'}
+                </p>
+                <p className="mt-1 text-[11px] font-medium text-ios-gray">
+                  {summary.lastEntry ? formatLedgerEntryDate(getLedgerEntryTimestamp(summary.lastEntry)) : 'No matches yet'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="rounded-[18px] border border-black/[0.045] bg-white px-3 py-3">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">7D</p>
+                <p className={cn(
+                  'mt-1 text-[19px] leading-none font-display font-black italic tracking-tight tabular-nums',
+                  summary.delta7d > 0 ? 'text-emerald-600' : summary.delta7d < 0 ? 'text-error' : 'text-on-surface'
+                )}>
+                  {formatMmrDelta(summary.delta7d)}
+                </p>
+              </div>
+              <div className="rounded-[18px] border border-black/[0.045] bg-white px-3 py-3">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">30D</p>
+                <p className={cn(
+                  'mt-1 text-[19px] leading-none font-display font-black italic tracking-tight tabular-nums',
+                  summary.delta30d > 0 ? 'text-emerald-600' : summary.delta30d < 0 ? 'text-error' : 'text-on-surface'
+                )}>
+                  {formatMmrDelta(summary.delta30d)}
+                </p>
+              </div>
+              <div className="rounded-[18px] border border-black/[0.045] bg-white px-3 py-3">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Matches</p>
+                <p className="mt-1 text-[19px] leading-none font-display font-black italic tracking-tight tabular-nums text-on-surface">
+                  {summary.totalMatches}
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="flex items-center gap-3 px-1 pt-0.5">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
+            <p className="shrink-0 text-[11px] font-semibold tracking-tight text-ios-gray/78">History</p>
+            {activeFilterCount > 0 && (
+              <p className="truncate text-[11px] font-medium text-ios-gray">
+                {selectedRangeLabel} • {selectedResultLabel}
+              </p>
+            )}
+            <div className="h-px flex-1 bg-black/5" />
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsFilterSheetOpen(true)}
+            className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-black/5 bg-white px-3.5 text-[11px] font-semibold tracking-tight text-on-surface shadow-[0_1px_2px_rgba(15,23,42,0.03)] transition-colors active:bg-surface"
+          >
+            <SlidersHorizontal size={15} />
+            <span>Filter</span>
+            {activeFilterCount > 0 && (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-black text-white">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+        </section>
+
+        {isLoading && (
+          <section className="space-y-2">
+            {[0, 1, 2].map((index) => (
+              <div key={index} className="rounded-[22px] border border-black/5 bg-white px-4 py-4">
+                <div className="flex items-start gap-3">
+                  <div className="h-14 w-[82px] rounded-[18px] bg-ios-gray/10" />
+                  <div className="min-w-0 flex-1">
+                    <div className="h-4 w-28 rounded-full bg-ios-gray/10" />
+                    <div className="mt-2 h-4 w-full rounded-full bg-ios-gray/10" />
+                    <div className="mt-2 h-4 w-3/4 rounded-full bg-ios-gray/10" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+
+        {!isLoading && loadError && (
+          <section className="rounded-2xl border border-error/10 bg-white px-4 py-5">
+            <p className="text-[13px] font-semibold text-error">{loadError}</p>
+          </section>
+        )}
+
+        {!isLoading && !loadError && groupedEntries.length === 0 && (
+          <section className="rounded-2xl border border-black/5 bg-white px-4 py-5">
+            <p className="text-[14px] font-semibold text-on-surface">No MMR entries yet</p>
+            <p className="mt-1 text-[13px] font-medium leading-relaxed text-ios-gray">
+              Your match-by-match rating timeline will appear after completed sessions finish syncing.
+            </p>
+          </section>
+        )}
+
+        {!isLoading && !loadError && groupedEntries.length > 0 && (
+          <section className="space-y-2.5">
+            {groupedEntries.map((group) => (
+              <div key={group.key}>
+                <div className="mb-1.5 px-1">
+                  <p className="text-[11px] font-semibold tracking-tight text-ios-gray">{group.label}</p>
+                </div>
+                <div className="space-y-2">
+                  {group.items.map((entry) => {
+                    const delta = Number(entry.deltaMmr || 0);
+                    const scoreLabel = Number.isFinite(Number(entry.scoreFor)) && Number.isFinite(Number(entry.scoreAgainst))
+                      ? `${Number(entry.scoreFor)}-${Number(entry.scoreAgainst)}`
+                      : 'No score';
+                    const mmrBefore = Number(entry.mmrBefore);
+                    const mmrAfter = Number(entry.mmrAfter);
+                    const hasMmrSnapshot = Number.isFinite(mmrBefore) && Number.isFinite(mmrAfter);
+                    const resultLabel = entry.result === 'win'
+                      ? 'Win'
+                      : entry.result === 'loss'
+                        ? 'Loss'
+                        : 'Draw';
+                    const detailLabels = [entry.reasonLabel, entry.modifierLabel].filter(Boolean) as string[];
+
+                    return (
+                      <div key={entry.id} className="rounded-[22px] border border-black/5 bg-white px-3 py-3">
+                        <div className="flex gap-2.5">
+                          <div className={cn(
+                            'flex w-[78px] shrink-0 flex-col items-center justify-center rounded-[17px] border px-2 py-2.5 text-center',
+                            delta > 0
+                              ? 'border-emerald-500/10 bg-emerald-500/[0.055]'
+                              : delta < 0
+                                ? 'border-error/10 bg-error/[0.045]'
+                                : 'border-black/5 bg-surface'
+                          )}>
+                            <p className={cn(
+                              'text-[25px] leading-none font-display font-black italic tracking-tight tabular-nums',
+                              delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-error' : 'text-on-surface'
+                            )}>
+                              {formatMmrDelta(delta)}
+                            </p>
+                            <p className="mt-1 text-[10px] font-semibold tracking-tight text-ios-gray">MMR</p>
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-[15px] font-bold leading-tight text-on-surface">
+                                  {entry.tournamentName || 'Finalized Match'}
+                                </p>
+                                <p className="mt-0.5 text-[12px] font-medium text-ios-gray">
+                                  {formatLedgerEntryDate(getLedgerEntryTimestamp(entry))}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                              <span className={cn(
+                                'rounded-full px-2.5 py-1 text-[10px] font-semibold tracking-tight',
+                                entry.result === 'win'
+                                  ? 'bg-emerald-500/10 text-emerald-700'
+                                  : entry.result === 'loss'
+                                    ? 'bg-error/10 text-error'
+                                    : 'bg-ios-gray/10 text-ios-gray'
+                              )}>
+                                {resultLabel}
+                              </span>
+                              <span className="rounded-full border border-black/5 bg-surface px-2.5 py-1 text-[10px] font-semibold tracking-tight tabular-nums text-on-surface">
+                                {scoreLabel}
+                              </span>
+                            </div>
+
+                            {detailLabels.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] font-semibold">
+                                {entry.reasonLabel && (
+                                  <span className="text-ios-gray">{entry.reasonLabel}</span>
+                                )}
+                                {entry.reasonLabel && entry.modifierLabel && (
+                                  <span className="text-ios-gray/38">•</span>
+                                )}
+                                {entry.modifierLabel && (
+                                  <span className={cn(
+                                    entry.modifierDeltaMmr && entry.modifierDeltaMmr > 0
+                                      ? 'text-primary'
+                                      : 'text-error'
+                                  )}>
+                                    {entry.modifierLabel}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            {(entry.teamSummary || entry.opponentSummary) && (
+                              <p className="mt-1.5 text-[12px] font-medium leading-relaxed text-ios-gray">
+                                {entry.teamSummary || 'Your team'} vs {entry.opponentSummary || 'Opponent'}
+                              </p>
+                            )}
+
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                              {hasMmrSnapshot && (
+                                <span className="rounded-full border border-black/5 bg-surface px-2.5 py-1.5 text-[11px] font-semibold tabular-nums text-on-surface">
+                                  {mmrBefore.toLocaleString()} to {mmrAfter.toLocaleString()} MMR
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
+      </main>
+
+      <AnimatePresence>
+        {isFilterSheetOpen && (
+          <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsFilterSheetOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', stiffness: 360, damping: 32 }}
+              className="relative w-full max-w-lg rounded-t-[32px] bg-white px-5 pb-7 pt-3 shadow-2xl sm:max-w-md sm:rounded-[32px] sm:px-6"
+            >
+              <div className="mx-auto h-1.5 w-14 rounded-full bg-ios-gray/20" />
+
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Filter</h3>
+                  <p className="mt-1 text-[13px] font-medium text-ios-gray">Choose the timeline view you want to see.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={resetFilters}
+                      className="text-[12px] font-bold text-primary tap-target"
+                    >
+                      Reset
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsFilterSheetOpen(false)}
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-black/5 bg-surface tap-target"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-6">
+                <section>
+                  <h4 className="text-[13px] font-bold tracking-tight text-on-surface">Range</h4>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {rangeOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setRangeFilter(option.value)}
+                        className={cn(
+                          'rounded-full border px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition-colors',
+                          rangeFilter === option.value
+                            ? 'border-primary/15 bg-primary/10 text-primary'
+                            : 'border-[#cad3e4] bg-white text-[#667085]'
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <h4 className="text-[13px] font-bold tracking-tight text-on-surface">Result</h4>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {resultOptions.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setResultFilter(option.value)}
+                        className={cn(
+                          'rounded-full border px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition-colors',
+                          resultFilter === option.value
+                            ? 'border-primary/15 bg-primary/10 text-primary'
+                            : 'border-[#cad3e4] bg-white text-[#667085]'
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -6185,6 +8060,8 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [processingRequestId, setProcessingRequestId] = useState<string | null>(null);
+  const sortFriendsByName = (items: Friend[]) =>
+    [...items].sort((a, b) => (a?.displayName || '').localeCompare(b?.displayName || '', undefined, { sensitivity: 'base' }));
 
   useEffect(() => {
     // Prevent inherited scroll position from previous screen so search is visible on first open.
@@ -6507,29 +8384,259 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
     }
   };
 
+  const selectedCount = selectedPlayerIds.length;
+  const sortedFriends = useMemo(() => sortFriendsByName(friends), [friends]);
+  const selectedFriends = useMemo(
+    () => sortFriendsByName(friends.filter((friend) => selectedPlayerIds.includes(friend.uid))),
+    [friends, selectedPlayerIds]
+  );
+  const searchSectionTitle = pickerMode ? 'Find More Friends' : 'Find Friends';
+  const searchSectionCopy = pickerMode
+    ? 'Search if someone is not in your friends list yet.'
+    : 'Search by username, email, or phone number to connect with other FOM players.';
+  const friendsSectionTitle = pickerMode ? 'Your Friends' : 'Your Friends';
+  const friendsSectionCopy = pickerMode
+    ? 'Tap Add or Selected to update this match.'
+    : 'Your player network for future matches, requests, and quick invites.';
+
+  const searchPanel = (
+    <section className="rounded-[24px] border border-black/5 bg-white p-3.5">
+      <div className="mb-3">
+        <h2 className="text-[16px] font-bold tracking-tight text-on-surface">{searchSectionTitle}</h2>
+        <p className="mt-1 text-[13px] leading-relaxed text-ios-gray">
+          {searchSectionCopy}
+        </p>
+      </div>
+
+      <form onSubmit={handleSearch} className="space-y-2.5">
+        <div className="relative">
+          <input
+            type="text"
+            placeholder="Search username, email, or phone number"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-[20px] border border-black/5 bg-ios-gray/5 py-3.5 pl-11 pr-4 text-[14px] font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+          />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ios-gray" size={18} />
+        </div>
+        <button
+          type="submit"
+          disabled={searching || !searchQuery.trim()}
+          className="inline-flex h-10 items-center rounded-full bg-primary px-4 text-[12px] font-semibold tracking-tight text-white tap-target disabled:opacity-50"
+        >
+          {searching ? 'Searching...' : 'Search'}
+        </button>
+      </form>
+
+      {searchResults.length > 0 && (
+        <div className="mt-4 space-y-2.5">
+          <p className="px-1 text-[11px] font-semibold tracking-tight text-ios-gray">Search Results</p>
+          {searchResults.map(res => (
+            <div key={res.uid} className="flex items-center justify-between gap-3 rounded-[20px] border border-black/5 bg-surface px-3.5 py-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/5 bg-ios-gray/10">
+                  {res.photoURL ? <img src={res.photoURL} className="h-full w-full object-cover" /> : <User size={20} className="text-ios-gray/30" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-bold text-on-surface">{res.displayName}</p>
+                  <p className="truncate text-[11px] font-medium tracking-tight text-ios-gray">@{res.username || 'user'}</p>
+                </div>
+              </div>
+              {(() => {
+                const isAlreadyFriend = friends.some(f => f.uid === res.uid);
+                const requestStatus = outgoingRequestStatuses[res.uid];
+                const isPending = requestStatus === 'pending';
+                const isAccepted = requestStatus === 'accepted';
+                const disabled = isAlreadyFriend || isPending || isAccepted;
+
+                const label = isAlreadyFriend
+                  ? 'Friends'
+                  : isPending
+                    ? 'Pending'
+                    : isAccepted
+                      ? 'Accepted'
+                      : 'Add';
+
+                return (
+                  <button
+                    onClick={() => sendFriendRequest(res)}
+                    disabled={disabled}
+                    className={cn(
+                      'h-8 shrink-0 rounded-full px-3 text-[11px] font-semibold tracking-tight tap-target',
+                      disabled
+                        ? 'border border-black/5 bg-white text-ios-gray'
+                        : 'bg-primary text-white'
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })()}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  const friendsPanel = (
+    <section className="rounded-[24px] border border-black/5 bg-white p-3.5">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[16px] font-bold tracking-tight text-on-surface">{friendsSectionTitle}</h2>
+          <p className="mt-1 text-[13px] leading-relaxed text-ios-gray">
+            {friendsSectionCopy}
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full border border-black/5 bg-surface px-3 py-1.5 text-[11px] font-semibold tracking-tight text-ios-gray">
+          {friends.length} {friends.length === 1 ? 'friend' : 'friends'}
+        </span>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-10">
+          <RefreshCw className="animate-spin text-primary/20" size={32} />
+        </div>
+      ) : friends.length === 0 ? (
+        <div className="rounded-[24px] border border-dashed border-black/8 bg-surface px-6 py-10 text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white">
+            <Users size={40} className="text-ios-gray/20" />
+          </div>
+          <h3 className="text-[18px] font-bold tracking-tight text-on-surface">
+            {pickerMode ? 'No friends yet' : 'No friends yet'}
+          </h3>
+          <p className="mx-auto mt-2 max-w-sm text-[14px] font-medium leading-relaxed text-ios-gray">
+            {pickerMode
+              ? 'Search for friends first, then bring them into this match.'
+              : 'Search for players using username, email, or phone number to start building your network.'}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2.5">
+          {sortedFriends.map(friend => (
+            <div
+              key={friend.uid}
+              className={cn(
+                'flex items-center justify-between gap-3 rounded-[22px] border px-3.5 py-3.5',
+                pickerMode && selectedPlayerIds.includes(friend.uid)
+                  ? 'border-primary/20 bg-primary/[0.04]'
+                  : 'border-black/5 bg-surface'
+              )}
+            >
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/5 bg-ios-gray/10">
+                  {friend.photoURL ? <img src={friend.photoURL} className="h-full w-full object-cover" /> : <User size={24} className="text-ios-gray/30" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-[14px] font-bold text-on-surface">{friend.displayName}</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <RankBadge mmr={friend.mmr} size="sm" />
+                    <span className="truncate text-[11px] font-medium tracking-tight text-ios-gray">@{friend.username || 'user'}</span>
+                  </div>
+                </div>
+              </div>
+              {pickerMode && onTogglePickForMatch ? (
+                <button
+                  onClick={() => onTogglePickForMatch(friend)}
+                  className={cn(
+                    'h-9 shrink-0 rounded-full px-3.5 text-[11px] font-semibold tracking-tight tap-target',
+                    selectedPlayerIds.includes(friend.uid)
+                      ? 'border border-primary/15 bg-primary/[0.06] text-primary'
+                      : 'bg-primary text-white'
+                  )}
+                >
+                  {selectedPlayerIds.includes(friend.uid) ? 'Selected' : 'Add'}
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div className="min-h-screen bg-surface pb-32">
-      <header className="ios-blur sticky top-0 w-full z-50 flex items-center px-4 h-14 border-b border-ios-gray/10">
+      <header className="ios-blur sticky top-0 z-50 flex min-h-16 w-full items-center border-b border-ios-gray/10 px-4 py-2">
         <button onClick={onBack} className="tap-target p-2 -ml-2">
           <ChevronLeft size={24} />
         </button>
-        <h1 className="font-bold text-[17px] tracking-tight ml-2">{pickerMode ? 'Select Friends' : 'Friends'}</h1>
-        {pickerMode && (
+        <div className="ml-2 min-w-0 flex-1">
+          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">
+            {pickerMode ? 'Add Players' : 'Friends'}
+          </h1>
+          <p className="mt-0.5 truncate text-[12px] font-medium tracking-tight text-ios-gray">
+            {pickerMode
+              ? `${selectedCount} player${selectedCount === 1 ? '' : 's'} selected`
+              : `${friends.length} friend${friends.length === 1 ? '' : 's'} in your network`}
+          </p>
+        </div>
+        {pickerMode ? (
           <button
             onClick={onDonePick || onBack}
-            className="ml-auto text-[13px] font-bold text-primary tap-target"
+            className="ml-3 inline-flex h-9 shrink-0 items-center rounded-full border border-primary/15 bg-primary/10 px-3.5 text-[12px] font-semibold tracking-tight text-primary tap-target"
           >
             Done
           </button>
-        )}
+        ) : null}
       </header>
 
-      <main className="max-w-2xl mx-auto p-5">
+      <main className="mx-auto max-w-2xl p-4 space-y-4">
+        {pickerMode && (
+          <section className="rounded-[24px] border border-black/5 bg-white p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Selected Players</p>
+                <p className="mt-1 text-[24px] leading-none font-display font-black tracking-tight text-on-surface tabular-nums">
+                  {selectedCount}
+                </p>
+                <p className="mt-2 max-w-sm text-[13px] leading-relaxed text-ios-gray">
+                  Choose friends to bring into this match.
+                </p>
+              </div>
+              <span className={cn(
+                "shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold tracking-tight",
+                selectedCount > 0 ? "bg-primary/[0.08] text-primary" : "bg-ios-gray/[0.08] text-ios-gray"
+              )}>
+                {selectedCount > 0 ? `${selectedCount} selected` : 'No players'}
+              </span>
+            </div>
+            {selectedFriends.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {selectedFriends.map((friend) => (
+                  <div
+                    key={friend.uid}
+                    className="inline-flex items-center gap-2 rounded-full bg-ios-gray/[0.05] px-2.5 py-2"
+                  >
+                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-white text-[11px] font-bold text-primary">
+                      {friend.photoURL ? (
+                        <img src={friend.photoURL} className="h-full w-full object-cover" />
+                      ) : (
+                        (friend.displayName || 'F').slice(0, 1).toUpperCase()
+                      )}
+                    </div>
+                    <span className="max-w-[112px] truncate text-[12px] font-semibold text-on-surface">
+                      {friend.displayName}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {!pickerMode && incomingRequests.length > 0 && (
-          <section className="mb-6">
-            <div className="flex justify-between items-center mb-3 px-1">
-              <h2 className="text-lg font-bold tracking-tight">Friend Requests</h2>
-              <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-lg">{incomingRequests.length} New</span>
+          <section className="rounded-[24px] border border-primary/10 bg-primary/[0.035] p-3.5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-[16px] font-bold tracking-tight text-on-surface">Friend Requests</h2>
+                <p className="mt-1 text-[13px] leading-relaxed text-ios-gray">
+                  Review incoming player requests before they join your network.
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full border border-primary/10 bg-white px-3 py-1.5 text-[11px] font-semibold tracking-tight text-primary">
+                {incomingRequests.length} new
+              </span>
             </div>
             <div className="space-y-3">
               {incomingRequests.map((request) => {
@@ -6538,36 +8645,38 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
                   ? Math.max(0, Number(request.requesterMmr))
                   : 0;
                 return (
-                  <div key={request.requesterUid} className="bg-white border border-primary/20 rounded-2xl p-4 shadow-sm">
+                  <div key={request.requesterUid} className="rounded-[22px] border border-black/5 bg-white px-3.5 py-3.5">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-11 h-11 rounded-full bg-ios-gray/10 overflow-hidden flex items-center justify-center shrink-0">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/5 bg-ios-gray/10">
                           {request.requesterPhotoURL ? (
-                            <img src={request.requesterPhotoURL} className="w-full h-full object-cover" />
+                            <img src={request.requesterPhotoURL} className="h-full w-full object-cover" />
                           ) : (
                             <User size={22} className="text-ios-gray/35" />
                           )}
                         </div>
                         <div className="min-w-0">
-                          <p className="font-bold text-sm text-on-surface truncate">{request.requesterDisplayName}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
+                          <p className="truncate text-[14px] font-bold text-on-surface">{request.requesterDisplayName}</p>
+                          <div className="mt-1 flex items-center gap-2">
                             <RankBadge mmr={requesterMmr} size="sm" />
-                            <span className="text-[10px] text-ios-gray font-bold truncate">@{request.requesterUsername || 'user'}</span>
+                            <span className="truncate text-[11px] font-medium tracking-tight text-ios-gray">
+                              @{request.requesterUsername || 'user'}
+                            </span>
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex shrink-0 items-center gap-2">
                         <button
                           onClick={() => handleFriendRequestDecision(request, 'declined')}
                           disabled={isProcessing}
-                          className="h-8 px-3 rounded-lg border border-ios-gray/20 text-ios-gray text-[10px] font-black uppercase tracking-wide tap-target disabled:opacity-50"
+                          className="h-8 rounded-full border border-black/5 bg-white px-3 text-[11px] font-semibold tracking-tight text-ios-gray tap-target disabled:opacity-50"
                         >
                           Decline
                         </button>
                         <button
                           onClick={() => handleFriendRequestDecision(request, 'accepted')}
                           disabled={isProcessing}
-                          className="h-8 px-3 rounded-lg bg-primary text-white text-[10px] font-black uppercase tracking-wide tap-target disabled:opacity-50"
+                          className="h-8 rounded-full bg-primary px-3 text-[11px] font-semibold tracking-tight text-white tap-target disabled:opacity-50"
                         >
                           {isProcessing ? '...' : 'Accept'}
                         </button>
@@ -6580,137 +8689,27 @@ const FriendsScreen = ({ currentUser, onBack, addNotification, pickerMode = fals
           </section>
         )}
 
-        <section className="mb-8">
-          <form onSubmit={handleSearch} className="relative">
-            <input
-              type="text"
-              placeholder="Search username, email, or HP..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-white border border-ios-gray/10 rounded-2xl py-4 pl-12 pr-4 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all shadow-sm"
-            />
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-ios-gray" size={20} />
-            <button
-              type="submit"
-              disabled={searching}
-              className="absolute right-3 top-1/2 -translate-y-1/2 bg-primary text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg tap-target"
-            >
-              {searching ? '...' : 'Search'}
-            </button>
-          </form>
-
-          {searchResults.length > 0 && (
-            <div className="mt-4 space-y-3">
-              <h3 className="text-[11px] font-bold text-ios-gray uppercase tracking-widest px-1">Search Results</h3>
-              {searchResults.map(res => (
-                <div key={res.uid} className="bg-white border border-primary/20 rounded-2xl p-4 flex items-center justify-between shadow-sm">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-ios-gray/10 overflow-hidden flex items-center justify-center">
-                      {res.photoURL ? <img src={res.photoURL} className="w-full h-full object-cover" /> : <User size={20} className="text-ios-gray/30" />}
-                    </div>
-                    <div>
-                      <p className="font-bold text-sm">{res.displayName}</p>
-                      <p className="text-[10px] text-ios-gray font-medium">@{res.username || 'user'}</p>
-                    </div>
-                  </div>
-                  {(() => {
-                    const isAlreadyFriend = friends.some(f => f.uid === res.uid);
-                    const requestStatus = outgoingRequestStatuses[res.uid];
-                    const isPending = requestStatus === 'pending';
-                    const isAccepted = requestStatus === 'accepted';
-                    const disabled = isAlreadyFriend || isPending || isAccepted;
-
-                    const label = isAlreadyFriend
-                      ? 'Friends'
-                      : isPending
-                        ? 'Pending'
-                        : isAccepted
-                          ? 'Accepted'
-                          : 'Add';
-
-                    return (
-                      <button
-                        onClick={() => sendFriendRequest(res)}
-                        disabled={disabled}
-                        className={cn(
-                          "px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest tap-target",
-                          disabled ? "bg-ios-gray/10 text-ios-gray" : "bg-primary text-white"
-                        )}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })()}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section>
-          <div className="flex justify-between items-center mb-4 px-1">
-            <h2 className="text-xl font-bold tracking-tight">Friends List</h2>
-            <span className="text-xs font-bold text-ios-gray bg-ios-gray/5 px-2 py-1 rounded-lg">{friends.length} Friends</span>
-          </div>
-
-          {loading ? (
-            <div className="flex justify-center py-10">
-              <RefreshCw className="animate-spin text-primary/20" size={32} />
-            </div>
-          ) : friends.length === 0 ? (
-            <div className="bg-white border border-ios-gray/10 rounded-[32px] p-12 text-center shadow-sm">
-              <div className="w-20 h-20 bg-ios-gray/5 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Users size={40} className="text-ios-gray/20" />
-              </div>
-              <h3 className="text-lg font-bold mb-2">No friends yet</h3>
-              <p className="text-sm text-ios-gray font-medium leading-relaxed">
-                Find friends using username, email, or phone number to start playing together.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {friends.map(friend => (
-                <div key={friend.uid} className="bg-white border border-ios-gray/10 rounded-2xl p-4 flex items-center justify-between shadow-sm">
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-ios-gray/10 overflow-hidden flex items-center justify-center">
-                      {friend.photoURL ? <img src={friend.photoURL} className="w-full h-full object-cover" /> : <User size={24} className="text-ios-gray/30" />}
-                    </div>
-                    <div>
-                      <p className="font-bold text-on-surface">{friend.displayName}</p>
-                      <div className="flex items-center gap-2">
-                        <RankBadge mmr={friend.mmr} size="sm" />
-                        <span className="text-[10px] text-ios-gray font-bold">@{friend.username || 'user'}</span>
-                      </div>
-                    </div>
-                  </div>
-                  {pickerMode && onTogglePickForMatch ? (
-                    <button
-                      onClick={() => onTogglePickForMatch(friend)}
-                      className={cn(
-                        "h-9 px-3.5 rounded-xl text-[11px] font-black uppercase tracking-wide tap-target",
-                        selectedPlayerIds.includes(friend.uid)
-                          ? "bg-primary/10 text-primary border border-primary/20"
-                          : "bg-primary text-white"
-                      )}
-                    >
-                      {selectedPlayerIds.includes(friend.uid) ? 'Selected' : 'Add'}
-                    </button>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
+        {pickerMode ? (
+          <>
+            {friendsPanel}
+            {searchPanel}
+          </>
+        ) : (
+          <>
+            {searchPanel}
+            {friendsPanel}
+          </>
+        )}
       </main>
     </div>
   );
 };
 
 const getLeaderboardPlacementStyles = (rank: number) => {
-  if (rank === 1) return 'bg-yellow-400/15 text-yellow-700 border-yellow-400/30';
-  if (rank === 2) return 'bg-slate-300/30 text-slate-700 border-slate-300/50';
-  if (rank === 3) return 'bg-orange-400/15 text-orange-700 border-orange-400/30';
-  return 'bg-ios-gray/10 text-ios-gray border-ios-gray/15';
+  if (rank === 1) return 'bg-amber-50 text-amber-700 border-amber-200/80';
+  if (rank === 2) return 'bg-slate-100 text-slate-700 border-slate-200';
+  if (rank === 3) return 'bg-orange-50 text-orange-700 border-orange-200/80';
+  return 'bg-surface text-ios-gray border-black/5';
 };
 
 const ALL_PROVINCES_FILTER = 'All Provinces';
@@ -6751,23 +8750,23 @@ const LeaderboardSummaryCards = ({
   const currentMatches = Number.isFinite(Number(currentUser?.totalMatches)) ? Number(currentUser.totalMatches) : 0;
 
   return (
-    <div className="bg-white border border-ios-gray/10 rounded-2xl px-3 py-2.5 shadow-sm mb-3">
-      <div className="grid grid-cols-3 divide-x divide-ios-gray/10">
-        <div className="pr-2.5">
-          <p className="text-[9px] font-black text-ios-gray uppercase tracking-wider">Your Rank</p>
-          <p className="text-[20px] leading-tight mt-1 font-display font-black italic tracking-tight text-on-surface">
+    <div className="mb-3 rounded-[24px] border border-black/5 bg-white p-2">
+      <div className="grid grid-cols-[0.92fr_1.16fr_0.92fr] gap-2">
+        <div className="rounded-[18px] border border-black/[0.045] bg-white px-3 py-3">
+          <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Rank</p>
+          <p className="mt-1 text-[18px] leading-tight font-display font-black tracking-tight tabular-nums text-on-surface">
             {currentRank ? `#${currentRank}` : '-'}
           </p>
         </div>
-        <div className="px-2.5">
-          <p className="text-[9px] font-black text-ios-gray uppercase tracking-wider">Your MMR</p>
-          <p className="text-[20px] leading-tight mt-1 font-display font-black italic tracking-tight text-on-surface">
+        <div className="rounded-[18px] border border-primary/[0.08] bg-primary/[0.045] px-3 py-3.5">
+          <p className="text-[11px] font-semibold tracking-tight text-ios-gray">MMR</p>
+          <p className="mt-1 text-[24px] leading-tight font-display font-black tracking-tight tabular-nums text-on-surface">
             {currentMmr.toLocaleString()}
           </p>
         </div>
-        <div className="pl-2.5">
-          <p className="text-[9px] font-black text-ios-gray uppercase tracking-wider">Matches</p>
-          <p className="text-[20px] leading-tight mt-1 font-display font-black italic tracking-tight text-on-surface">
+        <div className="rounded-[18px] border border-black/[0.045] bg-white px-3 py-3">
+          <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Matches</p>
+          <p className="mt-1 text-[18px] leading-tight font-display font-black tracking-tight tabular-nums text-on-surface">
             {currentMatches}
           </p>
         </div>
@@ -6802,20 +8801,20 @@ const LeaderboardUserRow = ({
     <div
       id={rowId}
       className={cn(
-        'bg-white border border-ios-gray/10 rounded-2xl px-3 py-2.5 shadow-sm',
-        isCurrentUser && 'ring-2 ring-primary border-transparent',
-        isHighlighted && 'bg-primary/5 border-primary/25'
+        'rounded-2xl border border-black/5 bg-white px-3.5 py-3.5',
+        isCurrentUser && 'border-primary/20 bg-primary/[0.035]',
+        isHighlighted && 'border-primary/15 bg-primary/[0.045]'
       )}
     >
       <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-2.5">
         <div className={cn(
-          'w-8 h-8 shrink-0 rounded-lg border flex items-center justify-center text-[12px] font-black tracking-tight',
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border text-[11px] font-black tracking-tight',
           getLeaderboardPlacementStyles(rank)
         )}>
           {rankText}
         </div>
 
-        <div className="w-10 h-10 rounded-full bg-ios-gray/10 border border-ios-gray/10 overflow-hidden flex items-center justify-center shrink-0">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/5 bg-ios-gray/5">
           {user.photoURL ? (
             <img src={user.photoURL} alt={displayName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
           ) : (
@@ -6827,26 +8826,24 @@ const LeaderboardUserRow = ({
           <div className="flex items-center gap-1.5">
             <h4 className="font-bold text-[14px] leading-tight text-on-surface truncate">{displayName}</h4>
             {isCurrentUser && (
-              <span className="text-[9px] font-black uppercase tracking-wider bg-primary/10 text-primary px-1.5 py-0.5 rounded-md">
+              <span className="rounded-full border border-primary/15 bg-white px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] text-primary">
                 You
               </span>
             )}
           </div>
-          <p className="text-[11px] font-semibold text-ios-gray mt-0.5 truncate">
+          <p className="mt-0.5 text-[11.5px] font-semibold text-ios-gray truncate">
             {areaLabel} • {matchesLabel}
           </p>
         </div>
 
-        <div className="shrink-0 text-right pl-1">
-          <div className="inline-flex items-center justify-end gap-1">
-            <rankInfo.icon size={12} className={rankInfo.text} />
-            <span className={cn('text-[10px] font-black uppercase tracking-wider', rankInfo.text)}>
-              {rankInfo.name}
-            </span>
-          </div>
-          <p className="text-[15px] leading-tight font-display font-black italic tracking-tight text-on-surface mt-0.5">
-            {mmr.toLocaleString()} <span className="text-[10px] font-black not-italic tracking-wider text-ios-gray">MMR</span>
+        <div className="min-w-[5.35rem] shrink-0 pl-1 text-right">
+          <p className="text-[17px] leading-tight font-display font-black tracking-tight tabular-nums text-on-surface">
+            {mmr.toLocaleString()} <span className="text-[10px] font-semibold tracking-tight text-ios-gray">MMR</span>
           </p>
+          <div className="mt-0.5 inline-flex items-center justify-end gap-1 text-[10px] font-semibold tracking-tight text-ios-gray">
+            <rankInfo.icon size={11} />
+            <span>{rankInfo.name}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -6856,26 +8853,39 @@ const LeaderboardUserRow = ({
 const LeaderboardHeaderSummary = ({
   provinceFilter,
   showingLabel,
-  onOpenRankDetails
+  onOpenRankDetails,
+  onOpenMmrHistory
 }: {
   provinceFilter: string;
   showingLabel: string;
   onOpenRankDetails: () => void;
+  onOpenMmrHistory: () => void;
 }) => {
-  const boardLabel = provinceFilter === ALL_PROVINCES_FILTER ? 'Global Board' : 'Province Board';
+  const boardLabel = provinceFilter === ALL_PROVINCES_FILTER ? 'Global Ranking' : 'Province Ranking';
+  const boardDetail = provinceFilter === ALL_PROVINCES_FILTER ? showingLabel : `${provinceFilter} • ${showingLabel}`;
 
   return (
-    <div className="mb-2.5 flex items-center justify-between gap-3">
-      <div>
-        <p className="text-[11px] font-bold text-ios-gray uppercase tracking-wider">{boardLabel}</p>
-        <p className="text-[11px] font-semibold text-ios-gray mt-0.5">{showingLabel}</p>
+    <div className="mb-3 space-y-1.5">
+      <div className="px-0.5">
+        <p className="text-[15px] font-bold tracking-tight text-on-surface">{boardLabel}</p>
+        <p className="mt-0.5 text-[12px] font-semibold text-ios-gray">{boardDetail}</p>
       </div>
-      <button
-        onClick={onOpenRankDetails}
-        className="h-8 px-3 rounded-full bg-primary/10 text-primary text-[10px] font-black uppercase tracking-wider tap-target border border-primary/20 shrink-0"
-      >
-        View Rank Details
-      </button>
+      <div className="flex flex-wrap items-center gap-2 px-0.5">
+        <button
+          onClick={onOpenMmrHistory}
+          className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-full border border-black/5 bg-surface px-3 text-[11px] font-medium tracking-tight text-ios-gray tap-target transition-colors active:bg-white"
+        >
+          <BarChart2 size={14} />
+          <span className="truncate">MMR History</span>
+        </button>
+        <button
+          onClick={onOpenRankDetails}
+          className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-full border border-black/5 bg-surface px-3 text-[11px] font-medium tracking-tight text-ios-gray tap-target transition-colors active:bg-white"
+        >
+          <SlidersHorizontal size={14} />
+          <span className="truncate">Ranking Guide</span>
+        </button>
+      </div>
     </div>
   );
 };
@@ -6883,10 +8893,12 @@ const LeaderboardHeaderSummary = ({
 const LeaderboardScreen = ({
   currentUser,
   onOpenRankDetails,
+  onOpenMmrHistory,
   focusRequestId
 }: {
   currentUser: any,
   onOpenRankDetails: () => void,
+  onOpenMmrHistory: () => void,
   focusRequestId: number
 }) => {
   const [provinceFilter, setProvinceFilter] = useState(ALL_PROVINCES_FILTER);
@@ -6940,30 +8952,30 @@ const LeaderboardScreen = ({
     <div className="min-h-screen bg-surface pb-32">
       <header className="ios-blur sticky top-0 w-full z-50 px-4 h-14 border-b border-ios-gray/10 flex items-center justify-between">
         <h1 className="text-[17px] font-bold tracking-tight text-on-surface">Ranking</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 rounded-full border border-black/5 bg-white p-1">
           <button
             onClick={() => setProvinceFilter(ALL_PROVINCES_FILTER)}
             className={cn(
-              "h-8 px-3.5 rounded-full text-[10px] font-black uppercase tracking-wider tap-target flex items-center gap-1.5 border",
+              "flex h-8 items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold tracking-tight tap-target transition-colors",
               provinceFilter === ALL_PROVINCES_FILTER
-                ? "bg-primary/10 border-primary/25 text-primary"
-                : "bg-white border-ios-gray/20 text-on-surface"
+                ? "bg-primary/10 text-primary"
+                : "bg-transparent text-ios-gray"
             )}
           >
-            <Globe size={13} className="text-primary" />
+            <Globe size={13} />
             Global
           </button>
           <button
             onClick={() => setIsRegionSelectorOpen(true)}
             className={cn(
-              "h-8 px-3.5 rounded-full text-[10px] font-black uppercase tracking-wider tap-target flex items-center gap-1.5 border",
+              "flex h-8 max-w-[11.5rem] items-center gap-1.5 rounded-full px-3.5 text-[12px] font-semibold tracking-tight tap-target transition-colors",
               provinceFilter === ALL_PROVINCES_FILTER
-                ? "bg-white border-ios-gray/20 text-on-surface"
-                : "bg-primary/10 border-primary/25 text-primary"
+                ? "bg-transparent text-ios-gray"
+                : "bg-primary/10 text-primary"
             )}
           >
             <MapPin size={13} />
-            {provinceFilter === ALL_PROVINCES_FILTER ? 'Province' : provinceFilter}
+            <span className="truncate">{provinceFilter === ALL_PROVINCES_FILTER ? 'Province' : provinceFilter}</span>
           </button>
         </div>
       </header>
@@ -6977,26 +8989,12 @@ const LeaderboardScreen = ({
       />
 
       <main className="max-w-2xl mx-auto p-3.5">
-        {provinceFilter !== ALL_PROVINCES_FILTER && (
-          <div className="mb-2.5 px-3 py-2 rounded-xl bg-primary/5 border border-primary/10 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-primary">
-              <MapPin size={13} />
-              <span className="text-[11px] font-bold">{provinceFilter}</span>
-            </div>
-            <button
-              onClick={() => setProvinceFilter(ALL_PROVINCES_FILTER)}
-              className="text-[10px] font-black uppercase tracking-wider text-primary bg-white border border-primary/20 rounded-lg px-2 py-1 tap-target"
-            >
-              Reset
-            </button>
-          </div>
-        )}
-
         <LeaderboardSummaryCards rankedUsers={rankedUsers} currentUser={currentUser} />
         <LeaderboardHeaderSummary
           provinceFilter={provinceFilter}
           showingLabel={showingLabel}
           onOpenRankDetails={onOpenRankDetails}
+          onOpenMmrHistory={onOpenMmrHistory}
         />
 
         {loading ? (
@@ -7017,13 +9015,14 @@ const LeaderboardScreen = ({
             {rankedUsers.map((user, index) => {
               if (!user) return null;
               return (
-                <LeaderboardUserRow
-                  key={user.uid}
-                  user={user}
-                  index={index}
-                  isCurrentUser={user.uid === currentUser?.uid}
-                  isHighlighted={user.uid === highlightedUid}
-                />
+                <div key={user.uid}>
+                  <LeaderboardUserRow
+                    user={user}
+                    index={index}
+                    isCurrentUser={user.uid === currentUser?.uid}
+                    isHighlighted={user.uid === highlightedUid}
+                  />
+                </div>
               );
             })}
           </div>
@@ -7038,6 +9037,19 @@ const LeaderboardScreen = ({
 export default function App() {
   const initialSharedContext = getInitialSharedContext();
   const initialE2EScenario = getInitialE2EScenario();
+  const initialForceAppShell = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return isAppShellQuery(params);
+  }, []);
+  const marketingBasePath = useMemo(() => {
+    const normalizedPath = (window.location.pathname || '').replace(/\/+$/, '') || '/';
+    return normalizedPath === ARCHIVE_BASE_PATH || normalizedPath.startsWith(`${ARCHIVE_BASE_PATH}/`)
+      ? ARCHIVE_BASE_PATH
+      : '';
+  }, []);
+  const [topLevelRoute, setTopLevelRoute] = useState<TopLevelRoute>(() => (
+    resolveTopLevelRoute(window.location.pathname, initialForceAppShell, marketingBasePath)
+  ));
   const isIOSDevice = useMemo(() => detectIOSDevice(), []);
   const isMockupV3 = useMemo(() => {
     try {
@@ -7129,6 +9141,168 @@ export default function App() {
       location: 'Jakarta Selatan'
     };
   }, [e2eBackgroundPlayers, initialE2EScenario]);
+  const e2eProfileHistory = useMemo<TournamentHistory[]>(() => {
+    if (initialE2EScenario !== 'profile-flow') return [];
+    const currentUid = 'e2e-user';
+    const currentPlayer = {
+      id: currentUid,
+      name: 'Falih Harman',
+      rating: 4.3,
+      initials: 'FH',
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+    };
+    const teammate = {
+      id: 'e2e-teammate',
+      name: 'Ari Putra',
+      rating: 4.1,
+      initials: 'AP',
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+    };
+    const opponents = [
+      {
+        id: 'e2e-op-1',
+        name: 'Nanda Wijaya',
+        rating: 4.0,
+        initials: 'NW',
+        stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+      },
+      {
+        id: 'e2e-op-2',
+        name: 'Reza Mahendra',
+        rating: 4.2,
+        initials: 'RM',
+        stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+      },
+      {
+        id: 'e2e-op-3',
+        name: 'Dino Arya',
+        rating: 3.9,
+        initials: 'DA',
+        stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+      },
+      {
+        id: 'e2e-op-4',
+        name: 'Bimo Satya',
+        rating: 4.0,
+        initials: 'BS',
+        stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+      },
+      {
+        id: 'e2e-op-5',
+        name: 'Kevin Prasetyo',
+        rating: 4.4,
+        initials: 'KP',
+        stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+      },
+      {
+        id: 'e2e-op-6',
+        name: 'Rifqi Aditya',
+        rating: 4.1,
+        initials: 'RA',
+        stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+      }
+    ];
+    const now = Date.now();
+
+    return [
+      {
+        id: 'e2e-profile-h1',
+        userId: currentUid,
+        name: 'Senayan Night Session',
+        format: 'Match Play',
+        criteria: 'Matches Won',
+        scoringType: 'Advantage',
+        date: new Date(now - (6 * 24 * 60 * 60 * 1000)),
+        startedAt: now - (6 * 24 * 60 * 60 * 1000) - (70 * 60 * 1000),
+        endedAt: now - (6 * 24 * 60 * 60 * 1000),
+        courts: 1,
+        totalPoints: 0,
+        numRounds: 2,
+        numPlayers: 6,
+        rounds: [
+          {
+            id: 1,
+            matches: [
+              {
+                id: 'e2e-profile-h1-r1',
+                court: 1,
+                roundId: 1,
+                status: 'completed',
+                teamA: { players: [currentPlayer, teammate], score: 6, sets: [6] },
+                teamB: { players: [opponents[0], opponents[1]], score: 3, sets: [3] }
+              }
+            ],
+            playersBye: []
+          },
+          {
+            id: 2,
+            matches: [
+              {
+                id: 'e2e-profile-h1-r2',
+                court: 1,
+                roundId: 2,
+                status: 'completed',
+                teamA: { players: [currentPlayer, opponents[2]], score: 5, sets: [5] },
+                teamB: { players: [teammate, opponents[3]], score: 6, sets: [6] }
+              }
+            ],
+            playersBye: []
+          }
+        ],
+        players: [currentPlayer, teammate, ...opponents.slice(0, 4)],
+        venueName: 'Racquet Padel Club',
+        location: 'Jakarta Selatan, DKI Jakarta'
+      },
+      {
+        id: 'e2e-profile-h2',
+        userId: currentUid,
+        name: 'Thursday Competitive Mix',
+        format: 'Americano',
+        criteria: 'Points',
+        scoringType: 'Golden Point',
+        date: new Date(now - (25 * 24 * 60 * 60 * 1000)),
+        startedAt: now - (25 * 24 * 60 * 60 * 1000) - (80 * 60 * 1000),
+        endedAt: now - (25 * 24 * 60 * 60 * 1000),
+        courts: 1,
+        totalPoints: 0,
+        numRounds: 2,
+        numPlayers: 6,
+        rounds: [
+          {
+            id: 1,
+            matches: [
+              {
+                id: 'e2e-profile-h2-r1',
+                court: 1,
+                roundId: 1,
+                status: 'completed',
+                teamA: { players: [currentPlayer, opponents[4]], score: 6, sets: [6] },
+                teamB: { players: [opponents[1], opponents[5]], score: 4, sets: [4] }
+              }
+            ],
+            playersBye: []
+          },
+          {
+            id: 2,
+            matches: [
+              {
+                id: 'e2e-profile-h2-r2',
+                court: 1,
+                roundId: 2,
+                status: 'completed',
+                teamA: { players: [currentPlayer, teammate], score: 6, sets: [6] },
+                teamB: { players: [opponents[0], opponents[2]], score: 2, sets: [2] }
+              }
+            ],
+            playersBye: []
+          }
+        ],
+        players: [currentPlayer, teammate, ...opponents],
+        venueName: 'Orange Garden Padel',
+        location: 'Jakarta Barat, DKI Jakarta'
+      }
+    ];
+  }, [initialE2EScenario]);
   const [screen, setScreen] = useState<Screen>(initialSharedContext.isShared ? initialSharedContext.targetView : 'login');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState<any>(null);
@@ -7137,10 +9311,10 @@ export default function App() {
   const [isAuthChecked, setIsAuthChecked] = useState(false);
   const [sharedTargetScreen, setSharedTargetScreen] = useState<'active' | 'klasemen'>(initialSharedContext.targetView);
   const [isSharedDataReady, setIsSharedDataReady] = useState(!initialSharedContext.isShared);
-  const [shareToast, setShareToast] = useState<string | null>(null);
-  const [tournament, setTournament] = useState<Tournament>(INITIAL_TOURNAMENT);
+  const [tournament, setTournament] = useState<Tournament>(createFreshTournamentDraft());
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationToasts, setNotificationToasts] = useState<AppNotification[]>([]);
   const [tournaments, setTournaments] = useState<TournamentHistory[]>([]);
   const [selectedHistory, setSelectedHistory] = useState<TournamentHistory | null>(null);
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
@@ -7148,17 +9322,37 @@ export default function App() {
   const [activeScreenTournament, setActiveScreenTournament] = useState<Tournament | null>(null);
   const [activeBackScreen, setActiveBackScreen] = useState<'dashboard' | 'history-detail' | 'klasemen' | 'history' | 'profile'>('dashboard');
   const [historyBackScreen, setHistoryBackScreen] = useState<'dashboard' | 'profile'>('dashboard');
+  const [notificationBackScreen, setNotificationBackScreen] = useState<'dashboard' | 'profile'>('dashboard');
+  const [mmrHistoryBackScreen, setMmrHistoryBackScreen] = useState<'profile' | 'rank-discovery' | 'leaderboard'>('profile');
   const [friendsEntrySource, setFriendsEntrySource] = useState<'profile' | 'settings'>('profile');
+  const [settingsFocusSection, setSettingsFocusSection] = useState<'players' | null>(null);
   const [rankingFocusRequestId, setRankingFocusRequestId] = useState(0);
   const [draftMatchBackgroundId, setDraftMatchBackgroundId] = useState<string | null>(null);
   const [activeSaveState, setActiveSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const [needsRegenerateFromRound, setNeedsRegenerateFromRound] = useState<number | null>(null);
-  const shareToastTimeoutRef = useRef<number | null>(null);
   const activeSaveTimeoutRef = useRef<number | null>(null);
+  const notificationToastTimeoutsRef = useRef<Record<string, number>>({});
   const isAuthResolvedRef = useRef(false);
   const isHandlingPopStateRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; ts: number } | null>(null);
   const lastFriendPickerSummaryRef = useRef('');
+  const hasForcedAppShellQuery = isAppShellQuery(new URLSearchParams(window.location.search));
+  const isAppShellRoute = hasForcedAppShellQuery || topLevelRoute === 'app';
+  const publicRoute = (topLevelRoute === 'app' || topLevelRoute === 'blog' ? 'home' : topLevelRoute) as PublicTopLevelRoute;
+  const isArchivedMarketingRoute = !isAppShellRoute && marketingBasePath === ARCHIVE_BASE_PATH;
+
+  const navigateTopLevel = (nextRoute: TopLevelRoute) => {
+    const nextPath = getTopLevelPath(nextRoute, nextRoute === 'app' || nextRoute === 'blog' ? '' : marketingBasePath);
+    if (nextRoute === 'blog') {
+      window.location.assign(nextPath);
+      return;
+    }
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({ __fomRoute: nextRoute }, '', nextPath);
+    }
+    setTopLevelRoute(nextRoute);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  };
 
   useEffect(() => {
     const root = document.documentElement;
@@ -7173,8 +9367,14 @@ export default function App() {
   }, [isIOSDevice]);
 
   useEffect(() => {
+    if (!isAppShellRoute) return;
     trackPageView(screen, getScreenRoute(screen));
-  }, [screen]);
+  }, [isAppShellRoute, screen]);
+
+  useEffect(() => {
+    if (isAppShellRoute) return;
+    trackPageView(publicRoute, getTopLevelPath(publicRoute, marketingBasePath));
+  }, [isAppShellRoute, marketingBasePath, publicRoute]);
 
   useEffect(() => {
     void syncAnalyticsUser(user?.uid || null);
@@ -7211,6 +9411,7 @@ export default function App() {
   }, [user?.uid]);
 
   useEffect(() => {
+    if (!isAppShellRoute) return;
     const handleDocumentClick = (event: MouseEvent) => {
       const tracked = resolveTrackableButton(event.target);
       if (!tracked) return;
@@ -7224,9 +9425,10 @@ export default function App() {
 
     document.addEventListener('click', handleDocumentClick, true);
     return () => document.removeEventListener('click', handleDocumentClick, true);
-  }, [screen]);
+  }, [isAppShellRoute, screen]);
 
   useEffect(() => {
+    if (!isAppShellRoute) return;
     const resetScroll = () => {
       window.scrollTo({ top: 0, behavior: 'auto' });
       if (document.scrollingElement) {
@@ -7239,9 +9441,27 @@ export default function App() {
     resetScroll();
     const rafId = window.requestAnimationFrame(resetScroll);
     return () => window.cancelAnimationFrame(rafId);
-  }, [screen, selectedHistory?.id, selectedKlasemenTournament?.id, activeScreenTournament?.id]);
+  }, [isAppShellRoute, screen, selectedHistory?.id, selectedKlasemenTournament?.id, activeScreenTournament?.id]);
 
   useEffect(() => {
+    if (isAppShellRoute) return;
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [isAppShellRoute, topLevelRoute]);
+
+  useEffect(() => {
+    if (!isAppShellRoute) {
+      let themeColorMeta = document.querySelector('meta[name="theme-color"]');
+      if (!themeColorMeta) {
+        themeColorMeta = document.createElement('meta');
+        themeColorMeta.setAttribute('name', 'theme-color');
+        document.head.appendChild(themeColorMeta);
+      }
+      themeColorMeta.setAttribute('content', '#fffaf5');
+      document.documentElement.style.backgroundColor = '#fffaf5';
+      document.body.style.backgroundColor = '#fffaf5';
+      return;
+    }
+
     const getSystemBarColor = () => {
       if (screen === 'active' || screen === 'klasemen') {
         const visualTournament = (screen === 'active'
@@ -7264,16 +9484,99 @@ export default function App() {
     themeColorMeta.setAttribute('content', systemBarColor);
     document.documentElement.style.backgroundColor = systemBarColor;
     document.body.style.backgroundColor = systemBarColor;
-  }, [screen, tournament, activeScreenTournament, selectedKlasemenTournament]);
+  }, [activeScreenTournament, isAppShellRoute, screen, selectedKlasemenTournament, tournament]);
+
+  useEffect(() => {
+    const title = isAppShellRoute
+      ? 'FOM Play App'
+      : PUBLIC_PAGE_META[publicRoute].title;
+    document.title = title;
+
+    let descriptionMeta = document.querySelector('meta[name="description"]');
+    if (!descriptionMeta) {
+      descriptionMeta = document.createElement('meta');
+      descriptionMeta.setAttribute('name', 'description');
+      document.head.appendChild(descriptionMeta);
+    }
+    descriptionMeta.setAttribute(
+      'content',
+      isAppShellRoute
+        ? 'Buka FOM Play untuk mengelola game padel, live score, klasemen, dan ranking pemain.'
+        : PUBLIC_PAGE_META[publicRoute].description
+    );
+  }, [isAppShellRoute, publicRoute]);
+
+  useEffect(() => {
+    const canonicalHref = isAppShellRoute
+      ? `${window.location.origin}${window.location.pathname}`
+      : getCanonicalUrlForRoute(publicRoute, marketingBasePath);
+    const pageTitle = isAppShellRoute ? 'FOM Play App' : PUBLIC_PAGE_META[publicRoute].title;
+    const pageDescription = isAppShellRoute
+      ? 'Buka FOM Play untuk mengelola game padel, live score, klasemen, dan ranking pemain.'
+      : PUBLIC_PAGE_META[publicRoute].description;
+    const socialImage = `${window.location.origin}${PUBLIC_SOCIAL_IMAGE_PATH}`;
+    const ogType = isAppShellRoute ? 'website' : publicRoute === 'home' ? 'website' : 'article';
+
+    const upsertMeta = (selector: string, attribute: 'name' | 'property', value: string, content: string) => {
+      let metaTag = document.querySelector(selector) as HTMLMetaElement | null;
+      if (!metaTag) {
+        metaTag = document.createElement('meta');
+        metaTag.setAttribute(attribute, value);
+        document.head.appendChild(metaTag);
+      }
+      metaTag.setAttribute('content', content);
+    };
+
+    let canonicalLink = document.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+    if (!canonicalLink) {
+      canonicalLink = document.createElement('link');
+      canonicalLink.rel = 'canonical';
+      document.head.appendChild(canonicalLink);
+    }
+    canonicalLink.href = canonicalHref;
+
+    upsertMeta(
+      'meta[name="robots"]',
+      'name',
+      'robots',
+      isAppShellRoute || isArchivedMarketingRoute ? 'noindex, nofollow, noarchive' : 'index, follow, max-image-preview:large'
+    );
+    upsertMeta('meta[property="og:title"]', 'property', 'og:title', pageTitle);
+    upsertMeta('meta[property="og:description"]', 'property', 'og:description', pageDescription);
+    upsertMeta('meta[property="og:url"]', 'property', 'og:url', canonicalHref);
+    upsertMeta('meta[property="og:type"]', 'property', 'og:type', ogType);
+    upsertMeta('meta[property="og:site_name"]', 'property', 'og:site_name', 'FOM Play');
+    upsertMeta('meta[property="og:locale"]', 'property', 'og:locale', 'id_ID');
+    upsertMeta('meta[property="og:image"]', 'property', 'og:image', socialImage);
+    upsertMeta('meta[property="og:image:alt"]', 'property', 'og:image:alt', 'FOM Play padel app preview');
+    upsertMeta('meta[name="twitter:card"]', 'name', 'twitter:card', 'summary_large_image');
+    upsertMeta('meta[name="twitter:title"]', 'name', 'twitter:title', pageTitle);
+    upsertMeta('meta[name="twitter:description"]', 'name', 'twitter:description', pageDescription);
+    upsertMeta('meta[name="twitter:image"]', 'name', 'twitter:image', socialImage);
+
+    let schemaScript = document.getElementById('fom-structured-data') as HTMLScriptElement | null;
+    if (!schemaScript) {
+      schemaScript = document.createElement('script');
+      schemaScript.id = 'fom-structured-data';
+      schemaScript.type = 'application/ld+json';
+      document.head.appendChild(schemaScript);
+    }
+    schemaScript.textContent = isAppShellRoute ? '' : JSON.stringify(getPublicStructuredData(publicRoute, marketingBasePath));
+
+    return () => {
+      if (schemaScript) schemaScript.textContent = '';
+    };
+  }, [isAppShellRoute, isArchivedMarketingRoute, marketingBasePath, publicRoute]);
 
   useEffect(() => {
     return () => {
-      if (shareToastTimeoutRef.current) {
-        window.clearTimeout(shareToastTimeoutRef.current);
-      }
       if (activeSaveTimeoutRef.current) {
         window.clearTimeout(activeSaveTimeoutRef.current);
       }
+      (Object.values(notificationToastTimeoutsRef.current) as number[]).forEach((timeoutId) => {
+        window.clearTimeout(timeoutId);
+      });
+      notificationToastTimeoutsRef.current = {};
     };
   }, []);
 
@@ -7308,7 +9611,44 @@ export default function App() {
       return;
     }
 
-    if (initialE2EScenario === 'finished-flow' || initialE2EScenario === 'background-flow') {
+    if (initialE2EScenario === 'profile-flow') {
+      setIsSharedViewer(false);
+      setSharedMatchId(null);
+      setIsSharedDataReady(true);
+      setUser({
+        uid: 'e2e-user',
+        displayName: 'Falih Harman',
+        username: 'falihh',
+        email: 'falih.harman@example.com',
+        mmr: 2840,
+        role: 'admin',
+        homeBase: 'Kebayoran Baru, Jakarta Selatan, DKI Jakarta',
+        region: 'Jakarta Selatan, DKI Jakarta',
+        totalMatches: 4,
+        wins: 3,
+        losses: 1
+      });
+      setNotifications([
+        {
+          id: 'e2e-notif-1',
+          title: 'Weekly recap ready',
+          message: 'Your April performance summary is available.',
+          timestamp: new Date(),
+          type: 'system',
+          read: false
+        }
+      ]);
+      setIsLoggedIn(true);
+      setIsAuthChecked(true);
+      setTournaments(e2eProfileHistory);
+      setSelectedHistory(null);
+      setAllPlayers([]);
+      setTournament(createFreshTournamentDraft());
+      setScreen('profile');
+      return;
+    }
+
+    if (initialE2EScenario === 'finished-flow' || initialE2EScenario === 'background-flow' || initialE2EScenario === 'profile-flow') {
       setIsAuthChecked(true);
       return;
     }
@@ -7316,15 +9656,26 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
         if (firebaseUser) {
+          const shouldForceAdminRole = isAdminEmail(firebaseUser.email);
           const savedPlayers = localStorage.getItem(getPlayersStorageKey(firebaseUser.uid));
           const parsedPlayers: Player[] = savedPlayers ? JSON.parse(savedPlayers) : [];
           const normalizedPlayers = parsedPlayers.map((player) => normalizePlayerSource(player, firebaseUser.uid));
           setAllPlayers(isLegacySeedPlayers(normalizedPlayers) ? [] : normalizedPlayers);
-          const hasLocalTournament = Boolean(localStorage.getItem(getTournamentStorageKey(firebaseUser.uid)));
+          const savedTournament = localStorage.getItem(getTournamentStorageKey(firebaseUser.uid));
+          const hasLocalTournament = Boolean(savedTournament);
 
           if (!isSharedViewer) {
-            const savedTournament = localStorage.getItem(getTournamentStorageKey(firebaseUser.uid));
-            setTournament(savedTournament ? JSON.parse(savedTournament) : INITIAL_TOURNAMENT);
+            const restoredTournament = savedTournament
+              ? (() => {
+                const parsedTournament = JSON.parse(savedTournament) as Tournament;
+                const hasStartedMatch = Boolean(parsedTournament?.startedAt);
+                const hasRounds = Array.isArray(parsedTournament?.rounds) && parsedTournament.rounds.length > 0;
+                return hasSetupDraftChanges(parsedTournament) || hasStartedMatch || hasRounds
+                  ? parsedTournament
+                  : createFreshTournamentDraft();
+              })()
+              : createFreshTournamentDraft();
+            setTournament(restoredTournament);
           }
 
           setUser(firebaseUser);
@@ -7349,10 +9700,10 @@ export default function App() {
           // Fetch user data from Firestore
           const userDocRef = doc(db, 'users', firebaseUser.uid);
           const userStatsRef = doc(db, PLAYER_STATS_COLLECTION, firebaseUser.uid);
-          const [userDoc, userStatsDoc] = await Promise.all([
+          const [userDoc, userStatsDoc] = await withTimeout(Promise.all([
             getDoc(userDocRef),
             getDoc(userStatsRef)
-          ]);
+          ]), 8000, 'Auth profile bootstrap');
           if (userDoc.exists()) {
             const userData = userDoc.data();
             const userStatsData = userStatsDoc.exists() ? (userStatsDoc.data() || {}) : {};
@@ -7377,6 +9728,7 @@ export default function App() {
 
             const normalizedUserData: Record<string, any> = {
               ...userData,
+              ...(shouldForceAdminRole ? { role: 'admin' } : {}),
               mmr: Number.isFinite(statsMmr)
                 ? Math.max(0, statsMmr)
                 : (shouldNormalizeLegacyInitialMmr
@@ -7402,6 +9754,12 @@ export default function App() {
                 mmr: normalizedUserData.mmr,
                 totalMatches: normalizedUserData.totalMatches
               }, { merge: true }).catch((err) => console.error('User profile backfill error:', err));
+            }
+
+            if (shouldForceAdminRole && userData?.role !== 'admin') {
+              setDoc(userDocRef, {
+                role: 'admin'
+              }, { merge: true }).catch((err) => console.error('Admin role backfill error:', err));
             }
 
             setUser({ ...firebaseUser, ...normalizedUserData });
@@ -7431,7 +9789,12 @@ export default function App() {
               createdAt: serverTimestamp(),
             };
             await setDoc(userDocRef, initialData);
-            setUser({ ...firebaseUser, ...initialData });
+            if (shouldForceAdminRole) {
+              await setDoc(userDocRef, { role: 'admin' }, { merge: true }).catch((err) => {
+                console.error('Initial admin role backfill error:', err);
+              });
+            }
+            setUser({ ...firebaseUser, ...initialData, ...(shouldForceAdminRole ? { role: 'admin' } : {}) });
           }
 
           // Fetch tournaments history for this user (SSOT from player_match_ledger, fallback owner-based query).
@@ -7462,7 +9825,7 @@ export default function App() {
           setDraftMatchBackgroundId(null);
           setAllPlayers([]);
           if (!isSharedViewer) {
-            setTournament(INITIAL_TOURNAMENT);
+            setTournament(createFreshTournamentDraft());
           }
           if (!isSharedViewer) setScreen('login');
           else setScreen(sharedTargetScreen);
@@ -7487,6 +9850,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (!isAppShellRoute) return;
     if (!isAuthResolvedRef.current) return;
     if (isHandlingPopStateRef.current) {
       isHandlingPopStateRef.current = false;
@@ -7504,10 +9868,19 @@ export default function App() {
     }
 
     window.history.pushState(nextState, '');
-  }, [screen]);
+  }, [isAppShellRoute, screen]);
 
   useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
+      const params = new URLSearchParams(window.location.search);
+      const forceAppShell = isAppShellQuery(params);
+      const nextRoute = resolveTopLevelRoute(window.location.pathname, forceAppShell, marketingBasePath);
+      setTopLevelRoute(nextRoute);
+
+      if (nextRoute !== 'app' && !forceAppShell) {
+        return;
+      }
+
       const targetScreen = event.state?.__fomPlay?.screen || event.state?.screen;
       if (targetScreen) {
         isHandlingPopStateRef.current = true;
@@ -7515,21 +9888,21 @@ export default function App() {
         return;
       }
 
-      // Fallback so back gesture still navigates inside app when possible.
       if (isLoggedIn) {
         isHandlingPopStateRef.current = true;
         setScreen('dashboard');
-        window.history.pushState({ __fomPlay: true, screen: 'dashboard' }, '');
+        window.history.replaceState({ __fomPlay: true, screen: 'dashboard' }, '');
       } else {
         isHandlingPopStateRef.current = true;
-        setScreen(isSharedViewer ? sharedTargetScreen : 'login');
-        window.history.pushState({ __fomPlay: true, screen: isSharedViewer ? sharedTargetScreen : 'login' }, '');
+        const fallbackScreen = params.get('shared') ? sharedTargetScreen : 'login';
+        setScreen(fallbackScreen);
+        window.history.replaceState({ __fomPlay: true, screen: fallbackScreen }, '');
       }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [isLoggedIn, isSharedViewer, sharedTargetScreen]);
+  }, [isLoggedIn, marketingBasePath, sharedTargetScreen]);
 
   useEffect(() => {
     const handleTouchStart = (event: TouchEvent) => {
@@ -7671,19 +10044,79 @@ export default function App() {
     }
   }, [tournaments, user?.uid, isSharedViewer]);
 
-  const addNotification = (title: string, message: string, type: AppNotification['type']) => {
+  const removeNotificationToast = (id: string) => {
+    setNotificationToasts((prev) => prev.filter((toast) => toast.id !== id));
+    const timeoutId = notificationToastTimeoutsRef.current[id];
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+      delete notificationToastTimeoutsRef.current[id];
+    }
+  };
+
+  const inferNotificationTone = (
+    title: string,
+    message: string,
+    type: AppNotification['type'],
+    explicitTone?: AppNotification['tone']
+  ): AppNotification['tone'] => {
+    if (explicitTone) return explicitTone;
+    if (type === 'achievement') return 'achievement';
+    if (type === 'match' || type === 'tournament') return 'success';
+
+    const signal = `${title} ${message}`.toLowerCase();
+    if (
+      signal.includes('failed') ||
+      signal.includes('unable') ||
+      signal.includes('denied') ||
+      signal.includes('problem') ||
+      signal.includes('cannot') ||
+      signal.includes('required') ||
+      signal.includes('not found') ||
+      signal.includes('declined')
+    ) {
+      return 'error';
+    }
+    if (
+      signal.includes('success') ||
+      signal.includes('sent') ||
+      signal.includes('ready') ||
+      signal.includes('updated') ||
+      signal.includes('active') ||
+      signal.includes('copied') ||
+      signal.includes('completed') ||
+      signal.includes('new friend') ||
+      signal.includes('thanks') ||
+      signal.includes('marked')
+    ) {
+      return 'success';
+    }
+    return 'info';
+  };
+
+  const addNotification = (
+    title: string,
+    message: string,
+    type: AppNotification['type'],
+    tone?: AppNotification['tone']
+  ) => {
     const newNotif: AppNotification = {
       id: Math.random().toString(36).substr(2, 9),
       title,
       message,
       timestamp: new Date(),
       type,
+      tone: inferNotificationTone(title, message, type, tone),
       read: false
     };
     setNotifications(prev => [newNotif, ...prev]);
+    setNotificationToasts((prev) => [newNotif, ...prev].slice(0, 3));
+    notificationToastTimeoutsRef.current[newNotif.id] = window.setTimeout(() => {
+      setNotificationToasts((prev) => prev.filter((toast) => toast.id !== newNotif.id));
+      delete notificationToastTimeoutsRef.current[newNotif.id];
+    }, 3200);
 
     // Browser Notification
-    if (Notification.permission === 'granted') {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       new Notification(title, { body: message });
     }
   };
@@ -7710,13 +10143,16 @@ export default function App() {
     setScreen('dashboard');
   };
 
-  const showShareCopiedToast = (message: string) => {
-    setShareToast(message);
-    if (shareToastTimeoutRef.current) window.clearTimeout(shareToastTimeoutRef.current);
-    shareToastTimeoutRef.current = window.setTimeout(() => {
-      setShareToast(null);
-      shareToastTimeoutRef.current = null;
-    }, 1800);
+  const showShareCopiedToast = (state: 'copied' | 'ready' | 'failed') => {
+    if (state === 'copied') {
+      addNotification('Share Link Ready', 'Link copied successfully.', 'system', 'success');
+      return;
+    }
+    if (state === 'ready') {
+      addNotification('Share Link Ready', 'Link is ready to share.', 'system', 'info');
+      return;
+    }
+    addNotification('Share Failed', 'Unable to copy or share link right now.', 'system', 'error');
   };
 
   type ShareDeliveryResult = 'copied' | 'shared' | 'manual' | 'failed';
@@ -7876,10 +10312,9 @@ export default function App() {
     history: TournamentHistory,
     backScreen: 'dashboard' | 'history' | 'profile'
   ) => {
+    setHistoryBackScreen(backScreen);
     setSelectedHistory(history);
-    setActiveScreenTournament(buildReadOnlyTournamentFromHistory(history));
-    setActiveBackScreen(backScreen);
-    setScreen('active');
+    setScreen('history-detail');
   };
 
   const handleOpenActiveFromStandings = () => {
@@ -7942,22 +10377,18 @@ export default function App() {
 
       const shareResult = await tryCopyToClipboard(finalUrl);
       if (shareResult === 'copied') {
-        showShareCopiedToast('Link copied');
-        addNotification('Share Link Ready', 'Match link copied successfully. Share it with other players.', 'system');
+        showShareCopiedToast('copied');
       } else if (shareResult === 'shared' || shareResult === 'manual') {
-        showShareCopiedToast('Link ready to share');
-        addNotification('Share Link Ready', 'Match link is ready to share.', 'system');
+        showShareCopiedToast('ready');
       } else {
-        showShareCopiedToast('Failed to copy link');
-        addNotification('Copy Failed', 'Clipboard permission was denied by the browser. Please try again.', 'system');
+        addNotification('Copy Failed', 'Clipboard permission was denied by the browser. Please try again.', 'system', 'error');
       }
     } catch (err) {
       console.error('Share current match error:', err, {
         authUid: auth.currentUser?.uid || null,
         userUid: user?.uid || null
       });
-      showShareCopiedToast('Failed to share link');
-      addNotification('Share Failed', 'Unable to create a share link right now. Please try again.', 'system');
+      showShareCopiedToast('failed');
     }
   };
 
@@ -7966,9 +10397,9 @@ export default function App() {
       if (isSharedViewer && sharedMatchId) {
         const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
         const shareResult = await tryCopyToClipboard(currentSharedUrl);
-        if (shareResult === 'copied') showShareCopiedToast('Link copied');
-        else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('Link ready to share');
-        else showShareCopiedToast('Failed to copy link');
+        if (shareResult === 'copied') showShareCopiedToast('copied');
+        else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('ready');
+        else addNotification('Copy Failed', 'Clipboard permission was denied by the browser. Please try again.', 'system', 'error');
         return;
       }
 
@@ -7989,21 +10420,18 @@ export default function App() {
       const finalUrl = buildShareUrl(shareId, 'klasemen');
       const shareResult = await tryCopyToClipboard(finalUrl);
       if (shareResult === 'copied') {
-        showShareCopiedToast('Link copied');
-        addNotification('Share Link Ready', 'Standings link copied successfully.', 'system');
+        showShareCopiedToast('copied');
       } else if (shareResult === 'shared' || shareResult === 'manual') {
-        showShareCopiedToast('Link ready to share');
-        addNotification('Share Link Ready', 'Standings link is ready to share.', 'system');
+        showShareCopiedToast('ready');
       } else {
-        showShareCopiedToast('Failed to copy link');
+        addNotification('Copy Failed', 'Clipboard permission was denied by the browser. Please try again.', 'system', 'error');
       }
     } catch (err) {
       console.error('Share standings error:', err, {
         authUid: auth.currentUser?.uid || null,
         userUid: user?.uid || null
       });
-      showShareCopiedToast('Failed to share link');
-      addNotification('Share Failed', 'Unable to share standings right now. Please try again.', 'system');
+      showShareCopiedToast('failed');
     }
   };
 
@@ -9153,6 +11581,17 @@ export default function App() {
     );
   }
 
+  if (!isAppShellRoute) {
+    return (
+      <PublicMarketingRouter
+        route={publicRoute}
+        isLoggedIn={isLoggedIn}
+        onOpenApp={() => navigateTopLevel('app')}
+        onNavigate={navigateTopLevel}
+      />
+    );
+  }
+
   if (!isAuthChecked) {
     return <AppLoadingScreen />;
   }
@@ -9161,12 +11600,13 @@ export default function App() {
     return <AppLoadingScreen />;
   }
 
-  const bottomNavTournament = screen === 'active'
-    ? (activeScreenTournament || tournament)
-    : tournament;
-  const bottomNavHasActiveGame = Boolean(
-    bottomNavTournament.rounds?.some((round) => round.matches?.some((match) => match.status === 'active'))
-  );
+  const showBottomNav =
+    isLoggedIn &&
+    !isSharedViewer &&
+    ['dashboard', 'leaderboard', 'history', 'profile'].includes(screen);
+  const notificationToastOffset = showBottomNav
+    ? 'calc(var(--app-safe-bottom, 0px) + 92px)'
+    : 'calc(var(--app-safe-bottom, 0px) + 16px)';
 
   return (
     <div className="min-h-screen bg-white">
@@ -9175,6 +11615,9 @@ export default function App() {
         {screen === 'dashboard' && (
           <DashboardScreen
             onStartMatch={() => {
+              if (!hasSetupDraftChanges(tournament)) {
+                setTournament(createFreshTournamentDraft());
+              }
               setDraftMatchBackgroundId(null);
               setScreen('settings');
             }}
@@ -9188,7 +11631,10 @@ export default function App() {
               setActiveBackScreen('dashboard');
               setScreen('active');
             }}
-            onNotifications={() => setScreen('notifications')}
+            onNotifications={() => {
+              setNotificationBackScreen('dashboard');
+              setScreen('notifications');
+            }}
             onOpenHistoryList={() => {
               setHistoryBackScreen('dashboard');
               setScreen('history');
@@ -9203,11 +11649,29 @@ export default function App() {
           <LeaderboardScreen
             currentUser={user}
             onOpenRankDetails={() => setScreen('rank-discovery')}
+            onOpenMmrHistory={() => {
+              setMmrHistoryBackScreen('leaderboard');
+              setScreen('mmr-history');
+            }}
             focusRequestId={rankingFocusRequestId}
           />
         )}
         {screen === 'rank-discovery' && (
-          <RankDiscoveryScreen onBack={() => setScreen('dashboard')} />
+          <RankDiscoveryScreen
+            currentUser={user}
+            onBack={() => setScreen('leaderboard')}
+            onOpenMmrHistory={() => {
+              setMmrHistoryBackScreen('rank-discovery');
+              setScreen('mmr-history');
+            }}
+          />
+        )}
+        {screen === 'mmr-history' && (
+          <MMRHistoryScreen
+            currentUser={user}
+            onBack={() => setScreen(mmrHistoryBackScreen)}
+            onOpenRankDetails={() => setScreen('rank-discovery')}
+          />
         )}
         {screen === 'history-detail' && selectedHistory && (
           <HistoryDetailScreen
@@ -9215,7 +11679,7 @@ export default function App() {
             onBack={() => {
               setActiveScreenTournament(null);
               setActiveBackScreen('dashboard');
-              setScreen('dashboard');
+              setScreen(historyBackScreen);
             }}
             onViewFinalStandings={handleOpenHistoryFinalStandings}
             onViewMatchDetails={handleOpenHistoryMatchDetails}
@@ -9250,6 +11714,8 @@ export default function App() {
             setAllPlayers={setAllPlayers}
             onAddNotification={addNotification}
             currentUser={user}
+            focusSection={settingsFocusSection}
+            onFocusHandled={() => setSettingsFocusSection(null)}
           />
         )}
         {screen === 'background-picker' && (
@@ -9328,7 +11794,7 @@ export default function App() {
             notifications={notifications}
             onMarkAsRead={handleMarkAsRead}
             onClearAll={handleClearAll}
-            onBack={() => setScreen('dashboard')}
+            onBack={() => setScreen(notificationBackScreen)}
           />
         )}
         {screen === 'profile' && (
@@ -9340,20 +11806,23 @@ export default function App() {
                 console.error('Logout error:', err);
               }
             }}
-            onRequestPermission={requestNotificationPermission}
             user={user}
             tournaments={tournaments}
             setUser={setUser}
-            onOpenHistoryMatch={(t) => handleOpenHistoryTournament(t, 'profile')}
-            onOpenHistoryList={() => {
-              setHistoryBackScreen('profile');
-              setScreen('history');
-            }}
             addNotification={addNotification}
-            onFriends={() => {
+            onOpenMmrHistory={() => {
+              setMmrHistoryBackScreen('profile');
+              setScreen('mmr-history');
+            }}
+            onOpenNotifications={() => {
+              setNotificationBackScreen('profile');
+              setScreen('notifications');
+            }}
+            onOpenFriends={() => {
               setFriendsEntrySource('profile');
               setScreen('friends');
             }}
+            unreadCount={notifications.filter(n => !n.read).length}
           />
         )}
         {screen === 'friends' && (
@@ -9377,35 +11846,69 @@ export default function App() {
                   missingFromList
                 });
               }
+              setSettingsFocusSection('players');
               setScreen('settings');
             }}
           />
         )}
       </div>
 
-      {isLoggedIn && !isSharedViewer && screen !== 'login' && screen !== 'settings' && screen !== 'background-picker' && screen !== 'history-detail' && screen !== 'history' && screen !== 'rank-discovery' && screen !== 'klasemen' && screen !== 'active' && (
+      {showBottomNav && (
         <BottomNav
           currentScreen={screen}
           setScreen={setScreen}
           unreadCount={notifications.filter(n => !n.read).length}
-          currentFormat={bottomNavTournament.format}
-          hasActiveGame={bottomNavHasActiveGame}
         />
       )}
 
       <AnimatePresence>
-        {shareToast && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            className="fixed left-1/2 -translate-x-1/2 z-[140] pointer-events-none"
-            style={{ top: 'calc(var(--app-safe-top, 0px) + 16px)' }}
+        {notificationToasts.length > 0 && (
+          <div
+            className="fixed left-1/2 -translate-x-1/2 z-[145] w-[min(92vw,420px)] space-y-2"
+            style={{ bottom: notificationToastOffset }}
           >
-            <div className="px-3.5 py-2 rounded-full bg-black/80 text-white text-[12px] font-semibold shadow-xl backdrop-blur">
-              {shareToast}
-            </div>
-          </motion.div>
+            <AnimatePresence initial={false}>
+              {notificationToasts.map((toast) => (
+                <motion.div
+                  key={toast.id}
+                  initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                  className={cn(
+                    'w-full rounded-[20px] border shadow-[0_14px_34px_rgba(15,23,42,0.12)] backdrop-blur px-4 py-3 text-left',
+                    getNotificationVisuals(toast).cardClass
+                  )}
+                >
+                  {(() => {
+                    const visuals = getNotificationVisuals(toast);
+                    const Icon = visuals.icon;
+                    return (
+                  <div className="flex items-start gap-3">
+                    <div className={cn('w-9 h-9 rounded-2xl flex items-center justify-center shrink-0', visuals.iconWrapClass)}>
+                      <Icon size={17} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={cn('text-[13px] font-bold truncate', visuals.titleClass)}>
+                        {toast.title}
+                      </p>
+                      <p className={cn('mt-0.5 text-[12px] leading-snug', visuals.messageClass)}>
+                        {toast.message}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => removeNotificationToast(toast.id)}
+                      className={cn('shrink-0 p-1 -mr-1 tap-target', visuals.dismissClass)}
+                      aria-label="Dismiss notification"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                    );
+                  })()}
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
         )}
       </AnimatePresence>
     </div>

@@ -1,0 +1,278 @@
+/* ============================================================
+   FOM Design System — Colors & Typography
+   Brand: Friends of Motion (FOM)
+   Primary product: FOM Play (padel PWA) + FOM Blog
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+
+/* ── BRAND FONTS ── */
+@font-face {
+  font-family: 'Helvetica Neue LT Pro';
+  src: url('fonts/HelveticaNeueLTPro-Bd.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Helvetica Neue LT Pro Condensed';
+  src: url('fonts/HelveticaNeueLTPro-BdCn.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ---- BRAND COLORS ---- */
+  --fom-orange:        #e65e14;   /* primary — app UI */
+  --fom-orange-brand:  #ff5500;   /* brand spec (identity PDF) */
+  --fom-orange-splash: #ff5501;   /* loading/splash full saturation */
+
+  /* ---- TINTS & SHADES ---- */
+  --fom-orange-50:   #fff6ef;
+  --fom-orange-100:  #ffe9d8;
+  --fom-orange-200:  #ffd5bf;
+  --fom-orange-300:  #ffb899;
+  --fom-orange-400:  #ff8b4d;
+  --fom-orange-500:  #e65e14;   /* = primary */
+  --fom-orange-600:  #c44e0f;
+  --fom-orange-700:  #a0400c;
+  --fom-orange-900:  #6b2a08;
+
+  /* ---- NEUTRALS ---- */
+  --fom-surface:     #f7f7fa;    /* page background */
+  --fom-surface-2:   #f0f0f4;    /* subtle section bg */
+  --fom-white:       #ffffff;
+  --fom-on-surface:  #111827;    /* primary text */
+  --fom-fg1:         #111827;    /* heading / bold */
+  --fom-fg2:         #374151;    /* body text */
+  --fom-fg3:         #6b7280;    /* secondary / muted */
+  --fom-fg4:         #8e8e93;    /* placeholder / disabled */
+  --fom-fg5:         #c4c4c8;    /* dividers */
+  --fom-dark:        #171717;    /* dark section bg */
+  --fom-dark-2:      #1f2937;    /* card dark bg */
+
+  /* ---- SEMANTIC COLORS ---- */
+  --fom-primary:     var(--fom-orange);
+  --fom-primary-bg:  #fff6ef;    /* primary tint background */
+  --fom-success:     #18a486;    /* emerald green */
+  --fom-success-bg:  #f4fbf6;
+  --fom-warning:     #f59e0b;    /* amber */
+  --fom-warning-bg:  #fffbeb;
+  --fom-error:       #ff3b30;    /* iOS red */
+  --fom-error-bg:    #fff5f5;
+  --fom-info:        #2f6fe4;    /* blue */
+  --fom-info-bg:     #eff4fe;
+
+  /* ---- TYPOGRAPHY ---- */
+  /* Brand fonts: Helvetica Neue LT Pro Bold (headings/bold), Helvetica Neue LT Pro Bold Condensed (display/condensed).
+     Plus Jakarta Sans covers regular/medium weights (400–600) where brand font files are not available.
+     SF Pro Text/Display used in the native iOS-style app. */
+
+  --font-display:    'Helvetica Neue LT Pro', 'Helvetica Neue', Arial, sans-serif;
+  --font-condensed:  'Helvetica Neue LT Pro Condensed', 'Helvetica Neue', Arial, sans-serif;
+  --font-body:       'Plus Jakarta Sans', 'Helvetica Neue LT Pro', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono:       ui-monospace, 'SF Mono', Menlo, Monaco, Consolas, monospace;
+
+  /* ---- TYPE SCALE ---- */
+  --text-xs:   0.75rem;    /* 12px */
+  --text-sm:   0.875rem;   /* 14px */
+  --text-base: 1rem;       /* 16px */
+  --text-lg:   1.125rem;   /* 18px */
+  --text-xl:   1.25rem;    /* 20px */
+  --text-2xl:  1.5rem;     /* 24px */
+  --text-3xl:  1.875rem;   /* 30px */
+  --text-4xl:  2.25rem;    /* 36px */
+  --text-5xl:  3rem;       /* 48px */
+  --text-6xl:  3.75rem;    /* 60px */
+  --text-7xl:  4.5rem;     /* 72px */
+
+  /* ---- LINE HEIGHTS ---- */
+  --leading-tight:   1.25;
+  --leading-snug:    1.375;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.625;
+  --leading-loose:   2;
+
+  /* ---- LETTER SPACING ---- */
+  --tracking-tight:   -0.025em;
+  --tracking-normal:   0em;
+  --tracking-wide:     0.025em;
+  --tracking-wider:    0.05em;
+  --tracking-widest:   0.1em;
+
+  /* ---- FONT WEIGHTS ---- */
+  --fw-regular:   400;
+  --fw-medium:    500;
+  --fw-semibold:  600;
+  --fw-bold:      700;
+  --fw-extrabold: 800;
+  --fw-black:     900;
+
+  /* ---- BORDER RADIUS ---- */
+  --radius-sm:   0.25rem;   /* 4px */
+  --radius-md:   0.375rem;  /* 6px */
+  --radius-lg:   0.5rem;    /* 8px */
+  --radius-xl:   0.75rem;   /* 12px */
+  --radius-2xl:  1rem;      /* 16px */
+  --radius-3xl:  1.5rem;    /* 24px */
+  --radius-4xl:  2rem;      /* 32px */
+  --radius-full: 9999px;
+
+  /* ---- SPACING ---- */
+  --space-1:  0.25rem;   /* 4px */
+  --space-2:  0.5rem;    /* 8px */
+  --space-3:  0.75rem;   /* 12px */
+  --space-4:  1rem;      /* 16px */
+  --space-5:  1.25rem;   /* 20px */
+  --space-6:  1.5rem;    /* 24px */
+  --space-8:  2rem;      /* 32px */
+  --space-10: 2.5rem;    /* 40px */
+  --space-12: 3rem;      /* 48px */
+  --space-16: 4rem;      /* 64px */
+  --space-20: 5rem;      /* 80px */
+  --space-24: 6rem;      /* 96px */
+
+  /* ---- SHADOWS ---- */
+  --shadow-sm:  0 1px 2px rgba(17,24,39,0.06);
+  --shadow-md:  0 1px 3px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-lg:  0 8px 30px rgba(17,24,39,0.06);
+  --shadow-xl:  0 20px 60px rgba(17,24,39,0.10);
+  --shadow-primary: 0 4px 14px rgba(230,94,20,0.25);
+
+  /* ---- TRANSITIONS ---- */
+  --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast:   100ms;
+  --duration-normal: 150ms;
+  --duration-slow:   300ms;
+
+  /* ---- BLUR ---- */
+  --blur-sm:   8px;
+  --blur-md:   12px;
+  --blur-xl:   24px;
+  --blur-2xl:  40px;
+  --blur-3xl:  64px;
+}
+
+/* ============================================================
+   SEMANTIC ELEMENT STYLES
+   ============================================================ */
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--fom-fg1);
+  background-color: var(--fom-surface);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1 {
+  font-family: var(--font-display);
+  font-size: var(--text-5xl);
+  font-weight: var(--fw-extrabold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fom-fg1);
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-size: var(--text-4xl);
+  font-weight: var(--fw-bold);
+  line-height: var(--leading-tight);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fom-fg1);
+}
+
+h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: var(--fw-bold);
+  line-height: var(--leading-snug);
+  letter-spacing: var(--tracking-tight);
+  color: var(--fom-fg1);
+}
+
+h4 {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  font-weight: var(--fw-semibold);
+  line-height: var(--leading-snug);
+  color: var(--fom-fg1);
+}
+
+p {
+  font-size: var(--text-base);
+  line-height: var(--leading-relaxed);
+  color: var(--fom-fg2);
+}
+
+small, .text-sm {
+  font-size: var(--text-sm);
+  color: var(--fom-fg3);
+}
+
+/* ---- SEMANTIC TOKENS ---- */
+.text-primary   { color: var(--fom-primary); }
+.text-muted     { color: var(--fom-fg3); }
+.text-meta      {
+  font-size: var(--text-xs);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  color: var(--fom-fg4);
+}
+
+/* ---- CARDS ---- */
+.fom-card {
+  background: var(--fom-white);
+  border-radius: var(--radius-3xl);
+  border: 1px solid rgba(142,142,147,0.10);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-6);
+}
+
+.fom-card-sm {
+  background: var(--fom-white);
+  border-radius: var(--radius-2xl);
+  border: 1px solid rgba(142,142,147,0.10);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-4);
+}
+
+/* ---- BUTTONS ---- */
+.fom-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  padding: 0 var(--space-6);
+  background: var(--fom-primary);
+  color: white;
+  border-radius: var(--radius-xl);
+  font-weight: var(--fw-bold);
+  font-size: var(--text-base);
+  box-shadow: var(--shadow-primary);
+  transition: all var(--duration-normal) var(--ease-default);
+  cursor: pointer;
+  border: none;
+}
+.fom-btn-primary:active { transform: scale(0.98); }
+
+.fom-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  padding: 0 var(--space-6);
+  background: rgba(230,94,20,0.08);
+  color: var(--fom-primary);
+  border-radius: var(--radius-xl);
+  font-weight: var(--fw-semibold);
+  font-size: var(--text-base);
+  border: none;
+  transition: all var(--duration-normal) var(--ease-default);
+  cursor: pointer;
+}

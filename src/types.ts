@@ -140,7 +140,44 @@ export interface FriendRequest {
   resolvedAt?: any;
 }
 
-export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'history' | 'history-detail' | 'friends';
+export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends';
+
+export interface PlayerMatchLedgerEntry {
+  id: string;
+  uid: string;
+  playerName?: string;
+  tournamentId: string;
+  tournamentName?: string;
+  matchId: string;
+  roundId: number;
+  matchSequence?: number;
+  format?: MatchFormat;
+  team?: 'A' | 'B';
+  scoreFor?: number;
+  scoreAgainst?: number;
+  scoreDiff?: number;
+  result?: 'win' | 'loss' | 'draw';
+  teamSummary?: string;
+  opponentSummary?: string;
+  teamAverageMmr?: number;
+  opponentAverageMmr?: number;
+  isUnderdog?: boolean;
+  isFavorite?: boolean;
+  mmrBefore?: number;
+  mmrAfter?: number;
+  baseDeltaMmr?: number;
+  modifierDeltaMmr?: number;
+  deltaMmr: number;
+  reasonCode?: string;
+  reasonLabel?: string;
+  baseReasonLabel?: string;
+  modifierCode?: string;
+  modifierLabel?: string;
+  hostUid: string;
+  playedAt?: any;
+  createdAt?: any;
+  source?: string;
+}
 
 export interface AppNotification {
   id: string;
@@ -148,5 +185,6 @@ export interface AppNotification {
   message: string;
   timestamp: Date;
   type: 'match' | 'tournament' | 'system' | 'achievement';
+  tone?: 'info' | 'success' | 'error' | 'achievement';
   read: boolean;
 }

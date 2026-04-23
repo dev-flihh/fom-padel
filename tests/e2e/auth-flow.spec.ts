@@ -7,32 +7,32 @@ test.describe('Auth Flow', () => {
   test('register and login with email/password works end-to-end', async ({ page }) => {
     const email = uniqueEmail();
 
-    await page.goto('/');
-    await expect(page.getByText('Capek kerja? Butuh gerak?')).toBeVisible();
+    await page.goto('/app');
+    await expect(page.getByRole('heading', { name: 'Welcome to FOM Play' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Daftar' }).first().click();
-    await page.getByPlaceholder('Nama Anda').fill('QA FOM Play');
-    await page.getByPlaceholder('email@contoh.com').fill(email);
-    await page.getByPlaceholder('••••••••').fill(password);
-    await page.getByRole('button', { name: 'Daftar' }).nth(1).click();
+    await page.getByRole('button', { name: 'Sign up' }).first().click();
+    await page.getByPlaceholder('Full name').fill('QA FOM Play');
+    await page.getByPlaceholder('Email').fill(email);
+    await page.getByPlaceholder('Password').fill(password);
+    await page.getByRole('button', { name: 'Sign up' }).nth(1).click();
 
-    await expect(page.getByRole('button', { name: 'Profil' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('button', { name: 'Profile' })).toBeVisible({ timeout: 20_000 });
 
-    await page.getByRole('button', { name: 'Profil' }).click();
+    await page.getByRole('button', { name: 'Profile' }).click();
     await page.getByRole('button', { name: 'Keluar dari Akun' }).click();
-    await expect(page.getByText('Capek kerja? Butuh gerak?')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Welcome to FOM Play' })).toBeVisible({ timeout: 10_000 });
 
-    await page.getByRole('button', { name: /^Masuk$/ }).first().click();
-    await page.getByPlaceholder('email@contoh.com').fill(email);
-    await page.getByPlaceholder('••••••••').fill(password);
-    await page.getByRole('button', { name: /^Masuk$/ }).nth(1).click();
+    await page.getByPlaceholder('Email').fill(email);
+    await page.getByPlaceholder('Password').fill(password);
+    await page.getByRole('button', { name: /^Login$/ }).click();
 
-    await expect(page.getByRole('button', { name: 'Profil' })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole('button', { name: 'Profile' })).toBeVisible({ timeout: 20_000 });
   });
 
   test('google login button starts OAuth flow (popup or redirect)', async ({ page, context }) => {
-    await page.goto('/');
-    await expect(page.getByRole('button', { name: 'Lanjutkan dengan Google' })).toBeVisible();
+    await page.goto('/app');
+    const googleButton = page.getByRole('button', { name: 'Continue with Google' });
+    await expect(googleButton).toBeVisible();
 
     const popupPromise = context.waitForEvent('page', { timeout: 8_000 }).catch(() => null);
     const authRequestPromise = page
@@ -44,7 +44,7 @@ test.describe('Auth Flow', () => {
       .then((request) => request.url())
       .catch(() => null);
 
-    await page.getByRole('button', { name: 'Lanjutkan dengan Google' }).click();
+    await googleButton.click();
 
     const popupPage = await popupPromise;
     const authRequestUrl = await authRequestPromise;
@@ -57,5 +57,11 @@ test.describe('Auth Flow', () => {
     }
 
     expect(authRequestUrl).not.toBeNull();
+  });
+
+  test('apple login option is hidden on iOS', async ({ page }) => {
+    await page.goto('/app');
+    await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Continue with Apple' })).toBeHidden();
   });
 });

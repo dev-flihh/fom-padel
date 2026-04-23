@@ -11,9 +11,85 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "redirects": [
+      {
+        "source": "/blog-next",
+        "destination": "/",
+        "type": 302
+      },
+      {
+        "source": "/blog-next/**",
+        "destination": "/",
+        "type": 302
+      },
+      {
+        "source": "/archive",
+        "destination": "/",
+        "type": 302
+      },
+      {
+        "source": "/archive/**",
+        "destination": "/",
+        "type": 302
+      }
+    ],
     "headers": [
       {
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "**/*.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/archive.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/app",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/app/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
         "source": "/sw.js",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/manifest.webmanifest",
         "headers": [
           {
             "key": "Cache-Control",
@@ -24,8 +100,48 @@
     ],
     "rewrites": [
       {
-        "source": "**",
-        "destination": "/index.html"
+        "source": "/fitur",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/format/americano",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/format/mexicano",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/format/match-play",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/edukasi/perbedaan-americano-vs-mexicano",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/ranking",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/faq",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/archive",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/archive/**",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/app",
+        "destination": "/archive.html"
+      },
+      {
+        "source": "/app/**",
+        "destination": "/archive.html"
       }
     ]
   },

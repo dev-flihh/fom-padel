@@ -4,21 +4,38 @@ import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
 
-const updateSW = registerSW({
-  immediate: true,
-  onNeedRefresh() {
-    // Apply fresh assets immediately when a new SW is available.
-    updateSW(true);
-  },
-});
+const isAppRoute = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/');
+
+let updateSW: ((reloadPage?: boolean) => Promise<void>) | undefined;
+
+if (isAppRoute) {
+  updateSW = registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      // Do not force-refresh the app while Firebase Auth may be using
+      // sessionStorage for an OAuth popup/redirect handshake.
+      updateSW?.(false);
+    },
+  });
+} else if ('serviceWorker' in navigator) {
+  void navigator.serviceWorker.getRegistrations().then((registrations) => (
+    Promise.all(registrations.map((registration) => registration.unregister()))
+  )).then(async () => {
+    if (!('caches' in window)) return;
+    const cacheNames = await caches.keys();
+    await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+  }).catch((error) => {
+    console.warn('Marketing cache cleanup failed:', error);
+  });
+}
 
 // Periodically re-check updates while app is open (helps installed PWA sessions).
 window.setInterval(() => {
-  updateSW(false);
+  updateSW?.(false);
 }, 60 * 1000);
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
+  if (document.visibilityState === 'visible' && updateSW) {
     updateSW(false);
   }
 });
