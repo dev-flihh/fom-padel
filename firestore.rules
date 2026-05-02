@@ -307,6 +307,12 @@ service cloud.firestore {
         allow update: if isOwner(userId) && isValidNotification(request.resource.data);
         allow delete: if isOwner(userId);
       }
+
+      match /history_summary/{tournamentId} {
+        allow read: if isOwner(userId);
+        // Server-controlled per-user materialized history docs.
+        allow create, update, delete: if isAdmin();
+      }
     }
 
     match /tournaments/{tournamentId} {
@@ -314,6 +320,19 @@ service cloud.firestore {
       allow create: if isAuthenticated() && isValidTournament(request.resource.data);
       allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin()) && isValidTournament(request.resource.data);
       allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /tournament_details/{tournamentId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidTournament(request.resource.data);
+      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /active_tournament_drafts/{userId} {
+      allow read, delete: if isOwner(userId);
+      allow create, update: if isOwner(userId) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.tournament is map;
     }
 
     match /sharedMatches/{shareId} {
@@ -345,6 +364,16 @@ service cloud.firestore {
       // Server-controlled aggregate (written by Cloud Functions / Admin SDK).
       allow create, update: if isAdmin();
       allow delete: if isAdmin();
+    }
+
+    match /leaderboard_snapshots/{snapshotId} {
+      allow read: if isAuthenticated();
+      // Server-controlled materialized leaderboard snapshot.
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /leaderboard_refresh_state/{scopeId} {
+      allow read, write: if isAdmin();
     }
 
     match /player_match_ledger/{entryId} {

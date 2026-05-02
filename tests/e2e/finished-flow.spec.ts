@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test.describe('Finished Tournament Flow', () => {
   test('history detail can open read-only match details and final standings', async ({ page }) => {
-    await page.goto('/?e2e=finished-flow');
+    await page.goto('/app?e2e=finished-flow');
 
     await expect(page.getByRole('heading', { name: 'History Detail' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Round Details' }).first()).toBeVisible();

@@ -1,0 +1,116 @@
+{
+  "mode": "dry-run",
+  "project": "gen-lang-client-0996764238",
+  "database": "ai-studio-27d60198-41b0-4446-92d0-3c510bc94635",
+  "users": 52,
+  "notificationsScanned": 77,
+  "existingParentNotifications": 77,
+  "orphanNotifications": 0,
+  "unexpectedNotificationPaths": 0,
+  "deleted": 0,
+  "topParents": [
+    {
+      "parentPath": "users/2qLcKN5Bj4eRnIuvP2URrruhp7g2",
+      "uid": "2qLcKN5Bj4eRnIuvP2URrruhp7g2",
+      "existingUser": true,
+      "count": 16
+    },
+    {
+      "parentPath": "users/BGNyowrNkdenneSFy1kPBh8baet2",
+      "uid": "BGNyowrNkdenneSFy1kPBh8baet2",
+      "existingUser": true,
+      "count": 15
+    },
+    {
+      "parentPath": "users/v8t1typzn0O05D4t2FF73XI7FTd2",
+      "uid": "v8t1typzn0O05D4t2FF73XI7FTd2",
+      "existingUser": true,
+      "count": 8
+    },
+    {
+      "parentPath": "users/x7pROYCaOZTxbUUKZHWLArwNEss2",
+      "uid": "x7pROYCaOZTxbUUKZHWLArwNEss2",
+      "existingUser": true,
+      "count": 6
+    },
+    {
+      "parentPath": "users/1loV5rtErdMYb3r8hic5FN36nQj1",
+      "uid": "1loV5rtErdMYb3r8hic5FN36nQj1",
+      "existingUser": true,
+      "count": 5
+    },
+    {
+      "parentPath": "users/gQYwQF5H8neBipxlFaPcfFdRV332",
+      "uid": "gQYwQF5H8neBipxlFaPcfFdRV332",
+      "existingUser": true,
+      "count": 5
+    },
+    {
+      "parentPath": "users/pycQUgxpJocR0SJ7QT2rfrQvTgn1",
+      "uid": "pycQUgxpJocR0SJ7QT2rfrQvTgn1",
+      "existingUser": true,
+      "count": 5
+    },
+    {
+      "parentPath": "users/BIyqXFYl6sQbZ2V8sODgGTjAhHZ2",
+      "uid": "BIyqXFYl6sQbZ2V8sODgGTjAhHZ2",
+      "existingUser": true,
+      "count": 4
+    },
+    {
+      "parentPath": "users/LuDDRR6BVSZiizRknk25CdMOFaq1",
+      "uid": "LuDDRR6BVSZiizRknk25CdMOFaq1",
+      "existingUser": true,
+      "count": 2
+    },
+    {
+      "parentPath": "users/PSfgqOnEnidLZDOEU0MIi2q6aN63",
+      "uid": "PSfgqOnEnidLZDOEU0MIi2q6aN63",
+      "existingUser": true,
+      "count": 2
+    },
+    {
+      "parentPath": "users/WeAzBhDLANU9vMMzlVowF3vmdj93",
+      "uid": "WeAzBhDLANU9vMMzlVowF3vmdj93",
+      "existingUser": true,
+      "count": 2
+    },
+    {
+      "parentPath": "users/smh5UKLA6VMRAIVxEO3qqkNJsmx2",
+      "uid": "smh5UKLA6VMRAIVxEO3qqkNJsmx2",
+      "existingUser": true,
+      "count": 2
+    },
+    {
+      "parentPath": "users/3w0WQ8pFptcsUNHYO9tiwhkGilz2",
+      "uid": "3w0WQ8pFptcsUNHYO9tiwhkGilz2",
+      "existingUser": true,
+      "count": 1
+    },
+    {
+      "parentPath": "users/A9IJ5h86IiS7tcjELEXagxh0rdb2",
+      "uid": "A9IJ5h86IiS7tcjELEXagxh0rdb2",
+      "existingUser": true,
+      "count": 1
+    },
+    {
+      "parentPath": "users/BDzZtGpkZ6M2hjvdyNy89VDk7EN2",
+      "uid": "BDzZtGpkZ6M2hjvdyNy89VDk7EN2",
+      "existingUser": true,
+      "count": 1
+    },
+    {
+      "parentPath": "users/YzreoYAl7TaZPH2QYIFE8UTrCel2",
+      "uid": "YzreoYAl7TaZPH2QYIFE8UTrCel2",
+      "existingUser": true,
+      "count": 1
+    },
+    {
+      "parentPath": "users/o7lSGEsuuIUTOFAfboSl2IV3K8h2",
+      "uid": "o7lSGEsuuIUTOFAfboSl2IV3K8h2",
+      "existingUser": true,
+      "count": 1
+    }
+  ],
+  "sampleOrphans": []
+}

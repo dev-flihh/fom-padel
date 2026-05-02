@@ -57,6 +57,7 @@ export interface Tournament {
   name: string;
   format: MatchFormat;
   backgroundId?: string;
+  themeColorId?: string;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
   startedAt?: number;
@@ -78,6 +79,7 @@ export interface TournamentHistory {
   name: string;
   format: MatchFormat;
   backgroundId?: string;
+  themeColorId?: string;
   criteria?: RankingCriteria;
   scoringType?: ScoringType;
   date: Date;
@@ -92,6 +94,16 @@ export interface TournamentHistory {
   courtChanges?: CourtChange[];
   venueName?: string;
   location?: string;
+  completedMatchesCount?: number;
+  userMatches?: number;
+  userWins?: number;
+  userLosses?: number;
+  userDraws?: number;
+  userPoints?: number;
+  userMmrDelta?: number;
+  playedAt?: any;
+  statsVersion?: number;
+  statsAppliedAt?: any;
 }
 
 export type RankTier = 'Rookie' | 'Amateur' | 'Challenger' | 'Elite' | 'Master' | 'Grandmaster' | 'Legend' | 'Hall of Fame';
@@ -141,6 +153,8 @@ export interface FriendRequest {
 }
 
 export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends';
+
+export type TournamentStatsSyncState = 'syncing' | 'synced' | 'error';
 
 export interface PlayerMatchLedgerEntry {
   id: string;

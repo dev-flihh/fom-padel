@@ -5,10 +5,14 @@ import './index.css';
 import { registerSW } from 'virtual:pwa-register';
 
 const isAppRoute = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/');
+const isStandaloneDisplayMode =
+  window.matchMedia?.('(display-mode: standalone)').matches
+  || window.matchMedia?.('(display-mode: minimal-ui)').matches
+  || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
 
 let updateSW: ((reloadPage?: boolean) => Promise<void>) | undefined;
 
-if (isAppRoute) {
+if (isAppRoute && isStandaloneDisplayMode) {
   updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {

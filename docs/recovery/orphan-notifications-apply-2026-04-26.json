@@ -1,0 +1,315 @@
+{
+  "mode": "apply",
+  "project": "gen-lang-client-0996764238",
+  "database": "ai-studio-27d60198-41b0-4446-92d0-3c510bc94635",
+  "users": 52,
+  "notificationsScanned": 1374,
+  "existingParentNotifications": 77,
+  "orphanNotifications": 1297,
+  "unexpectedNotificationPaths": 0,
+  "deleted": 1297,
+  "topParents": [
+    {
+      "parentPath": "users/2",
+      "uid": "2",
+      "existingUser": false,
+      "count": 55
+    },
+    {
+      "parentPath": "users/4",
+      "uid": "4",
+      "existingUser": false,
+      "count": 55
+    },
+    {
+      "parentPath": "users/1",
+      "uid": "1",
+      "existingUser": false,
+      "count": 54
+    },
+    {
+      "parentPath": "users/3",
+      "uid": "3",
+      "existingUser": false,
+      "count": 53
+    },
+    {
+      "parentPath": "users/5",
+      "uid": "5",
+      "existingUser": false,
+      "count": 32
+    },
+    {
+      "parentPath": "users/6",
+      "uid": "6",
+      "existingUser": false,
+      "count": 32
+    },
+    {
+      "parentPath": "users/7",
+      "uid": "7",
+      "existingUser": false,
+      "count": 26
+    },
+    {
+      "parentPath": "users/8",
+      "uid": "8",
+      "existingUser": false,
+      "count": 26
+    },
+    {
+      "parentPath": "users/10",
+      "uid": "10",
+      "existingUser": false,
+      "count": 25
+    },
+    {
+      "parentPath": "users/9",
+      "uid": "9",
+      "existingUser": false,
+      "count": 25
+    },
+    {
+      "parentPath": "users/9spsl8lb7",
+      "uid": "9spsl8lb7",
+      "existingUser": false,
+      "count": 22
+    },
+    {
+      "parentPath": "users/cootdkubr",
+      "uid": "cootdkubr",
+      "existingUser": false,
+      "count": 22
+    },
+    {
+      "parentPath": "users/2qLcKN5Bj4eRnIuvP2URrruhp7g2",
+      "uid": "2qLcKN5Bj4eRnIuvP2URrruhp7g2",
+      "existingUser": true,
+      "count": 16
+    },
+    {
+      "parentPath": "users/157tkayiq",
+      "uid": "157tkayiq",
+      "existingUser": false,
+      "count": 15
+    },
+    {
+      "parentPath": "users/484ov40zf",
+      "uid": "484ov40zf",
+      "existingUser": false,
+      "count": 15
+    },
+    {
+      "parentPath": "users/9ur470xqh",
+      "uid": "9ur470xqh",
+      "existingUser": false,
+      "count": 15
+    },
+    {
+      "parentPath": "users/BGNyowrNkdenneSFy1kPBh8baet2",
+      "uid": "BGNyowrNkdenneSFy1kPBh8baet2",
+      "existingUser": true,
+      "count": 15
+    },
+    {
+      "parentPath": "users/gsyvpq1qp",
+      "uid": "gsyvpq1qp",
+      "existingUser": false,
+      "count": 15
+    },
+    {
+      "parentPath": "users/lpopt0k6r",
+      "uid": "lpopt0k6r",
+      "existingUser": false,
+      "count": 15
+    },
+    {
+      "parentPath": "users/zy3tfsz5y",
+      "uid": "zy3tfsz5y",
+      "existingUser": false,
+      "count": 15
+    },
+    {
+      "parentPath": "users/5j5eer1ff",
+      "uid": "5j5eer1ff",
+      "existingUser": false,
+      "count": 14
+    },
+    {
+      "parentPath": "users/6hxkti7ee",
+      "uid": "6hxkti7ee",
+      "existingUser": false,
+      "count": 14
+    },
+    {
+      "parentPath": "users/fqgxkkrig",
+      "uid": "fqgxkkrig",
+      "existingUser": false,
+      "count": 14
+    },
+    {
+      "parentPath": "users/hf86re1gu",
+      "uid": "hf86re1gu",
+      "existingUser": false,
+      "count": 14
+    },
+    {
+      "parentPath": "users/lgsavwcs8",
+      "uid": "lgsavwcs8",
+      "existingUser": false,
+      "count": 14
+    }
+  ],
+  "sampleOrphans": [
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/7upw6lwuw",
+      "relativePath": "users/006f0xkl6/notifications/7upw6lwuw",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/y2l3id2qn",
+      "relativePath": "users/006f0xkl6/notifications/y2l3id2qn",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/eomog9wry",
+      "relativePath": "users/006f0xkl6/notifications/eomog9wry",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/jh1sk0eym",
+      "relativePath": "users/006f0xkl6/notifications/jh1sk0eym",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/17xqh5z85",
+      "relativePath": "users/006f0xkl6/notifications/17xqh5z85",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/68xhokcgy",
+      "relativePath": "users/006f0xkl6/notifications/68xhokcgy",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/jvaaahodo",
+      "relativePath": "users/006f0xkl6/notifications/jvaaahodo",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/cxemasnte",
+      "relativePath": "users/006f0xkl6/notifications/cxemasnte",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/bdesre3sn",
+      "relativePath": "users/006f0xkl6/notifications/bdesre3sn",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/ahnh55rli",
+      "relativePath": "users/006f0xkl6/notifications/ahnh55rli",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/ud40tdyv5",
+      "relativePath": "users/006f0xkl6/notifications/ud40tdyv5",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/97j8c6q75",
+      "relativePath": "users/006f0xkl6/notifications/97j8c6q75",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/006f0xkl6/notifications/ogl6xo6j6",
+      "relativePath": "users/006f0xkl6/notifications/ogl6xo6j6",
+      "parentPath": "users/006f0xkl6",
+      "uid": "006f0xkl6"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/0uw7f3773/notifications/a99jfde7w",
+      "relativePath": "users/0uw7f3773/notifications/a99jfde7w",
+      "parentPath": "users/0uw7f3773",
+      "uid": "0uw7f3773"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/0uw7f3773/notifications/mbpmoox10",
+      "relativePath": "users/0uw7f3773/notifications/mbpmoox10",
+      "parentPath": "users/0uw7f3773",
+      "uid": "0uw7f3773"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/0uw7f3773/notifications/tkgqbbnei",
+      "relativePath": "users/0uw7f3773/notifications/tkgqbbnei",
+      "parentPath": "users/0uw7f3773",
+      "uid": "0uw7f3773"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/0uw7f3773/notifications/hfqj8jscf",
+      "relativePath": "users/0uw7f3773/notifications/hfqj8jscf",
+      "parentPath": "users/0uw7f3773",
+      "uid": "0uw7f3773"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/0uw7f3773/notifications/9lrrnoc4s",
+      "relativePath": "users/0uw7f3773/notifications/9lrrnoc4s",
+      "parentPath": "users/0uw7f3773",
+      "uid": "0uw7f3773"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/0uw7f3773/notifications/ksgl5z3km",
+      "relativePath": "users/0uw7f3773/notifications/ksgl5z3km",
+      "parentPath": "users/0uw7f3773",
+      "uid": "0uw7f3773"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/1/notifications/wn2bgluoq",
+      "relativePath": "users/1/notifications/wn2bgluoq",
+      "parentPath": "users/1",
+      "uid": "1"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/1/notifications/p2tygiuvn",
+      "relativePath": "users/1/notifications/p2tygiuvn",
+      "parentPath": "users/1",
+      "uid": "1"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/1/notifications/v75jclpai",
+      "relativePath": "users/1/notifications/v75jclpai",
+      "parentPath": "users/1",
+      "uid": "1"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/1/notifications/sy9dddzyx",
+      "relativePath": "users/1/notifications/sy9dddzyx",
+      "parentPath": "users/1",
+      "uid": "1"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/1/notifications/9nl2ndamv",
+      "relativePath": "users/1/notifications/9nl2ndamv",
+      "parentPath": "users/1",
+      "uid": "1"
+    },
+    {
+      "name": "projects/gen-lang-client-0996764238/databases/ai-studio-27d60198-41b0-4446-92d0-3c510bc94635/documents/users/1/notifications/kxmxepd77",
+      "relativePath": "users/1/notifications/kxmxepd77",
+      "parentPath": "users/1",
+      "uid": "1"
+    }
+  ]
+}

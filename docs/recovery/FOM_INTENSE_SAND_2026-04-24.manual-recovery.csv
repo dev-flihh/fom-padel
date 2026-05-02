@@ -1,0 +1,11 @@
+rank,display_name,uid,account_status,username_hint,wins,losses,draws,matches,diff,points,notes
+1,Falih,2qLcKN5Bj4eRnIuvP2URrruhp7g2,mapped_by_uid,,5,3,0,8,18,93,
+2,Valerievk,gQYwQF5H8neBipxlFaPcfFdRV332,mapped_by_uid,,5,3,0,8,4,86,
+3,Singgih,jjQTL5wKDMV2onUFZCQnc0TugsE3,mapped_by_uid,,5,3,0,8,-10,79,
+4,Geraldi alazzami,x7pROYCaOZTxbUUKZHWLArwNEss2,mapped_by_uid,,4,4,0,8,10,89,
+5,anggahardy putra,PSfgqOnEnidLZDOEU0MIi2q6aN63,mapped_by_uid,,4,4,0,8,8,88,
+6,Muhammad Dzikri,LuDDRR6BVSZiizRknk25CdMOFaq1,mapped_by_uid,,4,4,0,8,8,88,
+7,Wildan Khawarizmii,BIyqXFYl6sQbZ2V8sODgGTjAhHZ2,mapped_by_uid,,4,4,0,8,8,88,
+8,Jason,3w0WQ8pFptcsUNHYO9tiwhkGilz2,mapped_by_uid,jjaltylab,3,2,0,5,7,56,Mapped to the FOM account associated with username jjaltylab
+9,Farrel Alvian Purn...,smh5UKLA6VMRAIVxEO3qqkNJsmx2,mapped_by_uid,,3,5,0,8,-10,79,Mapped from provided UID; screenshot display name is truncated
+10,Daffa Ulil,WeAzBhDLANU9vMMzlVowF3vmdj93,mapped_by_uid,,1,6,0,7,-43,52,

@@ -1,0 +1,89 @@
+{
+  "match": "FOM INTENSE SAND",
+  "date": "2026-04-24",
+  "method": "manual_standard_win_loss_only",
+  "formula": {
+    "win": 25,
+    "loss": -20,
+    "draw": 0,
+    "scoreDiffBonusApplied": false,
+    "underdogFavoriteModifierApplied": false
+  },
+  "notes": [
+    "This audit uses final W/L totals from the screenshot, not round-by-round match reconstruction.",
+    "player_stats is treated as the MMR source of truth.",
+    "users.mmr is incremented separately from its current value to mirror the existing production write path."
+  ],
+  "players": [
+    {
+      "displayName": "Falih",
+      "uid": "2qLcKN5Bj4eRnIuvP2URrruhp7g2",
+      "delta": { "mmr": 65, "wins": 5, "losses": 3, "totalMatches": 8 },
+      "before": { "playerStatsMmr": 320, "userMmr": 320, "playerStatsWins": 16, "playerStatsLosses": 4, "totalMatches": 20 },
+      "after": { "playerStatsMmr": 385, "userMmr": 385, "playerStatsWins": 21, "playerStatsLosses": 7, "totalMatches": 28 }
+    },
+    {
+      "displayName": "Valerievk01",
+      "uid": "gQYwQF5H8neBipxlFaPcfFdRV332",
+      "delta": { "mmr": 65, "wins": 5, "losses": 3, "totalMatches": 8 },
+      "before": { "playerStatsMmr": 75, "userMmr": 70, "playerStatsWins": 3, "playerStatsLosses": 1, "totalMatches": 4 },
+      "after": { "playerStatsMmr": 140, "userMmr": 135, "playerStatsWins": 8, "playerStatsLosses": 4, "totalMatches": 12 }
+    },
+    {
+      "displayName": "Singgih",
+      "uid": "jjQTL5wKDMV2onUFZCQnc0TugsE3",
+      "delta": { "mmr": 65, "wins": 5, "losses": 3, "totalMatches": 8 },
+      "before": { "playerStatsMmr": 0, "userMmr": 0, "playerStatsWins": 0, "playerStatsLosses": 0, "totalMatches": 0 },
+      "after": { "playerStatsMmr": 65, "userMmr": 65, "playerStatsWins": 5, "playerStatsLosses": 3, "totalMatches": 8 }
+    },
+    {
+      "displayName": "Geraldi alazzami",
+      "uid": "x7pROYCaOZTxbUUKZHWLArwNEss2",
+      "delta": { "mmr": 20, "wins": 4, "losses": 4, "totalMatches": 8 },
+      "before": { "playerStatsMmr": 10, "userMmr": 25, "playerStatsWins": 2, "playerStatsLosses": 2, "totalMatches": 4 },
+      "after": { "playerStatsMmr": 30, "userMmr": 45, "playerStatsWins": 6, "playerStatsLosses": 6, "totalMatches": 12 }
+    },
+    {
+      "displayName": "anggahardy putra",
+      "uid": "PSfgqOnEnidLZDOEU0MIi2q6aN63",
+      "delta": { "mmr": 20, "wins": 4, "losses": 4, "totalMatches": 8 },
+      "before": { "playerStatsMmr": 5, "userMmr": 5, "playerStatsWins": 1, "playerStatsLosses": 1, "totalMatches": 2 },
+      "after": { "playerStatsMmr": 25, "userMmr": 25, "playerStatsWins": 5, "playerStatsLosses": 5, "totalMatches": 10 }
+    },
+    {
+      "displayName": "Dzikri",
+      "uid": "LuDDRR6BVSZiizRknk25CdMOFaq1",
+      "delta": { "mmr": 20, "wins": 4, "losses": 4, "totalMatches": 8 },
+      "before": { "playerStatsMmr": -20, "userMmr": -20, "playerStatsWins": 0, "playerStatsLosses": 1, "totalMatches": 1 },
+      "after": { "playerStatsMmr": 0, "userMmr": 0, "playerStatsWins": 4, "playerStatsLosses": 5, "totalMatches": 9 }
+    },
+    {
+      "displayName": "Wildan Khawarizmii",
+      "uid": "BIyqXFYl6sQbZ2V8sODgGTjAhHZ2",
+      "delta": { "mmr": 20, "wins": 4, "losses": 4, "totalMatches": 8 },
+      "before": { "playerStatsMmr": 5, "userMmr": -55, "playerStatsWins": 1, "playerStatsLosses": 4, "totalMatches": 5 },
+      "after": { "playerStatsMmr": 25, "userMmr": -35, "playerStatsWins": 5, "playerStatsLosses": 8, "totalMatches": 13 }
+    },
+    {
+      "displayName": "Jjalty Lab",
+      "uid": "3w0WQ8pFptcsUNHYO9tiwhkGilz2",
+      "delta": { "mmr": 35, "wins": 3, "losses": 2, "totalMatches": 5 },
+      "before": { "playerStatsMmr": 0, "userMmr": 0, "playerStatsWins": 0, "playerStatsLosses": 0, "totalMatches": 0 },
+      "after": { "playerStatsMmr": 35, "userMmr": 35, "playerStatsWins": 3, "playerStatsLosses": 2, "totalMatches": 5 }
+    },
+    {
+      "displayName": "Farrel Alvian Purnama",
+      "uid": "smh5UKLA6VMRAIVxEO3qqkNJsmx2",
+      "delta": { "mmr": -25, "wins": 3, "losses": 5, "totalMatches": 8 },
+      "before": { "playerStatsMmr": -20, "userMmr": -20, "playerStatsWins": 0, "playerStatsLosses": 1, "totalMatches": 1 },
+      "after": { "playerStatsMmr": -45, "userMmr": -45, "playerStatsWins": 3, "playerStatsLosses": 6, "totalMatches": 9 }
+    },
+    {
+      "displayName": "Daffa Ulil",
+      "uid": "WeAzBhDLANU9vMMzlVowF3vmdj93",
+      "delta": { "mmr": -95, "wins": 1, "losses": 6, "totalMatches": 7 },
+      "before": { "playerStatsMmr": -20, "userMmr": -20, "playerStatsWins": 0, "playerStatsLosses": 1, "totalMatches": 1 },
+      "after": { "playerStatsMmr": -115, "userMmr": -115, "playerStatsWins": 1, "playerStatsLosses": 7, "totalMatches": 8 }
+    }
+  ]
+}

@@ -85,13 +85,14 @@ export const INITIAL_PLAYERS: Player[] = [
 
 export const INITIAL_TOURNAMENT: Tournament = {
   name: 'Padel Tournament',
-  format: 'Americano',
-  criteria: 'Points Won',
+  format: 'Mexicano',
+  themeColorId: 'orange',
+  criteria: 'Matches Won',
   courts: 1,
   totalPoints: 21,
   players: [],
   inactivePlayerIds: [],
   courtChanges: [],
   rounds: [],
-  numRounds: 5
+  numRounds: 8
 };

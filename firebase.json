@@ -148,7 +148,13 @@
   "firestore": [
     {
       "database": "ai-studio-27d60198-41b0-4446-92d0-3c510bc94635",
-      "rules": "firestore.rules"
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
+    },
+    {
+      "database": "fom-play-sg",
+      "rules": "firestore.rules",
+      "indexes": "firestore.indexes.json"
     }
   ]
 }

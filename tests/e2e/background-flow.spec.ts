@@ -1,68 +1,61 @@
 import { expect, test } from '@playwright/test';
 
-const matchPlayBackgroundPool = [
-  '/mockups/active-v2/images/match-01.jpg',
-  '/mockups/active-v2/images/Match-02.jpg',
-  '/mockups/active-v2/images/Match-03.jpg',
-  '/mockups/active-v2/images/match-04.jpg',
-  '/mockups/active-v2/images/match-05.jpg',
-  '/mockups/active-v2/images/match-06.jpg',
-  '/mockups/active-v2/images/Match-07.jpg',
-  '/mockups/active-v2/images/match-08.jpg'
-];
+const goToAppearanceStep = async (page: import('@playwright/test').Page) => {
+  await expect(page.getByRole('heading', { name: 'Name your match.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose appearance.' })).toBeVisible();
+};
+
+const generateFromAppearanceStep = async (page: import('@playwright/test').Page) => {
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Review setup.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Generate Match' }).click();
+};
 
 test.describe('Background Picker Flow', () => {
   test('manual background selection is applied to preview', async ({ page }) => {
-    await page.goto('/?e2e=background-flow');
+    await page.goto('/app?e2e=background-flow');
 
-    await expect(page.getByRole('heading', { name: 'Set Up Match' })).toBeVisible();
-    const generateButton = page.getByRole('button', { name: 'Generate Match' });
-    await expect(generateButton).toBeEnabled();
+    await goToAppearanceStep(page);
 
-    await generateButton.click();
-
-    await expect(page.getByRole('heading', { name: 'Select Background' })).toBeVisible();
-    const continueButton = page.getByRole('button', { name: 'Continue to Match' });
-    await expect(continueButton).toBeDisabled();
-
-    const firstBackgroundImage = page.locator('img[alt="Background 1"]').first();
+    const firstBackgroundImage = page.locator('img[alt="Mexicano background 1"]').first();
     const selectedBackgroundSrc = await firstBackgroundImage.getAttribute('src');
     expect(selectedBackgroundSrc).not.toBeNull();
 
     await firstBackgroundImage.click();
-    await expect(continueButton).toBeEnabled();
-    await continueButton.click();
+    await generateFromAppearanceStep(page);
 
     const activeBackgroundSrc = await page.locator('img[alt="Active background"]').first().getAttribute('src');
     expect(activeBackgroundSrc).toBe(selectedBackgroundSrc);
   });
 
-  test('skip random applies one match background', async ({ page }) => {
-    await page.goto('/?e2e=background-flow');
+  test('default appearance applies one match background', async ({ page }) => {
+    await page.goto('/app?e2e=background-flow');
 
-    await page.getByRole('button', { name: 'Generate Match' }).click();
-    await expect(page.getByRole('heading', { name: 'Select Background' })).toBeVisible();
+    await goToAppearanceStep(page);
+    const selectedBackgroundSrc = await page.locator('img[alt="Selected background preview"]').first().getAttribute('src');
+    expect(selectedBackgroundSrc).not.toBeNull();
 
-    await page.getByRole('button', { name: 'Skip (Random)' }).click();
+    await generateFromAppearanceStep(page);
     const activeBackground = page.locator('img[alt="Active background"]').first();
     await expect(activeBackground).toBeVisible();
     const activeBackgroundSrc = await activeBackground.getAttribute('src');
-    expect(activeBackgroundSrc).not.toBeNull();
-    expect(matchPlayBackgroundPool).toContain(activeBackgroundSrc as string);
+    expect(activeBackgroundSrc).toBe(selectedBackgroundSrc);
   });
 
   test('selected background remains consistent in preview, active match, and standings', async ({ page }) => {
-    await page.goto('/?e2e=background-flow');
+    await page.goto('/app?e2e=background-flow');
 
-    await page.getByRole('button', { name: 'Generate Match' }).click();
-    await expect(page.getByRole('heading', { name: 'Select Background' })).toBeVisible();
+    await goToAppearanceStep(page);
 
-    const selectedBackground = page.locator('img[alt="Background 2"]').first();
+    const selectedBackground = page.locator('img[alt="Mexicano background 2"]').first();
     const selectedBackgroundSrc = await selectedBackground.getAttribute('src');
     expect(selectedBackgroundSrc).not.toBeNull();
 
     await selectedBackground.click();
-    await page.getByRole('button', { name: 'Continue to Match' }).click();
+    await generateFromAppearanceStep(page);
     const activeBackground = page.locator('img[alt="Active background"]').first();
     await expect(activeBackground).toBeVisible();
     const activeBackgroundSrc = await activeBackground.getAttribute('src');

@@ -45,7 +45,6 @@
       (function () {
         const canonicalHost = 'fomplay.asia';
         const host = window.location.hostname.toLowerCase();
-        const isAppRoute = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/');
         const defaultHosts = new Set([
           'gen-lang-client-0996764238.web.app',
           'gen-lang-client-0996764238.firebaseapp.com',
@@ -55,10 +54,16 @@
           host === '127.0.0.1' ||
           host === '0.0.0.0' ||
           host.endsWith('.local');
+        const isStandalone =
+          window.matchMedia && (
+            window.matchMedia('(display-mode: standalone)').matches ||
+            window.matchMedia('(display-mode: minimal-ui)').matches
+          ) ||
+          window.navigator.standalone === true;
 
         if (isLocalHost) return;
 
-        if (!isAppRoute && 'serviceWorker' in navigator) {
+        if (!isStandalone && 'serviceWorker' in navigator) {
           navigator.serviceWorker.getRegistrations()
             .then(function (registrations) {
               return Promise.all(registrations.map(function (registration) {

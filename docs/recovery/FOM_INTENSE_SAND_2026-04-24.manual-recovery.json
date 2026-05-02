@@ -1,0 +1,198 @@
+{
+  "recoveryType": "manual_final_standings_only",
+  "status": "partial_backup",
+  "createdAt": "2026-04-25",
+  "sourceEvidence": {
+    "finalStandingsScreenshot": true,
+    "sharedLinkPartialRounds": true,
+    "sharedLinkId": "a63lfk4m",
+    "sharedLinkCoverageNote": "Shared link only showed data up to round 4; final rounds were not recoverable from shared snapshot."
+  },
+  "match": {
+    "name": "FOM INTENSE SAND",
+    "format": "Mexicano",
+    "venueName": "Sand Padel",
+    "location": "Tangerang",
+    "date": "2026-04-24",
+    "playersCount": 10,
+    "courts": 2,
+    "numRoundsPlanned": 13,
+    "roundDisplay": "13/13",
+    "durationDisplay": "02:55:56"
+  },
+  "recoveryConstraints": [
+    "This backup preserves final standings only.",
+    "Full round-by-round reconstruction is not available from current evidence.",
+    "MMR or per-match ledger should not be recalculated from this file alone without additional round data.",
+    "Singgih is treated as a manual player without a FOM account.",
+    "Jason should be mapped to the FOM username jjaltylab."
+  ],
+  "players": [
+    {
+      "rank": 1,
+      "displayName": "Falih",
+      "accountStatus": "mapped_by_uid",
+      "uid": "2qLcKN5Bj4eRnIuvP2URrruhp7g2",
+      "usernameHint": null,
+      "stats": {
+        "wins": 5,
+        "losses": 3,
+        "draws": 0,
+        "matches": 8,
+        "diff": 18,
+        "points": 93
+      },
+      "notes": ""
+    },
+    {
+      "rank": 2,
+      "displayName": "Valerievk",
+      "accountStatus": "mapped_by_uid",
+      "uid": "gQYwQF5H8neBipxlFaPcfFdRV332",
+      "usernameHint": null,
+      "stats": {
+        "wins": 5,
+        "losses": 3,
+        "draws": 0,
+        "matches": 8,
+        "diff": 4,
+        "points": 86
+      },
+      "notes": ""
+    },
+    {
+      "rank": 3,
+      "displayName": "Singgih",
+      "accountStatus": "mapped_by_uid",
+      "uid": "jjQTL5wKDMV2onUFZCQnc0TugsE3",
+      "usernameHint": null,
+      "stats": {
+        "wins": 5,
+        "losses": 3,
+        "draws": 0,
+        "matches": 8,
+        "diff": -10,
+        "points": 79
+      },
+      "notes": ""
+    },
+    {
+      "rank": 4,
+      "displayName": "Geraldi alazzami",
+      "accountStatus": "mapped_by_uid",
+      "uid": "x7pROYCaOZTxbUUKZHWLArwNEss2",
+      "usernameHint": null,
+      "stats": {
+        "wins": 4,
+        "losses": 4,
+        "draws": 0,
+        "matches": 8,
+        "diff": 10,
+        "points": 89
+      },
+      "notes": ""
+    },
+    {
+      "rank": 5,
+      "displayName": "anggahardy putra",
+      "accountStatus": "mapped_by_uid",
+      "uid": "PSfgqOnEnidLZDOEU0MIi2q6aN63",
+      "usernameHint": null,
+      "stats": {
+        "wins": 4,
+        "losses": 4,
+        "draws": 0,
+        "matches": 8,
+        "diff": 8,
+        "points": 88
+      },
+      "notes": ""
+    },
+    {
+      "rank": 6,
+      "displayName": "Muhammad Dzikri",
+      "accountStatus": "mapped_by_uid",
+      "uid": "LuDDRR6BVSZiizRknk25CdMOFaq1",
+      "usernameHint": null,
+      "stats": {
+        "wins": 4,
+        "losses": 4,
+        "draws": 0,
+        "matches": 8,
+        "diff": 8,
+        "points": 88
+      },
+      "notes": ""
+    },
+    {
+      "rank": 7,
+      "displayName": "Wildan Khawarizmii",
+      "accountStatus": "mapped_by_uid",
+      "uid": "BIyqXFYl6sQbZ2V8sODgGTjAhHZ2",
+      "usernameHint": null,
+      "stats": {
+        "wins": 4,
+        "losses": 4,
+        "draws": 0,
+        "matches": 8,
+        "diff": 8,
+        "points": 88
+      },
+      "notes": ""
+    },
+    {
+      "rank": 8,
+      "displayName": "Jason",
+      "accountStatus": "mapped_by_uid",
+      "uid": "3w0WQ8pFptcsUNHYO9tiwhkGilz2",
+      "usernameHint": "jjaltylab",
+      "stats": {
+        "wins": 3,
+        "losses": 2,
+        "draws": 0,
+        "matches": 5,
+        "diff": 7,
+        "points": 56
+      },
+      "notes": "Mapped to the FOM account associated with username jjaltylab."
+    },
+    {
+      "rank": 9,
+      "displayName": "Farrel Alvian Purn...",
+      "accountStatus": "mapped_by_uid",
+      "uid": "smh5UKLA6VMRAIVxEO3qqkNJsmx2",
+      "usernameHint": null,
+      "stats": {
+        "wins": 3,
+        "losses": 5,
+        "draws": 0,
+        "matches": 8,
+        "diff": -10,
+        "points": 79
+      },
+      "notes": "Mapped from provided UID; screenshot display name is truncated."
+    },
+    {
+      "rank": 10,
+      "displayName": "Daffa Ulil",
+      "accountStatus": "mapped_by_uid",
+      "uid": "WeAzBhDLANU9vMMzlVowF3vmdj93",
+      "usernameHint": null,
+      "stats": {
+        "wins": 1,
+        "losses": 6,
+        "draws": 0,
+        "matches": 7,
+        "diff": -43,
+        "points": 52
+      },
+      "notes": ""
+    }
+  ],
+  "nextActions": [
+    "Optional: enrich each mapped player with username/photoURL/email snapshot before import.",
+    "Optional: replace Farrel displayName with the exact canonical account name if needed.",
+    "Do not use this file as a complete rounds payload.",
+    "If a manual admin recovery is performed, mark the record as reconstructed from final standings evidence."
+  ]
+}

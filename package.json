@@ -10,6 +10,7 @@
     "blog:promote": "node scripts/sync-fom-blog.mjs blog",
     "blog:status": "node scripts/blog-migration-status.mjs",
     "blog:check": "node scripts/check-blog-cutover.mjs",
+    "firestore:cutover:check": "node scripts/check-firestore-cutover.mjs",
     "blog:prepare:preview": "node scripts/prepare-blog-release.mjs preview",
     "blog:prepare:final": "node scripts/prepare-blog-release.mjs final",
     "blog:prepare:cutover-soft": "node scripts/prepare-blog-release.mjs cutover-soft",
@@ -35,7 +36,9 @@
     "docs:sync:gdocs": "node scripts/sync-docs-to-gdocs.mjs",
     "backfill:total-matches": "node scripts/backfill-total-matches.mjs",
     "backfill:stats-ledger": "node scripts/backfill-player-stats-ledger.mjs",
-    "backfill:ledger-v2": "node scripts/backfill-ledger-v2.mjs"
+    "backfill:ledger-v2": "node scripts/backfill-ledger-v2.mjs",
+    "migrate:firestore:dry": "node scripts/migrate-firestore-database.mjs",
+    "migrate:firestore:apply": "node scripts/migrate-firestore-database.mjs --apply"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
@@ -45,6 +48,7 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "firebase": "^12.11.0",
+    "html-to-image": "^1.11.13",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.0",
