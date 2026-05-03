@@ -1,0 +1,459 @@
+import type { Dispatch, SetStateAction } from 'react';
+import { auth } from '../../firebase';
+import { normalizeCourtChanges } from '../history/historyPersistence';
+import { formatDurationFromMs } from './matchTimeUtils';
+import { toFirestoreSafe } from '../../services/firestoreSerialization';
+import type { Match, Player, Tournament, TournamentHistory } from '../../types';
+
+type AddNotification = (
+  title: string,
+  message: string,
+  type: 'match' | 'tournament' | 'system' | 'achievement',
+  tone?: 'info' | 'success' | 'error' | 'achievement'
+) => void;
+
+type RecordDbMetric = (input: {
+  flow: string;
+  operation: 'read' | 'write' | 'delete' | 'listen' | 'skip';
+  count?: number;
+  docs?: number;
+  label?: string;
+  dbRole?: 'primary' | 'ephemeral';
+  collection?: string;
+}) => void;
+
+type RecordDbError = (input: {
+  flow: string;
+  label?: string;
+  err: unknown;
+  dbRole?: 'primary' | 'ephemeral';
+  collection?: string;
+}) => void;
+
+type Params = {
+  tournament: Tournament;
+  user: any;
+  needsRegenerateFromRound: number | null;
+  setTournament: Dispatch<SetStateAction<Tournament>>;
+  setTournaments: Dispatch<SetStateAction<TournamentHistory[]>>;
+  setSelectedKlasemenTournament: Dispatch<SetStateAction<Tournament | TournamentHistory | null>>;
+  addNotification: AddNotification;
+  persistActiveTournamentSnapshot: (nextTournament: Tournament) => Promise<void>;
+  clearActiveTournamentSnapshot: () => Promise<void>;
+  syncSharedMatchesSnapshot: (nextTournament: Tournament | TournamentHistory) => Promise<void>;
+  watchTournamentStatsSync: (tournamentId: string) => void;
+  markTournamentStatsSyncError: (tournamentId: string) => void;
+  recordDbMetric: RecordDbMetric;
+  recordDbError: RecordDbError;
+  saveTournamentDetailAndSummary: (
+    tournamentId: string,
+    detailPayload: unknown,
+    summaryPayload: unknown
+  ) => Promise<void>;
+  serverTimestamp: () => unknown;
+  toTournamentDetailCollectionLabel: string;
+  getActivePlayersFromTournament: (tournament: Tournament) => Player[];
+  rebuildAmericanoFutureRounds: (tournament: Tournament, targetNumRounds: number) => Tournament['rounds'];
+};
+
+export const useRoundProgressionActions = ({
+  tournament,
+  user,
+  needsRegenerateFromRound,
+  setTournament,
+  setTournaments,
+  setSelectedKlasemenTournament,
+  addNotification,
+  persistActiveTournamentSnapshot,
+  clearActiveTournamentSnapshot,
+  syncSharedMatchesSnapshot,
+  watchTournamentStatsSync,
+  markTournamentStatsSyncError,
+  recordDbMetric,
+  recordDbError,
+  saveTournamentDetailAndSummary,
+  serverTimestamp,
+  toTournamentDetailCollectionLabel,
+  getActivePlayersFromTournament,
+  rebuildAmericanoFutureRounds,
+}: Params) => {
+  const handleNextRound = async () => {
+    const now = Date.now();
+    if (!tournament.rounds) return;
+    if (needsRegenerateFromRound !== null) {
+      addNotification(
+        'Regeneration Required',
+        `Delete round ${needsRegenerateFromRound}+ before continuing to the next round.`,
+        'system'
+      );
+      return;
+    }
+
+    const activePlayers = getActivePlayersFromTournament(tournament);
+    const activeRoundIndex = tournament.rounds.findIndex((round) => round?.matches?.some((match) => match?.status === 'active'));
+    const latestLockedRoundIndex = tournament.rounds.reduce((latestIdx, round, idx) => {
+      const hasPlayedMatch = (round.matches || []).some((match) => match.status !== 'pending');
+      return hasPlayedMatch ? idx : latestIdx;
+    }, -1);
+    const currentRoundIndex = activeRoundIndex !== -1 ? activeRoundIndex : latestLockedRoundIndex;
+    if (currentRoundIndex === -1) return;
+
+    const activeRound = tournament.rounds[currentRoundIndex];
+    if (tournament.format !== 'Match Play' && activeRound) {
+      const incompleteMatches = activeRound.matches.filter((match) => (
+        (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
+      ));
+      if (incompleteMatches.length > 0) {
+        const proceed = window.confirm(
+          `${incompleteMatches.length} matches in the active round have incomplete scores. Continue to the next round now?\n\nYou can still edit this round's scores, then delete the new round and regenerate.`
+        );
+        if (!proceed) return;
+        addNotification(
+          'Continue With Incomplete Scores',
+          `Round continued with ${incompleteMatches.length} incomplete matches.`,
+          'system'
+        );
+      }
+    }
+
+    const nextRoundId = currentRoundIndex + 2;
+    const isConfiguredLastRound = currentRoundIndex >= (tournament.numRounds - 1);
+    if (!isConfiguredLastRound && activePlayers.length < 4) {
+      addNotification(
+        'Not Enough Active Players',
+        'At least 4 active players are required to continue to the next round.',
+        'system'
+      );
+      return;
+    }
+
+    const hasPreGeneratedNextRound = Boolean(tournament.rounds[currentRoundIndex + 1]);
+    const shouldFinishBecauseNoPreparedRound = tournament.format === 'Americano' && !hasPreGeneratedNextRound;
+    const finalizedRounds = tournament.rounds.map((round, idx) => {
+      if (idx !== currentRoundIndex) return round;
+      return {
+        ...round,
+        matches: round.matches.map((match) => match ? ({
+          ...match,
+          status: 'completed' as const,
+          duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+        }) : match),
+      };
+    });
+
+    if (isConfiguredLastRound || shouldFinishBecauseNoPreparedRound) {
+      const finalizedTournamentId = typeof tournament.id === 'string' && tournament.id.trim()
+        ? tournament.id.trim()
+        : Math.random().toString(36).substr(2, 9);
+      const finalizedTournament: Tournament = {
+        ...tournament,
+        id: finalizedTournamentId,
+        rounds: finalizedRounds,
+        endedAt: now,
+      };
+      setTournament(finalizedTournament);
+      addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
+
+      if (user) {
+        const historyItem: TournamentHistory = {
+          id: finalizedTournamentId,
+          userId: user.uid,
+          name: tournament.name,
+          format: tournament.format,
+          backgroundId: tournament.backgroundId,
+          themeColorId: tournament.themeColorId,
+          criteria: tournament.criteria,
+          scoringType: tournament.scoringType,
+          date: new Date(),
+          startedAt: tournament.startedAt,
+          endedAt: now,
+          courts: tournament.courts,
+          totalPoints: tournament.totalPoints,
+          numRounds: tournament.numRounds,
+          numPlayers: tournament.players.length,
+          rounds: finalizedRounds,
+          players: tournament.players,
+          courtChanges: normalizeCourtChanges(tournament.courtChanges),
+          venueName: tournament.venueName,
+          location: tournament.location,
+          statsVersion: 0,
+        };
+        setTournaments((prev) => [historyItem, ...prev]);
+
+        try {
+          const tournamentSummary = {
+            id: historyItem.id,
+            userId: historyItem.userId,
+            name: historyItem.name,
+            format: historyItem.format,
+            ...(historyItem.backgroundId ? { backgroundId: historyItem.backgroundId } : {}),
+            ...(historyItem.themeColorId ? { themeColorId: historyItem.themeColorId } : {}),
+            ...(historyItem.criteria ? { criteria: historyItem.criteria } : {}),
+            ...(historyItem.scoringType ? { scoringType: historyItem.scoringType } : {}),
+            ...(typeof historyItem.startedAt === 'number' ? { startedAt: historyItem.startedAt } : {}),
+            ...(typeof historyItem.endedAt === 'number' ? { endedAt: historyItem.endedAt } : {}),
+            ...(Number.isFinite(Number(historyItem.courts)) ? { courts: Number(historyItem.courts) } : {}),
+            ...(Number.isFinite(Number(historyItem.totalPoints)) ? { totalPoints: Number(historyItem.totalPoints) } : {}),
+            numRounds: historyItem.numRounds,
+            numPlayers: historyItem.numPlayers,
+            ...(historyItem.venueName ? { venueName: historyItem.venueName } : {}),
+            ...(historyItem.location ? { location: historyItem.location } : {}),
+            statsVersion: 0,
+            hasDetail: true,
+            detailCollection: toTournamentDetailCollectionLabel,
+            date: serverTimestamp(),
+          };
+          await saveTournamentDetailAndSummary(
+            historyItem.id,
+            toFirestoreSafe(historyItem),
+            tournamentSummary
+          );
+          recordDbMetric({
+            flow: 'finalize',
+            operation: 'write',
+            count: 2,
+            label: 'tournament_detail_and_summary',
+            dbRole: 'primary',
+            collection: 'tournament_details+tournaments',
+          });
+          watchTournamentStatsSync(historyItem.id);
+        } catch (err) {
+          recordDbError({
+            flow: 'finalize',
+            label: 'tournament_detail_and_summary',
+            err,
+            dbRole: 'primary',
+            collection: 'tournament_details+tournaments',
+          });
+          console.error('Error saving tournament:', err);
+          markTournamentStatsSyncError(historyItem.id);
+        }
+      }
+
+      setSelectedKlasemenTournament(finalizedTournament);
+      await clearActiveTournamentSnapshot();
+      try {
+        await syncSharedMatchesSnapshot(finalizedTournament);
+      } catch (err) {
+        console.error('Shared match completion sync error:', err, {
+          authUid: auth.currentUser?.uid || null,
+          userUid: user?.uid || null,
+        });
+      }
+      return;
+    }
+
+    if (tournament.format === 'Mexicano') {
+      const playerStatsMap: Record<string, { id: string; w: number; pointsDiff: number; totalPoints: number; matchCount: number }> = {};
+      activePlayers.forEach((player) => {
+        playerStatsMap[player.id] = { id: player.id, w: 0, pointsDiff: 0, totalPoints: 0, matchCount: 0 };
+      });
+
+      tournament.rounds.forEach((round) => {
+        round.matches.forEach((match) => {
+          const isCurrentRound = match.roundId === currentRoundIndex + 1;
+          if (match.status === 'completed' || isCurrentRound) {
+            const scoreA = match.teamA.score;
+            const scoreB = match.teamB.score;
+            match.teamA.players.forEach((player) => {
+              const stats = playerStatsMap[player.id];
+              if (!stats) return;
+              stats.totalPoints += scoreA;
+              stats.pointsDiff += (scoreA - scoreB);
+              if (scoreA > scoreB) stats.w++;
+              stats.matchCount++;
+            });
+            match.teamB.players.forEach((player) => {
+              const stats = playerStatsMap[player.id];
+              if (!stats) return;
+              stats.totalPoints += scoreB;
+              stats.pointsDiff += (scoreB - scoreA);
+              if (scoreB > scoreA) stats.w++;
+              stats.matchCount++;
+            });
+          }
+        });
+      });
+
+      const compareByStanding = (a: Player, b: Player) => {
+        const statsA = playerStatsMap[a.id];
+        const statsB = playerStatsMap[b.id];
+        if (tournament.criteria === 'Matches Won') {
+          if (statsB.w !== statsA.w) return statsB.w - statsA.w;
+        } else {
+          if (statsB.totalPoints !== statsA.totalPoints) return statsB.totalPoints - statsA.totalPoints;
+        }
+        if (statsB.pointsDiff !== statsA.pointsDiff) return statsB.pointsDiff - statsA.pointsDiff;
+        return 0;
+      };
+
+      const sortedByFairnessThenStanding = [...activePlayers].sort((a, b) => {
+        const statsA = playerStatsMap[a.id];
+        const statsB = playerStatsMap[b.id];
+        if (!statsA || !statsB) return 0;
+        if (statsA.matchCount !== statsB.matchCount) return statsA.matchCount - statsB.matchCount;
+        const standingDiff = compareByStanding(a, b);
+        if (standingDiff !== 0) return standingDiff;
+        return Math.random() - 0.5;
+      });
+
+      const roundMatches: Match[] = [];
+      const playersNeeded = Math.min(Math.floor(activePlayers.length / 4) * 4, tournament.courts * 4);
+      const selectedPlayers = sortedByFairnessThenStanding.slice(0, playersNeeded);
+      const playersBye = sortedByFairnessThenStanding.slice(playersNeeded);
+
+      const playersInRound = [...selectedPlayers].sort((a, b) => {
+        const standingDiff = compareByStanding(a, b);
+        if (standingDiff !== 0) return standingDiff;
+        const statsA = playerStatsMap[a.id];
+        const statsB = playerStatsMap[b.id];
+        if (!statsA || !statsB) return 0;
+        if (statsA.matchCount !== statsB.matchCount) return statsA.matchCount - statsB.matchCount;
+        return Math.random() - 0.5;
+      });
+
+      for (let m = 0; m < playersNeeded / 4; m++) {
+        const p1 = playersInRound[m * 4];
+        const p2 = playersInRound[m * 4 + 1];
+        const p3 = playersInRound[m * 4 + 2];
+        const p4 = playersInRound[m * 4 + 3];
+
+        roundMatches.push({
+          id: `r${nextRoundId}-m${m + 1}`,
+          court: m + 1,
+          roundId: nextRoundId,
+          status: 'active',
+          startedAt: now,
+          teamA: { players: [p1, p4], score: 0, sets: [0] },
+          teamB: { players: [p2, p3], score: 0, sets: [0] },
+          currentSet: 0,
+          pointsA: '0',
+          pointsB: '0',
+        });
+      }
+
+      const nextTournament: Tournament = {
+        ...tournament,
+        rounds: [
+          ...tournament.rounds.map((round, idx) => (
+            idx === currentRoundIndex
+              ? {
+                  ...round,
+                  matches: round.matches.map((match) => ({
+                    ...match,
+                    status: 'completed' as const,
+                    duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+                  })),
+                }
+              : round
+          )),
+          { id: nextRoundId, matches: roundMatches, playersBye },
+        ],
+        endedAt: undefined,
+      };
+      setTournament(nextTournament);
+      await persistActiveTournamentSnapshot(nextTournament);
+      try {
+        await syncSharedMatchesSnapshot(nextTournament);
+      } catch (err) {
+        console.error('Shared match next round sync error:', err, {
+          authUid: auth.currentUser?.uid || null,
+          userUid: user?.uid || null,
+        });
+      }
+    } else if (tournament.format === 'Match Play') {
+      const shuffled = [...activePlayers].sort(() => Math.random() - 0.5);
+      const roundMatches: Match[] = [];
+      const playersNeeded = Math.min(Math.floor(shuffled.length / 4) * 4, tournament.courts * 4);
+      const playersInRound = shuffled.slice(0, playersNeeded);
+      const playersBye = shuffled.slice(playersNeeded);
+
+      for (let m = 0; m < playersNeeded / 4; m++) {
+        roundMatches.push({
+          id: `r${nextRoundId}-m${m + 1}`,
+          court: m + 1,
+          roundId: nextRoundId,
+          status: 'active',
+          startedAt: now,
+          teamA: { players: [playersInRound[m * 4], playersInRound[m * 4 + 1]], score: 0, sets: [0] },
+          teamB: { players: [playersInRound[m * 4 + 2], playersInRound[m * 4 + 3]], score: 0, sets: [0] },
+          currentSet: 0,
+          pointsA: '0',
+          pointsB: '0',
+        });
+      }
+
+      const nextTournament: Tournament = {
+        ...tournament,
+        rounds: [
+          ...tournament.rounds.map((round, idx) => (
+            idx === currentRoundIndex
+              ? {
+                  ...round,
+                  matches: round.matches.map((match) => ({
+                    ...match,
+                    status: 'completed' as const,
+                    duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+                  })),
+                }
+              : round
+          )),
+          { id: nextRoundId, matches: roundMatches, playersBye },
+        ],
+        endedAt: undefined,
+      };
+      setTournament(nextTournament);
+      await persistActiveTournamentSnapshot(nextTournament);
+      try {
+        await syncSharedMatchesSnapshot(nextTournament);
+      } catch (err) {
+        console.error('Shared match next round sync error:', err, {
+          authUid: auth.currentUser?.uid || null,
+          userUid: user?.uid || null,
+        });
+      }
+    } else {
+      const nextTournament: Tournament = {
+        ...tournament,
+        rounds: tournament.rounds.map((round, idx) => {
+          if (idx === currentRoundIndex) {
+            return {
+              ...round,
+              matches: round.matches.map((match) => ({
+                ...match,
+                status: 'completed' as const,
+                duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+              })),
+            };
+          }
+          if (idx === currentRoundIndex + 1) {
+            return {
+              ...round,
+              matches: round.matches.map((match) => ({
+                ...match,
+                status: 'active' as const,
+                startedAt: match.startedAt || now,
+              })),
+            };
+          }
+          return round;
+        }),
+        endedAt: undefined,
+      };
+      setTournament(nextTournament);
+      await persistActiveTournamentSnapshot(nextTournament);
+      try {
+        await syncSharedMatchesSnapshot(nextTournament);
+      } catch (err) {
+        console.error('Shared match next round sync error:', err, {
+          authUid: auth.currentUser?.uid || null,
+          userUid: user?.uid || null,
+        });
+      }
+    }
+
+    addNotification('New Round!', `Round ${nextRoundId} has started. Check your match schedule.`, 'match');
+  };
+
+  return { handleNextRound };
+};
