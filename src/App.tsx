@@ -775,7 +775,11 @@ export default function App() {
     addNotification,
     rebuildAmericanoFutureRounds,
   });
-  const { handleNextRound } = useRoundProgressionActions({
+  const {
+    handleNextRound,
+    handleStartAmericanoRound,
+    handleCompleteAmericanoRound,
+  } = useRoundProgressionActions({
     tournament,
     user,
     needsRegenerateFromRound,
@@ -1232,6 +1236,8 @@ export default function App() {
         currentUser={null}
         onUpdateScore={() => { }}
         onNextRound={() => { }}
+        onStartAmericanoRound={() => { }}
+        onCompleteAmericanoRound={() => { }}
         onUpdateRounds={() => false}
         onUpdateCourts={() => false}
         onUpdateActivePlayers={() => { }}
@@ -1467,6 +1473,8 @@ export default function App() {
             currentUser={user}
             onUpdateScore={handleUpdateScore}
             onNextRound={handleNextRound}
+            onStartAmericanoRound={handleStartAmericanoRound}
+            onCompleteAmericanoRound={handleCompleteAmericanoRound}
             onUpdateRounds={handleUpdateRounds}
             onUpdateCourts={handleUpdateCourts}
             onUpdateActivePlayers={handleUpdateActivePlayers}

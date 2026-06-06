@@ -31,6 +31,8 @@ type MatchActiveScreenProps = {
   currentUser?: any;
   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void;
   onNextRound: () => void | Promise<void>;
+  onStartAmericanoRound: (roundId: number) => void | Promise<void>;
+  onCompleteAmericanoRound: (roundId: number) => void | Promise<void>;
   onUpdateRounds: (numRounds: number) => boolean;
   onUpdateCourts: (numCourts: number) => boolean;
   onUpdateActivePlayers: (activePlayerIds: string[]) => void;
@@ -55,6 +57,8 @@ export const MatchActiveScreen = ({
   currentUser,
   onUpdateScore,
   onNextRound,
+  onStartAmericanoRound,
+  onCompleteAmericanoRound,
   onUpdateRounds,
   onUpdateCourts,
   onUpdateActivePlayers,
@@ -236,7 +240,7 @@ export const MatchActiveScreen = ({
   const completedRounds = tournament.rounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
   const totalRounds = Math.max(tournament.numRounds || 0, tournament.rounds.length);
   const isTournamentEnded = totalRounds > 0 && completedRounds >= totalRounds;
-  const shouldShowNextRoundCta = !isReadOnly && !isTournamentEnded;
+  const shouldShowNextRoundCta = !isReadOnly && !isTournamentEnded && tournament.format !== 'Americano';
   const statsSyncBadge = getStatsSyncBadge({
     isTournamentEnded,
     isSharedViewer,
@@ -512,11 +516,14 @@ export const MatchActiveScreen = ({
                 isCollapsed={isCollapsed}
                 isReadOnly={isReadOnly}
                 roundDuration={roundDuration}
+                totalPoints={tournament.totalPoints}
                 accentTheme={accentTheme}
                 scoreToneClass={accentTheme.text}
                 renderPlayerAvatar={renderPlayerAvatar}
                 onToggleRound={toggleRound}
                 onOpenScoreEditor={setScoringMatchId}
+                onStartRound={onStartAmericanoRound}
+                onCompleteRound={onCompleteAmericanoRound}
                 onOpenSwapPlayer={setSwappingPlayer}
               />
             </Fragment>

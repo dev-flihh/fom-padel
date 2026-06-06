@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronRight } from 'lucide-react';
+import { Check, ChevronRight, Play, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { type Match, type MatchFormat, type Player, type Round } from '../../types';
 
@@ -18,11 +18,14 @@ export const ActiveMatchRoundCard = ({
   isCollapsed,
   isReadOnly,
   roundDuration,
+  totalPoints,
   accentTheme,
   scoreToneClass,
   renderPlayerAvatar,
   onToggleRound,
   onOpenScoreEditor,
+  onStartRound,
+  onCompleteRound,
   onOpenSwapPlayer
 }: {
   round: Round;
@@ -31,24 +34,50 @@ export const ActiveMatchRoundCard = ({
   isCollapsed: boolean;
   isReadOnly: boolean;
   roundDuration: string;
+  totalPoints: number;
   accentTheme: {
     headingStrong: string;
+    text: string;
+    bgSoft: string;
+    borderSoft: string;
+    solid: string;
+    solidShadow: string;
     bgSoftHover: string;
   };
   scoreToneClass: string;
   renderPlayerAvatar: (player: Player, className: string, fallbackClassName?: string) => ReactNode;
   onToggleRound: (roundId: number) => void;
   onOpenScoreEditor: (matchId: string) => void;
+  onStartRound: (roundId: number) => void;
+  onCompleteRound: (roundId: number) => void;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
-}) => (
-  <div className="mb-4">
+}) => {
+  const isAmericano = format === 'Americano';
+  const hasActiveMatch = round.matches.some((match) => match.status === 'active');
+  const isRoundCompleted = round.matches.length > 0 && round.matches.every((match) => match.status === 'completed');
+  const hasRoundScoreProgress = round.matches.some((match) => {
+    const scoreA = match.teamA.score || 0;
+    const scoreB = match.teamB.score || 0;
+    return match.status === 'completed' || scoreA > 0 || scoreB > 0;
+  });
+  const readyScoreCount = getReadyScoreCount(round, totalPoints);
+  const roundActionLabel = isRoundCompleted
+    ? 'Round Completed'
+    : hasActiveMatch || hasRoundScoreProgress
+      ? `Complete Round ${round.id}`
+      : `Start Round ${round.id}`;
+  const roundActionIcon = isRoundCompleted ? Check : hasActiveMatch || hasRoundScoreProgress ? Zap : Play;
+  const RoundActionIcon = roundActionIcon;
+
+  return (
+    <div className="mb-4">
     <section className="bg-white/78 backdrop-blur-sm p-4 rounded-[20px] shadow-sm border border-white/45">
       <div className="flex items-center gap-2 mb-1.5">
         <button
           type="button"
           onClick={() => onToggleRound(round.id)}
           className="flex-1 flex items-center justify-between gap-3 tap-target text-left"
-          aria-label={isCollapsed ? `Buka round ${round.id}` : `Tutup round ${round.id}`}
+          aria-label={isCollapsed ? `Open round ${round.id}` : `Close round ${round.id}`}
         >
           <div className="flex items-center gap-2.5 min-w-0">
             <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", accentTheme.headingStrong)}>
@@ -108,9 +137,57 @@ export const ActiveMatchRoundCard = ({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {isAmericano && !isReadOnly && (
+        <div className={cn("pt-3", isCollapsed ? "mt-2 border-t border-ios-gray/10" : "mt-4 border-t border-ios-gray/10")}>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-ios-gray/60">
+              {readyScoreCount}/{round.matches.length} scores ready
+            </span>
+            {!isRoundCompleted && hasRoundScoreProgress && readyScoreCount < round.matches.length && (
+              <span className="text-[10px] font-bold text-amber-700">Incomplete scores</span>
+            )}
+          </div>
+          <button
+            type="button"
+            disabled={isRoundCompleted}
+            onClick={() => {
+              if (isRoundCompleted) return;
+              if (hasActiveMatch || hasRoundScoreProgress) {
+                onCompleteRound(round.id);
+                return;
+              }
+              onStartRound(round.id);
+            }}
+            className={cn(
+              "h-11 w-full rounded-xl text-[14px] font-bold tap-target inline-flex items-center justify-center gap-2 transition-all",
+              isRoundCompleted
+                ? "bg-emerald-50 text-emerald-700 cursor-default"
+                : cn("text-white shadow-xl active:scale-[0.98]", accentTheme.solid, accentTheme.solidShadow)
+            )}
+          >
+            <span>{roundActionLabel}</span>
+            <RoundActionIcon size={16} />
+          </button>
+        </div>
+      )}
     </section>
   </div>
-);
+  );
+};
+
+const getReadyScoreCount = (round: Round, totalPoints: number) => {
+  const hasPointTarget = (totalPoints || 0) > 0;
+  return round.matches.filter((match) => {
+    if (match.status === 'completed') return true;
+    const scoreA = match.teamA.score || 0;
+    const scoreB = match.teamB.score || 0;
+    if (hasPointTarget) {
+      return scoreA + scoreB === totalPoints && (scoreA > 0 || scoreB > 0);
+    }
+    return scoreA > 0 || scoreB > 0;
+  }).length;
+};
 
 const RoundMatchRow = ({
   match,
@@ -139,10 +216,10 @@ const RoundMatchRow = ({
   const canEditAnyAmericanoScore = !isReadOnly && format === 'Americano';
   const canEditScore = !isReadOnly && (canEditAnyAmericanoScore || isActiveRound || canEditCompletedScore);
   const statusLabel = match.status === 'completed'
-    ? 'Selesai'
+    ? 'Completed'
     : match.status === 'active'
-      ? 'Aktif'
-      : 'Belum main';
+      ? 'Active'
+      : 'Not Started';
 
   return (
     <>

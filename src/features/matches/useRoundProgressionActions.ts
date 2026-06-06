@@ -77,6 +77,93 @@ export const useRoundProgressionActions = ({
   getActivePlayersFromTournament,
   rebuildAmericanoFutureRounds,
 }: Params) => {
+  const persistActiveRoundUpdate = async (nextTournament: Tournament) => {
+    setTournament(nextTournament);
+    await persistActiveTournamentSnapshot(nextTournament);
+    try {
+      await syncSharedMatchesSnapshot(nextTournament);
+    } catch (err) {
+      console.error('Shared match round status sync error:', err, {
+        authUid: auth.currentUser?.uid || null,
+        userUid: user?.uid || null,
+      });
+    }
+  };
+
+  const handleStartAmericanoRound = async (roundId: number) => {
+    if (tournament.format !== 'Americano') return;
+    const safeRoundId = Math.floor(roundId || 0);
+    const targetRound = tournament.rounds.find((round) => round.id === safeRoundId);
+    if (!targetRound) return;
+
+    const now = Date.now();
+    const nextTournament: Tournament = {
+      ...tournament,
+      rounds: tournament.rounds.map((round) => {
+        if (round.id !== safeRoundId) return round;
+        return {
+          ...round,
+          matches: round.matches.map((match) => (
+            match.status === 'pending'
+              ? {
+                  ...match,
+                  status: 'active' as const,
+                  startedAt: match.startedAt || now,
+                }
+              : match
+          )),
+        };
+      }),
+      endedAt: undefined,
+    };
+
+    await persistActiveRoundUpdate(nextTournament);
+    addNotification('Round Started', `Round ${safeRoundId} is ready for scoring.`, 'match');
+  };
+
+  const handleCompleteAmericanoRound = async (roundId: number) => {
+    if (tournament.format !== 'Americano') return;
+    const safeRoundId = Math.floor(roundId || 0);
+    const targetRound = tournament.rounds.find((round) => round.id === safeRoundId);
+    if (!targetRound) return;
+
+    const incompleteMatches = targetRound.matches.filter((match) => (
+      (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
+    ));
+    if (incompleteMatches.length > 0) {
+      const proceed = window.confirm(
+        `${incompleteMatches.length} matches in Round ${safeRoundId} have incomplete scores. Complete this round anyway?`
+      );
+      if (!proceed) return;
+      addNotification(
+        'Round Completed With Incomplete Scores',
+        `Round ${safeRoundId} was completed with ${incompleteMatches.length} incomplete matches.`,
+        'system'
+      );
+    }
+
+    const now = Date.now();
+    const nextTournament: Tournament = {
+      ...tournament,
+      rounds: tournament.rounds.map((round) => {
+        if (round.id !== safeRoundId) return round;
+        return {
+          ...round,
+          matches: round.matches.map((match) => ({
+            ...match,
+            status: 'completed' as const,
+            startedAt: match.startedAt || now,
+            duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+          })),
+        };
+      }),
+      endedAt: undefined,
+    };
+
+    await persistActiveRoundUpdate(nextTournament);
+    addNotification('Round Completed', `Round ${safeRoundId} has been completed.`, 'match');
+  };
+
   const handleNextRound = async () => {
     const now = Date.now();
     if (!tournament.rounds) return;
@@ -455,5 +542,9 @@ export const useRoundProgressionActions = ({
     addNotification('New Round!', `Round ${nextRoundId} has started. Check your match schedule.`, 'match');
   };
 
-  return { handleNextRound };
+  return {
+    handleNextRound,
+    handleStartAmericanoRound,
+    handleCompleteAmericanoRound,
+  };
 };
