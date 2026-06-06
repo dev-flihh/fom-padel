@@ -61,7 +61,7 @@ export const ScoreEditorModal = ({
         >
           <div className="p-4">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-[17px] font-bold tracking-tight">Update Score Court {match.court}</h3>
+              <h3 className="text-[17px] font-bold tracking-tight">Update Score R{match.roundId} Court {match.court}</h3>
               <button onClick={onClose} className="p-2 bg-ios-gray/10 rounded-full tap-target">
                 <X size={18} className="text-on-surface" />
               </button>

@@ -136,13 +136,29 @@ const RoundMatchRow = ({
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
 }) => {
   const canEditCompletedScore = !isReadOnly && match.status === 'completed' && format !== 'Match Play';
-  const canEditScore = !isReadOnly && (isActiveRound || canEditCompletedScore);
+  const canEditAnyAmericanoScore = !isReadOnly && format === 'Americano';
+  const canEditScore = !isReadOnly && (canEditAnyAmericanoScore || isActiveRound || canEditCompletedScore);
+  const statusLabel = match.status === 'completed'
+    ? 'Selesai'
+    : match.status === 'active'
+      ? 'Aktif'
+      : 'Belum main';
 
   return (
     <>
-      <div className="flex justify-start mb-3">
+      <div className="flex items-center justify-between gap-2 mb-3">
         <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
           Court {match.court}
+        </span>
+        <span className={cn(
+          "shrink-0 rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-[0.09em] leading-none",
+          match.status === 'completed'
+            ? "bg-emerald-50 text-emerald-700"
+            : match.status === 'active'
+              ? "bg-sky-50 text-sky-700"
+              : "bg-ios-gray/8 text-ios-gray/60"
+        )}>
+          {statusLabel}
         </span>
       </div>
 
