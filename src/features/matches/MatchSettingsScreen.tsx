@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence } from 'motion/react';
 import { auth } from '../../firebase';
 import { type AppNotification, type Player, type Tournament } from '../../types';
@@ -17,6 +17,7 @@ import { useMatchSettingsFriends } from './useMatchSettingsFriends';
 import { useMatchSettingsPlayers } from './useMatchSettingsPlayers';
 import { useMatchSettingsRosterSync } from './useMatchSettingsRosterSync';
 import { useMatchSettingsWizard } from './useMatchSettingsWizard';
+import { dedupePlayersById, sortPlayersByName } from './matchSetupUtils';
 import { CRITERIA_IMPACT_COPY, FORMAT_IMPACT_COPY, MATCH_SETTINGS_WIZARD_STEPS, SCORING_IMPACT_COPY } from './matchSettingsCopy';
 import { getMatchSettingsSummary } from './matchSettingsSummary';
 import { MATCH_SETTINGS_WIZARD_CLASSNAMES } from './matchSettingsStyles';
@@ -56,6 +57,41 @@ export const MatchSettingsScreen = ({
 }) => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const settingsUserUid = auth.currentUser?.uid || currentUser?.uid;
+  const currentUserPlayer = useMemo<Player | null>(() => {
+    const uid = String(settingsUserUid || '').trim();
+    if (!uid) return null;
+
+    const displayName = (
+      currentUser?.displayName ||
+      currentUser?.email?.split('@')[0] ||
+      auth.currentUser?.displayName ||
+      auth.currentUser?.email?.split('@')[0] ||
+      'You'
+    ).trim();
+    const initials = displayName
+      .split(' ')
+      .filter(Boolean)
+      .map((namePart: string) => namePart[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'ME';
+
+    return {
+      id: uid,
+      name: displayName,
+      rating: Number(currentUser?.mmr || 0),
+      source: 'fom',
+      avatar: currentUser?.photoURL || auth.currentUser?.photoURL || '',
+      initials,
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
+    };
+  }, [
+    currentUser?.displayName,
+    currentUser?.email,
+    currentUser?.mmr,
+    currentUser?.photoURL,
+    settingsUserUid
+  ]);
   const { friends, loadingFriends } = useMatchSettingsFriends(settingsUserUid);
   const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
   const {
@@ -75,7 +111,6 @@ export const MatchSettingsScreen = ({
   const playersSectionRef = useRef<HTMLElement | null>(null);
   const {
     selectedPlayers,
-    sortedSelectedPlayers,
     availablePlayers,
     togglePlayer,
     addPlayer
@@ -85,11 +120,24 @@ export const MatchSettingsScreen = ({
     setAllPlayers,
     setTournament
   });
+  const effectiveSelectedPlayers = useMemo(
+    () => dedupePlayersById(currentUserPlayer ? [currentUserPlayer, ...selectedPlayers] : selectedPlayers),
+    [currentUserPlayer, selectedPlayers]
+  );
+  const effectiveSortedSelectedPlayers = useMemo(
+    () => sortPlayersByName(effectiveSelectedPlayers),
+    [effectiveSelectedPlayers]
+  );
+  const effectiveAvailablePlayers = useMemo(() => {
+    const selectedIds = new Set(effectiveSelectedPlayers.map((player) => player.id));
+    return availablePlayers.filter((player) => !selectedIds.has(player.id));
+  }, [availablePlayers, effectiveSelectedPlayers]);
   useMatchSettingsRosterSync({
     currentUser,
     currentUserUid: settingsUserUid,
     friends,
-    setAllPlayers
+    setAllPlayers,
+    setTournament
   });
   const {
     format,
@@ -115,7 +163,7 @@ export const MatchSettingsScreen = ({
   } = useMatchSettingsDraft({
     tournament,
     setTournament,
-    selectedPlayers,
+    selectedPlayers: effectiveSelectedPlayers,
     location,
     selectedBackgroundId,
     onGenerate
@@ -137,6 +185,10 @@ export const MatchSettingsScreen = ({
     setIsAddModalOpen(false);
     onAddNotification('New Player!', `${newPlayer.name} has been added to the player list.`, 'system');
   };
+  const handleTogglePlayer = (player: Player) => {
+    if (player.id === settingsUserUid) return;
+    togglePlayer(player);
+  };
 
   const {
     isReady,
@@ -148,7 +200,7 @@ export const MatchSettingsScreen = ({
     courts,
     numRounds,
     points,
-    selectedPlayerCount: selectedPlayers.length
+    selectedPlayerCount: effectiveSelectedPlayers.length
   });
   const wizardSteps = MATCH_SETTINGS_WIZARD_STEPS;
   const {
@@ -174,7 +226,7 @@ export const MatchSettingsScreen = ({
     isReady,
     missingPlayersCount,
     courts,
-    selectedPlayerCount: selectedPlayers.length,
+    selectedPlayerCount: effectiveSelectedPlayers.length,
     onComplete: handleGenerate
   });
   const { backgroundOptions, effectiveSelectedBackgroundId } = useMatchBackgroundSelection({
@@ -259,8 +311,8 @@ export const MatchSettingsScreen = ({
       {settingsStep === 2 && (
         <PlayersStep
           sectionRef={playersSectionRef}
-          selectedPlayers={sortedSelectedPlayers}
-          availablePlayers={availablePlayers}
+          selectedPlayers={effectiveSortedSelectedPlayers}
+          availablePlayers={effectiveAvailablePlayers}
           loadingFriends={loadingFriends}
           isReady={isReady}
           missingPlayersCount={missingPlayersCount}
@@ -271,7 +323,7 @@ export const MatchSettingsScreen = ({
           wizardSubtitleClass={wizardSubtitleClass}
           onOpenFriends={onOpenFriends}
           onOpenAddPlayer={() => setIsAddModalOpen(true)}
-          onTogglePlayer={togglePlayer}
+          onTogglePlayer={handleTogglePlayer}
         />
       )}
 
@@ -298,7 +350,7 @@ export const MatchSettingsScreen = ({
           formatIcon={FORMAT_IMPACT_COPY[format].icon}
           criteria={criteria}
           structureLabel={reviewStructureLabel}
-          playerCount={selectedPlayers.length}
+          playerCount={effectiveSelectedPlayers.length}
           selectedThemeColor={selectedThemeColor}
           selectedBackgroundId={effectiveSelectedBackgroundId}
           isReady={isReady}
