@@ -414,6 +414,126 @@ const AwardsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'awards' }
   </div>
 );
 
+// Sertifikat Cupu — adaptasi 9:16 dari kartu sertifikat krem/emas Klasemen.
+// Punya branding sendiri (logo + ornamen), jadi tanpa brand footer standar.
+const CertificateSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'certificate' }> }) => (
+  <div className="relative h-full w-full overflow-hidden bg-[#FBF7EC] p-[16px] text-[#101010]">
+    <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_50%_-8%,rgba(201,161,74,0.24),rgba(251,247,236,0)_54%),linear-gradient(135deg,rgba(255,255,255,0.56),rgba(245,226,175,0.28))]" />
+    <div className="absolute inset-[12px] rounded-lg border-2 border-[#C9A14A]" />
+    <div className="absolute inset-[17px] rounded-[5px] border border-[#C9A14A]/45" />
+    <div className="absolute inset-0 opacity-[0.035] bg-[url('/assets/fom-logomark-app.png')] bg-[length:44px_44px] rotate-[-10deg] scale-125" />
+
+    <div className="relative flex h-full flex-col items-center px-7 pb-9 pt-10 text-center">
+      <img src={LOGO_ON_LIGHT} alt="FOM Play" className="h-[24px] w-auto object-contain" />
+
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
+        <p className="text-[10px] font-black uppercase leading-none tracking-[0.30em] text-[#B7861F]">Sertifikat</p>
+        <h2 className="font-ceremony mt-2 text-[36px] font-normal leading-[1.04] text-[#101010]">{slide.title}</h2>
+
+        <p className="mt-5 max-w-[262px] text-[12px] font-medium leading-[1.55] text-[#6E6E73]">
+          Dengan ini menyatakan secara sah dan tidak bisa diganggu gugat bahwa
+        </p>
+
+        <p
+          className="font-ceremony mt-3 max-w-[288px] border-b border-[#C9A14A]/55 px-4 pb-2 font-normal italic leading-[1.1] text-[#8A6A1F]"
+          style={{ fontSize: slide.recipientName.length > 36 ? 26 : slide.recipientName.length > 25 ? 30 : 35 }}
+        >
+          {slide.recipientName}
+        </p>
+
+        <p className="mt-4 max-w-[276px] text-[12px] font-medium leading-[1.55] text-[#6E6E73]">
+          {slide.bodyCopy}
+        </p>
+
+        {slide.note && (
+          <div className="mt-5 w-full rounded-2xl border border-[#C9A14A]/35 bg-white/52 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.70)]">
+            <p className="text-[8px] font-black uppercase leading-none tracking-[0.15em] text-[#B7861F]">Reason</p>
+            <p className="mt-2 text-[11px] font-bold italic leading-snug text-[#6B5A38]">{slide.note}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="grid w-full grid-cols-[92px_minmax(0,1fr)_68px] items-end gap-3">
+        <div className="min-w-0 text-left">
+          <p className="font-ceremony text-[19px] font-normal italic leading-none text-[#101010]">Panitia Mabar</p>
+          <p className="mt-1.5 w-[90px] border-t border-black/30 pt-1.5 text-[8px] font-black uppercase leading-none tracking-[0.12em] text-[#9A9AA0]">
+            {slide.witnessCount} saksi mata
+          </p>
+        </div>
+
+        <div className="justify-self-center rounded-2xl border border-[#C9A14A]/60 bg-[#101010] px-4 py-3.5 text-center rotate-[-1.5deg]">
+          <p className="max-w-[116px] text-[13px] font-black uppercase leading-tight text-[#E8C45A]">{slide.title} {slide.emoji || '👑'}</p>
+          <p className="mt-1.5 text-[7px] font-black uppercase leading-none tracking-[0.14em] text-[#E8C45A]/55">Penobatan Sah</p>
+        </div>
+
+        <div className="relative h-[68px] w-[68px] shrink-0 justify-self-end">
+          <div className="absolute inset-0 rotate-[-14deg] rounded-full border-2 border-[#B7861F]/65" />
+          <div className="absolute inset-[8px] rotate-[-14deg] rounded-full border border-[#B7861F]/50" />
+          <div className="absolute inset-[8px] flex rotate-[-14deg] items-center justify-center text-center text-[6.5px] font-black uppercase leading-[1.5] tracking-[0.10em] text-[#8A6A1F]">
+            Certified<br />Cupu<br />{new Date().getFullYear()}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+// My Card — slide personal pemain yang login. Cover photo (kalau ada) jadi
+// background full-bleed; tanpa foto pakai orb + confetti standar Rewind.
+const MyCardSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'my-card' }> }) => (
+  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
+    {slide.photoUrl ? (
+      <>
+        <img src={slide.photoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.52)_0%,rgba(0,0,0,0.28)_38%,rgba(0,0,0,0.88)_100%)]" />
+      </>
+    ) : (
+      <OrbAndConfetti />
+    )}
+    <div className="relative flex items-center justify-between">
+      <Eyebrow>My Card</Eyebrow>
+      {slide.officialRank > 0 && (
+        <span className="rounded-full border border-[#E65E14]/40 bg-[#E65E14]/15 px-3 py-1.5 text-[9.5px] font-black tracking-[0.12em] text-[#FF9A66]">
+          #{slide.officialRank} OF {slide.playerCount}
+        </span>
+      )}
+    </div>
+    <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center text-center">
+      <Avatar player={slide.player} size={116} className="border-[3px] border-white/30" />
+      <p className="mt-4 max-w-full px-2 text-[32px] font-extrabold leading-[1.08] tracking-[-0.02em] text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+        {slide.player.name}
+      </p>
+      <p className="mt-1.5 max-w-[280px] truncate text-[11px] font-black uppercase tracking-[0.14em] text-white/55">
+        {slide.matchName}{slide.dateLabel ? ` · ${slide.dateLabel}` : ''}
+      </p>
+      <StatStrip
+        items={[
+          { label: 'Record', value: slide.record },
+          { label: 'Diff', value: formatDiff(slide.diff), className: diffColorDark(slide.diff) },
+          { label: 'Pts', value: String(slide.pts) },
+        ]}
+      />
+      {typeof slide.toxicRank === 'number' && (
+        <div className="mt-5 w-full rounded-[18px] border border-[#E8C45A]/25 bg-[#E8C45A]/[0.08] px-4 py-3.5 text-left backdrop-blur-[2px]">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[9.5px] font-black uppercase leading-none tracking-[0.16em] text-[#E8C45A]">
+              Hall of Shame · #{slide.toxicRank}
+            </p>
+            {slide.intensityLabel && (
+              <span className="rounded-full bg-[linear-gradient(135deg,#E8C45A,#B7861F)] px-2 py-1 text-[8px] font-black uppercase tracking-[0.1em] text-[#16110a]">
+                {slide.intensityLabel}
+              </span>
+            )}
+          </div>
+          {slide.roast && (
+            <p className="mt-2 text-[12px] italic leading-snug text-[#F3E3B5]/80">“{slide.roast}”</p>
+          )}
+        </div>
+      )}
+    </div>
+  </div>
+);
+
 const MetaStrip = ({ cells, gold }: { cells: Array<{ label: string; value: string }>; gold?: boolean }) => (
   <div className={cn('relative mt-3 flex border-y py-2.5', gold ? 'border-[#E8C45A]/20' : 'border-black/10')}>
     {cells.map((cell, index) => (
@@ -570,20 +690,22 @@ export const RewindSlideView = ({ slide, shortLink, qrDataUrl }: { slide: Rewind
       case 'photos': return <PhotosSlide slide={slide} />;
       case 'cupu': return <CupuSlide slide={slide} />;
       case 'awards': return <AwardsSlide slide={slide} />;
+      case 'certificate': return <CertificateSlide slide={slide} />;
       case 'standings': return <StandingsSlide slide={slide} />;
       case 'standings-toxic': return <ToxicStandingsSlide slide={slide} />;
+      case 'my-card': return <MyCardSlide slide={slide} />;
       case 'outro': return <OutroSlide slide={slide} shortLink={shortLink} qrDataUrl={qrDataUrl} />;
       default: return null;
     }
   })();
 
-  // Cover & Outro are full-bleed photo slides with their own branding; every
-  // other slide gets the consistent brand footer strip (logo + link).
-  const hasOwnFooter = slide.type === 'cover' || slide.type === 'outro';
+  // Cover, Outro & Sertifikat are full-bleed slides with their own branding;
+  // every other slide gets the consistent brand footer strip (logo + link).
+  const hasOwnFooter = slide.type === 'cover' || slide.type === 'outro' || slide.type === 'certificate';
   const isLight = slide.type === 'standings';
 
   return (
-    <div className={cn('relative flex h-full w-full flex-col overflow-hidden', isLight ? 'bg-white' : 'bg-[#111111]')}>
+    <div className={cn('relative flex h-full w-full flex-col overflow-hidden', isLight ? 'bg-white' : slide.type === 'certificate' ? 'bg-[#FBF7EC]' : 'bg-[#111111]')}>
       <div className="min-h-0 flex-1">{body}</div>
       {!hasOwnFooter && (
         <div className="shrink-0 px-7 pb-6">

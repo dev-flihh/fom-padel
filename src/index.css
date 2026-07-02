@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Helvetica Neue", Arial, sans-serif;
-  --font-display: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Helvetica Neue", Arial, sans-serif;
+  /* Inter dipakai di semua platform supaya iOS/Android/PC seragam
+     (SF Pro tidak bisa di-embed legal di luar Apple). */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Inter", -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Helvetica Neue", Arial, sans-serif;
   --font-serif: "Instrument Serif", Georgia, serif;
   
   --color-surface: #F7F7FA;
@@ -391,14 +393,16 @@
     }
   }
 
+  /* Sumbu X ditangani class Tailwind -translate-x-1/2 (properti `translate`
+     terpisah di v4) — keyframes tidak boleh ikut menggeser X, nanti dobel. */
   @keyframes standings-mini-header-in {
     0% {
       opacity: 0;
-      transform: translate3d(-50%, -8px, 0) scale(0.985);
+      transform: translateY(-8px) scale(0.985);
     }
     100% {
       opacity: 1;
-      transform: translate3d(-50%, 0, 0) scale(1);
+      transform: translateY(0) scale(1);
     }
   }
 

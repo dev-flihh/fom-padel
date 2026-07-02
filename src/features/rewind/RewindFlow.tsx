@@ -51,6 +51,7 @@ export const RewindFlow = ({
   toxicStandings,
   shareId,
   currentUserUid,
+  currentUserPlayerId,
   isReadOnly,
   entrySource = 'banner',
   existingResult,
@@ -62,6 +63,8 @@ export const RewindFlow = ({
   toxicStandings: ToxicStandingsData;
   shareId?: string;
   currentUserUid?: string;
+  // Player id milik user login di match ini — memunculkan slide personal "My Card".
+  currentUserPlayerId?: string;
   // Shared viewer: replay persisted slides only — no upload/generate/regenerate.
   isReadOnly?: boolean;
   entrySource?: 'banner' | 'finish_flow';
@@ -121,7 +124,8 @@ export const RewindFlow = ({
     photos,
     shareId,
     copyBank,
-  }), [tournament, sortedPlayers, toxicStandings, photos, shareId, copyBank]);
+    currentUserPlayerId,
+  }), [tournament, sortedPlayers, toxicStandings, photos, shareId, copyBank, currentUserPlayerId]);
 
   // Real scannable QR for the outro slide, rendered as a data URL so the
   // html-to-image exporter can inline it like any other image.
@@ -291,7 +295,9 @@ export const RewindFlow = ({
         tournamentId: String(tournament.id),
         currentUid: currentUserUid,
         shareId,
-        slides: generated,
+        // My Card itu personal milik yang generate — jangan ikut dipersist
+        // ke shared viewer / History replay.
+        slides: generated.filter((slide) => slide.type !== 'my-card'),
       });
     }
   };

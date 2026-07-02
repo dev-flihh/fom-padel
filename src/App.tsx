@@ -599,7 +599,7 @@ export default function App() {
           ['tox-p8', 'Sonya Vera', 'SV', 3.4],
         ];
     const players: Player[] = toxicPlayerRows.map(([id, name, initials, rating], index) => ({
-      id: initialE2EScenario === 'toxic-empty' && index === 0 ? 'e2e-user' : String(id),
+      id: (initialE2EScenario === 'toxic-empty' || initialE2EScenario === 'toxic-standings') && index === 0 ? 'e2e-user' : String(id),
       name: String(name),
       initials: String(initials),
       rating: Number(rating),

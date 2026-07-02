@@ -104,7 +104,9 @@ test.describe('Active Match Finish Flow', () => {
     await expect(page.getByRole('heading', { name: 'E2E Toxic Ticker' })).toBeVisible();
     await expect(page.getByText('Official').first()).toBeVisible();
     await expect(page.getByText('Hall of Shame').first()).toBeVisible();
-    await expect(page.getByText('3/3').first()).toBeVisible();
+    // Ended match: badge "Ended" + baris meta stats (rounds · durasi · pts).
+    await expect(page.getByText('Ended', { exact: true })).toBeVisible();
+    await expect(page.getByText(/3 rounds/i)).toBeVisible();
   });
 
   test('Americano incomplete round uses an in-app confirmation sheet', async ({ page }) => {

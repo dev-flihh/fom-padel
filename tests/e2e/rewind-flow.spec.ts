@@ -33,11 +33,11 @@ test.describe('FOM Rewind Flow', () => {
     await page.mouse.click(box.x + box.width * 0.2, box.y + box.height / 2);
     await expect(page.getByText(/1 \/ \d+ · Cover/)).toBeVisible();
 
-    // Toxic ON fixture → gold slides included; count between 8 and 12
+    // Toxic ON fixture → gold slides + max 3 sertifikat (+ My Card kalau login)
     const label = await page.getByText(/1 \/ \d+ · Cover/).innerText();
     const total = Number(label.match(/1 \/ (\d+)/)?.[1] || 0);
     expect(total).toBeGreaterThanOrEqual(8);
-    expect(total).toBeLessThanOrEqual(13);
+    expect(total).toBeLessThanOrEqual(17);
 
     // Close viewer → banner switches to "View FOM Rewind" (in-session state)
     await page.getByRole('button', { name: 'Tutup Rewind' }).click();

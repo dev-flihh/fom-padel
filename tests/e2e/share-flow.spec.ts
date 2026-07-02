@@ -41,7 +41,7 @@ test.describe('Share Flow', () => {
     await page.getByRole('button', { name: /Standings/i }).click();
     await expect(page.getByText('Standings').first()).toBeVisible();
 
-    await page.getByRole('button', { name: 'Share Standings', exact: true }).click();
+    await page.getByRole('button', { name: 'Share match link', exact: true }).click();
 
     await expect(page.getByText('Copied Link')).toBeVisible();
     const copiedTexts = await page.evaluate(() => (window as any).__copiedTexts as string[]);
@@ -75,16 +75,10 @@ test.describe('Share Flow', () => {
     await expect(page.getByText('This page is read-only.')).toBeVisible();
     await expect(page.getByText('Wanna try FOM Play?')).toBeVisible();
     await expect(page.getByText('View Only')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Share options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Share Link' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Standings Card' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Login to get your Match Card' })).toBeDisabled();
-    await page.getByRole('menuitem', { name: 'Standings Card' }).click();
-    const exporterText = await page.locator('[data-share-exporter="true"]').innerText();
-    expect(exporterText).toContain('0W · 0L · 0M');
-    expect(exporterText).toContain('+1');
-    expect(exporterText).toContain('PTS · DIFF');
-    await expect(page.getByRole('dialog', { name: 'Share card preview' })).toBeVisible();
+    // Semua generate image pindah ke FOM Rewind — share cukup satu tombol link.
+    await page.getByRole('button', { name: 'Share match link' }).click();
+    await expect(page.getByText('Copied Link')).toBeVisible();
+    await expect(page.locator('[data-share-exporter="true"]')).toHaveCount(0);
 
     const cta = page.getByRole('link', { name: /Start your match/i });
     await expect(cta).toBeVisible();

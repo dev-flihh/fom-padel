@@ -109,20 +109,18 @@ test.describe('Toxic Standings', () => {
     await page.goto('/app?e2e=toxic-standings');
 
     await expect(page.getByText('Final Hall of Shame').first()).toBeVisible();
-    await expect(page.getByText('Locked Final').first()).toBeVisible();
-    await expect(page.getByText('Results locked after finish.')).toBeVisible();
     await expect(page.getByText(/The Cupu D.Or Final 2026/)).toBeVisible();
     await expect(page.getByText('OFFICIAL UPSIDE DOWN').first()).toBeVisible();
     await expect(page.getByText('Savage').first()).toBeVisible();
     await expect(page.getByText(/King of Cupu/i).first()).toBeVisible();
     await expect(page.getByText(/Kalah terbesar 0-6 vs Falih & Endo/i).first()).toBeVisible();
-    await expect(page.getByText(/0W-3L, DIFF -15\. Takhta bawah valid/i)).toBeVisible();
-    await expect(page.getByText(/5 pts, DIFF -12\. Nyalip takhta dari pinggir/i)).toBeVisible();
-    await expect(page.getByText(/7 pts, DIFF -9\. Masih bau zona cupu/i)).toBeVisible();
+    await expect(page.getByText(/Takhta bawah valid/i)).toBeVisible();
+    await expect(page.getByText(/3 PTS · -15/i)).toBeVisible();
+    await expect(page.getByText(/Nyalip takhta dari pinggir/i)).toBeVisible();
+    await expect(page.getByText(/Masih bau zona cupu/i).first()).toBeVisible();
     await expect(page.getByText(/Amunisi Grup WA/i)).toBeVisible();
-    await expect(page.getByText(/Sertifikat Resmi/i).first()).toBeVisible();
-    await expect(page.getByText(/Tap to open certificate/i).first()).toBeVisible();
-    await expect(page.getByText(/Certificate #01/i)).toBeVisible();
+    await expect(page.getByText(/Lihat evidence/i).first()).toBeVisible();
+    await expect(page.getByText(/5 Award/i)).toBeVisible();
     await expect(page.getByText('Duo Petaka')).toBeVisible();
     await expect(page.getByText(/2x main bareng/i)).toBeVisible();
     const airlanggaRow = page.getByRole('button', { name: /Expand Airlangga Sundawa shame evidence/i });
@@ -145,11 +143,10 @@ test.describe('Toxic Standings', () => {
     await expect(page.locator(`#${kingDetailId}`).getByText(/Kalah terbesar 0-6 vs Falih & Endo/i)).toBeVisible();
     await expect(page.locator(`#${kingDetailId}`).getByText('Evidence timeline')).toBeVisible();
     await expect(page.locator(`#${kingDetailId}`).getByText('Kalah 0-6')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Share the Shame' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Share match link', exact: true })).toBeVisible();
 
     await page.getByLabel('Standings', { exact: true }).click();
     await expect(page.getByText('Standings').first()).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Share Standings', exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: /Hall of Shame/i }).click();
     await expect(page.getByText(/All roasts are about this match only/i)).toBeVisible();
@@ -225,20 +222,10 @@ test.describe('Toxic Standings', () => {
     await expect(page.getByText('Score one game to start the official table.')).toBeVisible();
     await expect(page.getByText('Score dulu, standings menyusul.')).toBeVisible();
     await expect(page.getByText(/W\/L\/D\/M, points, dan diff/i)).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Share Match Link' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Share match link', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Share Standings', exact: true })).toHaveCount(0);
-    await page.getByLabel('Share options').click();
-    await expect(page.getByRole('menuitem', { name: 'Share Link' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Score first: Standings Card' })).toBeDisabled();
-    await expect(page.getByRole('menuitem', { name: 'Score first: Shame Card' })).toBeDisabled();
-    await expect(page.getByRole('menuitem', { name: 'Score first: My Match Card' })).toBeDisabled();
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('menuitem', { name: 'Share Link' })).toHaveCount(0);
-    await expect(page.getByLabel('Share options')).toBeFocused();
-    const exporterText = await page.locator('[data-share-exporter="true"]').innerText();
-    expect(exporterText).toContain('SHARE CARD LOCKED');
-    expect(exporterText).not.toContain('Ranking');
-    expect(exporterText).not.toContain('Fadhlil');
+    await expect(page.getByLabel('Share options')).toHaveCount(0);
+    await expect(page.locator('[data-share-exporter="true"]')).toHaveCount(0);
 
     const hasHorizontalOverflow = await page.evaluate(() => (
       document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
@@ -279,7 +266,7 @@ test.describe('Toxic Standings', () => {
     await expect(main.getByText('Skor dulu')).toBeVisible();
     await expect(main.getByText('Ticker hidup')).toBeVisible();
     await expect(main.getByText('Award nanti')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Share Match Link' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Share match link', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Share the Shame' })).toHaveCount(0);
     await expect(page.getByText(/King of Cupu/i)).toHaveCount(0);
   });
@@ -344,7 +331,7 @@ test.describe('Toxic Standings', () => {
   test('shared toxic CTA reuses the standings link', async ({ page }) => {
     await page.goto('/app?e2e=toxic-shared');
 
-    await page.getByRole('button', { name: 'Share the Shame' }).click();
+    await page.getByRole('button', { name: 'Share match link', exact: true }).click();
     await expect(page.getByText('Copied Link')).toBeVisible();
 
     const copiedTexts = await page.evaluate(() => (window as any).__copiedTexts as string[]);
@@ -354,47 +341,22 @@ test.describe('Toxic Standings', () => {
     expect(lastCopiedText).not.toContain('view=toxic');
   });
 
-  test('shame card opens a share card preview', async ({ page }) => {
+  test('share cards moved to FOM Rewind — card menus are gone', async ({ page }) => {
     await page.goto('/app?e2e=toxic-standings');
 
-    await page.getByRole('button', { name: 'Share options' }).click();
-    await expect(page.getByRole('menuitem', { name: 'Shame Card' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: 'Login to get your Match Card' })).toBeDisabled();
-    await page.getByRole('menuitem', { name: 'Shame Card' }).click();
-
-    const exporterText = await page.locator('[data-share-exporter="true"]').innerText();
-    expect(exporterText).toContain('0W-3L');
-    expect(exporterText).toContain('DIFF -15');
-    expect(exporterText).toContain('WORST 0-6');
-
-    const dialog = page.getByRole('dialog', { name: 'Share card preview' });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByText('1/2 cards')).toBeVisible();
-    await expect(dialog.locator('img[alt="Generated share card"]')).toBeVisible();
-    const closePreviewButton = dialog.getByRole('button', { name: 'Close story preview' });
-    const downloadShareCardButton = dialog.getByRole('button', { name: 'Download share card' });
-    await expect(closePreviewButton).toBeFocused();
-    await page.keyboard.press('Tab');
-    await expect(downloadShareCardButton).toBeFocused();
-    await page.keyboard.press('Tab');
-    await expect(closePreviewButton).toBeFocused();
-    await page.keyboard.press('Escape');
-    await expect(dialog).toHaveCount(0);
-    await expect(page.getByLabel('Share options')).toBeFocused();
+    await expect(page.getByRole('button', { name: 'Share match link' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Share options' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Get My Match Card' })).toHaveCount(0);
+    await expect(page.locator('[data-share-exporter="true"]')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Bikin FOM Rewind' })).toBeVisible();
   });
 
-  test('award certificate opens a 4:5 preview with download action', async ({ page }) => {
+  test('award card scrolls to the player evidence in the Full Shame Table', async ({ page }) => {
     await page.goto('/app?e2e=toxic-standings');
 
-    await page.getByRole('button', { name: /Open certificate Duo Petaka/i }).click();
+    await page.getByRole('button', { name: /Lihat Duo Petaka di Full Shame Table/i }).click();
 
-    const dialog = page.getByRole('dialog', { name: 'Share card preview' });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole('button', { name: /Download/i })).toBeVisible();
-
-    const image = dialog.locator('img[alt="Generated share card"]');
-    await expect(image).toBeVisible();
-    await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalWidth)).toBe(1080);
-    await expect.poll(async () => image.evaluate((node) => (node as HTMLImageElement).naturalHeight)).toBe(1350);
+    await expect(page.getByRole('region', { name: /shame evidence/i }).first()).toBeVisible();
+    await expect(page.getByText('Why am I here?').first()).toBeVisible();
   });
 });

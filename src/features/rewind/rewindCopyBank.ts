@@ -17,8 +17,10 @@ export type RewindSlideType =
   | 'podium-cupu'
   | 'cupu'
   | 'awards'
+  | 'certificate'
   | 'standings'
   | 'standings-toxic'
+  | 'my-card'
   | 'outro';
 
 export type RewindCopyLine = {

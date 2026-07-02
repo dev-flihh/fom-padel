@@ -7,7 +7,7 @@ test.describe('Finished Tournament Flow', () => {
     await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();
     await expect(page.getByText('Event recap')).toBeVisible();
     await expect(page.getByText('Players')).toBeVisible();
-    await expect(page.getByText('Rounds')).toBeVisible();
+    await expect(page.getByText(/rounds/i).first()).toBeVisible();
     await expect(page.getByText('Courts')).toBeVisible();
     await expect(page.getByText('Format')).toBeVisible();
     await expect(page.getByText('Match history')).toBeVisible();
@@ -24,9 +24,9 @@ test.describe('Finished Tournament Flow', () => {
     await expect(page.getByText('Standings').first()).toBeVisible();
     await expect(page.getByText('Ended')).toBeVisible();
     await expect(page.getByRole('button', { name: /View Recap/i })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Share Standings', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Share match link', exact: true })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Match' }).click();
+    await page.getByRole('button', { name: 'Match', exact: true }).click();
 
     await expect(page.getByText('There are no active matches right now.')).toHaveCount(0);
     await expect(page.getByText('Ended')).toBeVisible();

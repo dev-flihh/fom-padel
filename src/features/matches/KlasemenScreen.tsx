@@ -1,6 +1,5 @@
-import { Fragment, type ChangeEvent, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toBlob as htmlToImageBlob } from 'html-to-image';
-import { BarChart2, ChevronDown, CircleDot, Download, FileImage, Flame, Lock, RefreshCw, Share2, UserRound, X, Zap } from 'lucide-react';
+import { Fragment, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BarChart2, ChevronDown, CircleDot, Flame, Share2, UserRound, Zap } from 'lucide-react';
 import { AppLogo } from '../../components/app/AppLogo';
 import { SharedViewerFomPlayCta } from '../../components/app/SharedViewerFomPlayCta';
 import { cn } from '../../lib/utils';
@@ -12,34 +11,15 @@ import { buildOfficialStandings, hasMatchScoreProgress, type StandingsPlayer } f
 import type { ToxicCopyConfig } from './toxicCopyConfig';
 import { buildToxicStandings, type ToxicAwardCard, type ToxicHeroStat as ToxicHeroStatData, type ToxicStandingRow, type ToxicStandingsData } from './toxicStandings';
 import { getToxicIntensityLabel } from './toxicSettings';
-import {
-  buildRankTimelines,
-  findGlowDownAward,
-  getGlowDownRoast,
-} from './matchNightStats';
-import {
-  processLocalCardPhoto,
-  getAdaptiveScrimOpacity,
-  type ProcessedCardPhoto,
-} from './localPhotoProcessing';
 import { trackRewindEvent } from '../../analytics';
 import { getTournamentShareStorageKey } from '../history/historyPersistence';
 import { RewindFlow, type RewindResult } from '../rewind/RewindFlow';
 import { useMatchSettingsFriends } from './useMatchSettingsFriends';
 
-const TOXIC_THIRD_PLACE_BADGE_SRC = '/assets/toxic/manchester-united-crest.png';
 const STANDINGS_TAB_OFFICIAL_ID = 'standings-tab-official';
 const STANDINGS_TAB_TOXIC_ID = 'standings-tab-toxic';
 const STANDINGS_PANEL_OFFICIAL_ID = 'standings-panel-official';
 const STANDINGS_PANEL_TOXIC_ID = 'standings-panel-toxic';
-
-type ShareCardVariant = 'standings-card' | 'shame-card' | 'my-match-card' | 'cupu-certificate';
-type StoryExportDimensions = {
-  width: number;
-  height: number;
-  canvasWidth: number;
-  canvasHeight: number;
-};
 
 const getToxicAwardCardKey = (award: ToxicAwardCard) => (
   `${award.id}-${award.player.id}${award.secondaryPlayer ? `-${award.secondaryPlayer.id}` : ''}`
@@ -55,40 +35,6 @@ const getStandingTickerEvidence = (message: string) => {
     chips.push(`Gap ${Math.abs(scoreA - scoreB)}`);
   }
   return chips;
-};
-
-const getImageBlobDimensions = async (blob: Blob) => (
-  new Promise<{ width: number; height: number }>((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const image = new Image();
-    image.onload = () => {
-      const dimensions = {
-        width: image.naturalWidth,
-        height: image.naturalHeight,
-      };
-      URL.revokeObjectURL(url);
-      resolve(dimensions);
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error('Unable to decode story image export.'));
-    };
-    image.src = url;
-  })
-);
-
-const validateStoryImageBlob = async (blob: Blob, dimensions: StoryExportDimensions) => {
-  if (blob.size < 1500) {
-    throw new Error('Story image export is unexpectedly small.');
-  }
-
-  const imageSize = await getImageBlobDimensions(blob);
-  if (
-    imageSize.width !== dimensions.canvasWidth ||
-    imageSize.height !== dimensions.canvasHeight
-  ) {
-    throw new Error(`Story image export has invalid dimensions: ${imageSize.width}x${imageSize.height}.`);
-  }
 };
 
 export const KlasemenScreen = ({
@@ -115,20 +61,6 @@ export const KlasemenScreen = ({
   onRewindPromptConsumed?: () => void;
 }) => {
   const [nowMs, setNowMs] = useState(Date.now());
-  const [isStoryPreviewOpen, setIsStoryPreviewOpen] = useState(false);
-  const [isStoryImageBusy, setIsStoryImageBusy] = useState(false);
-  const [storyImageError, setStoryImageError] = useState('');
-  const [storyImageBlob, setStoryImageBlob] = useState<Blob | null>(null);
-  const [storyImageDownloads, setStoryImageDownloads] = useState<Array<{ blob: Blob; fileName: string }>>([]);
-  const [storyImageFileName, setStoryImageFileName] = useState('');
-  const [storyImageUrl, setStoryImageUrl] = useState('');
-  const [storyExportPageIndex, setStoryExportPageIndex] = useState(0);
-  const [shareCardVariant, setShareCardVariant] = useState<ShareCardVariant>('standings-card');
-  const [selectedCertificateAwardKey, setSelectedCertificateAwardKey] = useState('');
-  const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
-  const [cardPhoto, setCardPhoto] = useState<ProcessedCardPhoto | null>(null);
-  const [isProcessingCardPhoto, setIsProcessingCardPhoto] = useState(false);
-  const cardPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const [isRewindOpen, setIsRewindOpen] = useState(false);
   const [rewindResult, setRewindResult] = useState<RewindResult | null>(null);
   const [rewindEntrySource, setRewindEntrySource] = useState<'banner' | 'finish_flow'>('banner');
@@ -164,36 +96,11 @@ export const KlasemenScreen = ({
   const [toxicConfettiRunId, setToxicConfettiRunId] = useState(0);
   const [activeAwardCardIndex, setActiveAwardCardIndex] = useState(0);
   const [isMiniHeaderVisible, setIsMiniHeaderVisible] = useState(false);
-  const shareMenuRef = useRef<HTMLDivElement | null>(null);
-  const shareMenuButtonRef = useRef<HTMLButtonElement | null>(null);
-  const storyPreviewDialogRef = useRef<HTMLDivElement | null>(null);
-  const storyPreviewCloseButtonRef = useRef<HTMLButtonElement | null>(null);
-  const storyPreviewReturnFocusRef = useRef<HTMLElement | null>(null);
-  const storyImageUrlRef = useRef<string | null>(null);
-  const storyExportRef = useRef<HTMLDivElement | null>(null);
   const officialRowHighlightTimerRef = useRef<number | null>(null);
   const toxicRowHighlightTimerRef = useRef<number | null>(null);
   const currentUserUid = String(currentUser?.uid || '').trim();
   const currentUserPhotoURL = typeof currentUser?.photoURL === 'string' ? currentUser.photoURL : '';
   const { friends } = useMatchSettingsFriends(currentUserUid);
-  const closeStoryPreview = useCallback(() => {
-    if (storyImageUrlRef.current) {
-      URL.revokeObjectURL(storyImageUrlRef.current);
-      storyImageUrlRef.current = null;
-    }
-    setIsStoryPreviewOpen(false);
-    setStoryImageBlob(null);
-    setStoryImageDownloads([]);
-    setStoryImageFileName('');
-    setStoryImageUrl('');
-    setStoryImageError('');
-    const returnFocusTarget = storyPreviewReturnFocusRef.current || shareMenuButtonRef.current;
-    storyPreviewReturnFocusRef.current = null;
-    window.requestAnimationFrame(() => {
-      if (!returnFocusTarget?.isConnected) return;
-      returnFocusTarget.focus();
-    });
-  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -202,64 +109,10 @@ export const KlasemenScreen = ({
 
   useEffect(() => {
     return () => {
-      if (storyImageUrlRef.current) URL.revokeObjectURL(storyImageUrlRef.current);
       if (officialRowHighlightTimerRef.current) window.clearTimeout(officialRowHighlightTimerRef.current);
       if (toxicRowHighlightTimerRef.current) window.clearTimeout(toxicRowHighlightTimerRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    if (!isShareMenuOpen) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      if (shareMenuRef.current?.contains(event.target as Node)) return;
-      setIsShareMenuOpen(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setIsShareMenuOpen(false);
-      window.requestAnimationFrame(() => shareMenuButtonRef.current?.focus());
-    };
-    document.addEventListener('pointerdown', handlePointerDown, true);
-    document.addEventListener('keydown', handleKeyDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true);
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [isShareMenuOpen]);
-
-  useEffect(() => {
-    if (!isStoryPreviewOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        closeStoryPreview();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const dialog = storyPreviewDialogRef.current;
-      if (!dialog) return;
-      const focusableItems = (Array.from(
-        dialog.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
-      ) as HTMLElement[]).filter((item) => item.offsetParent !== null || item === document.activeElement);
-      if (focusableItems.length === 0) return;
-      const currentIndex = focusableItems.indexOf(document.activeElement as HTMLElement);
-      const fallbackIndex = event.shiftKey ? focusableItems.length - 1 : 0;
-      const nextIndex = currentIndex === -1
-        ? fallbackIndex
-        : event.shiftKey
-          ? (currentIndex - 1 + focusableItems.length) % focusableItems.length
-          : (currentIndex + 1) % focusableItems.length;
-      event.preventDefault();
-      focusableItems[nextIndex]?.focus();
-    };
-    document.body.style.overflow = 'hidden';
-    document.addEventListener('keydown', handleKeyDown, true);
-    window.requestAnimationFrame(() => storyPreviewCloseButtonRef.current?.focus());
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener('keydown', handleKeyDown, true);
-    };
-  }, [closeStoryPreview, isStoryPreviewOpen]);
 
   useEffect(() => {
     setToxicConfettiRunId(0);
@@ -296,9 +149,6 @@ export const KlasemenScreen = ({
   }, []);
 
   const tournamentRounds = tournament.rounds || [];
-  const configuredCourts = 'courts' in tournament ? tournament.courts : undefined;
-  const detectedCourts = Math.max(1, ...tournamentRounds.flatMap((round) => round.matches.map((match) => match.court || 1)));
-  const courtsCount = configuredCourts || detectedCourts;
   const completedRounds = tournamentRounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
   const totalRounds = Math.max(tournament.numRounds || 0, tournamentRounds.length);
   const totalMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.length, 0);
@@ -317,15 +167,6 @@ export const KlasemenScreen = ({
   ), [currentUser?.displayName, currentUser?.email, currentUserPhotoURL, currentUserUid, friends, tournament]);
   const sortedPlayers = officialStandings.players;
   const hasCountableStandingScore = officialStandings.hasCountableScore;
-  const rankTimelines = useMemo(
-    () => buildRankTimelines(tournament, sortedPlayers),
-    [tournament, sortedPlayers]
-  );
-  const glowDownAward = useMemo(
-    () => findGlowDownAward(rankTimelines, sortedPlayers),
-    [rankTimelines, sortedPlayers]
-  );
-
 
   const activeRoundIndex = tournamentRounds.findIndex((round) => (
     round.matches.some((match) => match.status === 'active')
@@ -428,6 +269,13 @@ export const KlasemenScreen = ({
     `${sortedPlayers.length} players`,
     toxicModeEnabled ? 'Shame on' : '',
   ].filter(Boolean);
+  const standingsDetailLineStats = [
+    isTournamentEnded
+      ? `${totalRounds || displayedRoundCount} rounds`
+      : `Round ${displayedRoundCount}/${totalRounds || 0}`,
+    totalElapsedMs > 0 ? totalElapsedStat : '',
+    totalStandingPoints > 0 ? `${totalStandingPoints} pts` : '',
+  ].filter(Boolean);
   const shouldShowOfficialStandings = hasCountableStandingScore && sortedPlayers.length > 0;
   const officialDisplayPlayers = shouldShowOfficialStandings ? sortedPlayers : [];
   const showOfficialChampionStrip = !isToxicTabActive && isTournamentEnded && shouldShowOfficialStandings;
@@ -461,9 +309,6 @@ export const KlasemenScreen = ({
       toxicCopyConfig,
     })
   ), [hasCountableStandingScore, isTournamentEnded, sortedPlayers, tournament, toxicCopyConfig]);
-  const toxicSummaryItems = useMemo(() => (
-    buildToxicSummaryItems(toxicStandings, tournamentRounds)
-  ), [toxicStandings, tournamentRounds]);
   useEffect(() => {
     setActiveAwardCardIndex(0);
   }, [toxicStandings.awardCards.length, tournament.id]);
@@ -538,21 +383,7 @@ export const KlasemenScreen = ({
     ? toxicStandings.rows.find((player) => player.id === myMatchStanding.id) || null
     : null;
   const myMatchOfficialRank = myMatchStanding ? officialRankById.get(myMatchStanding.id) || 0 : 0;
-  const myMatchRankTimeline = myMatchStanding ? rankTimelines.get(myMatchStanding.id) : undefined;
-  const myMatchFirstRank = myMatchRankTimeline?.firstRank;
-  const myMatchGlowRoast = myMatchStanding
-    ? getGlowDownRoast(glowDownAward, myMatchStanding.id, tournament, toxicCopyConfig)
-    : '';
-  const canExportStandingsCard = shouldShowOfficialStandings;
-  const canExportShameCard = toxicModeEnabled && !toxicStandings.isEmpty;
   const hasLoginMatchPlayer = Boolean(currentUserUid && myMatchStanding);
-  const canExportMyMatchCard = Boolean(hasLoginMatchPlayer && shouldShowOfficialStandings);
-  const shareCtaIsShame = isToxicTabActive && canExportShameCard;
-  const shareCtaLabel = isToxicTabActive
-    ? shareCtaIsShame ? 'Share the Shame' : 'Share Match Link'
-    : shouldShowOfficialStandings
-      ? 'Share Standings'
-      : 'Share Match Link';
 
   useEffect(() => {
     if (!toxicModeEnabled || !isToxicTabActive || toxicStandings.isEmpty || toxicStandings.isPeacefulTie) return;
@@ -570,373 +401,6 @@ export const KlasemenScreen = ({
   }, [isTournamentEnded, isSharedViewer]);
 
   const hasCoKingHero = toxicStandings.heroPlayers.length > 1;
-  const isToxicStoryMode = shareCardVariant === 'shame-card' && toxicModeEnabled;
-  const isMyMatchStoryMode = shareCardVariant === 'my-match-card';
-  const storyShowAvatars = true;
-  const storyPlayersPerImage = isToxicStoryMode ? 6 : isMyMatchStoryMode ? 1 : 10;
-  const storyPlayerSource: StandingsPlayer[] = (
-    isMyMatchStoryMode && myMatchStanding
-      ? [myMatchStanding]
-      : isToxicStoryMode && !toxicStandings.isEmpty
-      ? toxicStandings.rows
-      : sortedPlayers
-  );
-  const storyPlayerPages = useMemo(() => {
-    if (storyPlayerSource.length === 0) return [[]];
-    const pages: StandingsPlayer[][] = [];
-    for (let index = 0; index < storyPlayerSource.length; index += storyPlayersPerImage) {
-      pages.push(storyPlayerSource.slice(index, index + storyPlayersPerImage));
-    }
-    return pages;
-  }, [storyPlayerSource, storyPlayersPerImage]);
-  const storyPageCount = storyPlayerPages.length;
-  const activeStoryPageIndex = Math.min(storyExportPageIndex, storyPageCount - 1);
-  const storyPlayers = storyPlayerPages[activeStoryPageIndex] || [];
-  const toxicStoryRows = storyPlayers as ToxicStandingRow[];
-  const storyCompactRows = storyPlayers.length >= 9;
-  const storyDenseRows = storyCompactRows || storyPlayerSource.length > 12;
-  const storyRankOffset = activeStoryPageIndex * storyPlayersPerImage;
-  const storyUsesCompactRankingCard = storyPlayers.length > 0 && storyPlayers.length < 8;
-  const storyExportShellClass = cn(
-    'relative z-10 flex h-full flex-col px-4 text-white',
-    storyCompactRows ? 'pb-2 pt-3' : 'pb-3 pt-3'
-  );
-  const storyExportLogoHeaderClass = cn(
-    'flex shrink-0 items-center justify-center',
-    'mb-3 h-10'
-  );
-  const storyExportLogoClass = 'h-[26px] w-auto object-contain';
-  const storySummaryCardClass = cn(
-    'relative mt-0 isolate shrink-0 overflow-hidden rounded-[22px] border border-white/42 bg-white/10 shadow-[0_14px_30px_rgba(15,23,42,0.10)] backdrop-blur-md',
-    storyCompactRows ? 'px-3 py-2' : 'px-3.5 py-2.5'
-  );
-  const storySummaryCardStyle = {
-    clipPath: 'inset(0 round 22px)',
-    WebkitClipPath: 'inset(0 round 22px)'
-  };
-  const storySummaryStatClass = cn(
-    'rounded-[11px] border border-white/26 bg-white/18 px-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]',
-    storyCompactRows ? 'py-0.5' : 'py-1'
-  );
-  const storyTitleClass = cn('truncate font-black leading-[1.04] tracking-tight text-white', storyCompactRows ? 'text-[14.5px]' : 'text-[15.5px]');
-  const storySubtitleClass = cn('mt-0.5 truncate font-semibold leading-[1.15] text-white/82', storyCompactRows ? 'text-[8px]' : 'text-[8.5px]');
-  const storyTimerClass = cn('shrink-0 font-black leading-none tabular-nums text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]', storyCompactRows ? 'text-[10.5px]' : 'text-[11px]');
-  const storyStatLabelClass = 'text-[7px] font-bold uppercase leading-none tracking-wider text-white/66';
-  const storyStatValueClass = cn('truncate text-[9.5px] font-bold leading-none text-white', storyCompactRows ? 'mt-0.5' : 'mt-1');
-  const storyRankingCardClass = cn(
-    'mt-1.5 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/52 bg-white/95 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)]',
-    storyUsesCompactRankingCard ? 'shrink-0' : 'flex-1'
-  );
-  const storyFooterSpacerClass = storyUsesCompactRankingCard ? 'flex-1' : '';
-  const storyFooterClass = cn('flex shrink-0 justify-center text-white/78', storyCompactRows ? 'mt-1 pt-1' : 'mt-1.5 pt-2');
-  const storyFooterTextClass = cn('font-medium leading-none', storyCompactRows ? 'text-[8px]' : 'text-[8.5px]');
-  const storyFooterRowClass = 'inline-flex items-center justify-center gap-2.5';
-  const selectedCertificateAward = useMemo(() => (
-    toxicStandings.awardCards.find((award) => getToxicAwardCardKey(award) === selectedCertificateAwardKey) ||
-    toxicStandings.awardCards[0] ||
-    null
-  ), [selectedCertificateAwardKey, toxicStandings.awardCards]);
-  const selectedCertificateRows = useMemo(() => {
-    if (!selectedCertificateAward) return [];
-    const ids = [selectedCertificateAward.player.id, selectedCertificateAward.secondaryPlayer?.id].filter(Boolean);
-    return ids
-      .map((playerId) => toxicStandings.rows.find((row) => row.id === playerId))
-      .filter((row): row is ToxicStandingRow => Boolean(row));
-  }, [selectedCertificateAward, toxicStandings.rows]);
-  const isCupuCertificateStoryMode = shareCardVariant === 'cupu-certificate';
-  const canRenderCurrentShareCard = shareCardVariant === 'cupu-certificate'
-    ? Boolean(selectedCertificateAward)
-    : shareCardVariant === 'my-match-card'
-      ? canExportMyMatchCard
-      : shareCardVariant === 'shame-card'
-        ? canExportShameCard
-        : canExportStandingsCard;
-  const getExportDimensionsForVariant = (variant: ShareCardVariant) => (
-    variant === 'cupu-certificate'
-      ? { width: 360, height: 450, canvasWidth: 1080, canvasHeight: 1350 }
-      : { width: 360, height: 640, canvasWidth: 1080, canvasHeight: 1920 }
-  );
-  const storyExportDimensions = getExportDimensionsForVariant(shareCardVariant);
-  const getShareCardPageCount = (variant: ShareCardVariant) => {
-    if (variant === 'cupu-certificate') return 1;
-    const playersLength = variant === 'my-match-card'
-      ? (myMatchStanding ? 1 : 0)
-      : variant === 'shame-card' && !toxicStandings.isEmpty
-        ? toxicStandings.rows.length
-        : sortedPlayers.length;
-    const playersPerImage = variant === 'shame-card' ? 6 : variant === 'my-match-card' ? 1 : 10;
-    return Math.max(1, Math.ceil(playersLength / playersPerImage));
-  };
-  const previewShareCardPageCount = getShareCardPageCount(shareCardVariant);
-  const storyRankingRowsClass = cn(
-    'min-h-0 flex flex-col overflow-hidden',
-    storyUsesCompactRankingCard ? 'gap-1' : storyCompactRows ? 'flex-1 justify-between gap-0.5' : storyDenseRows ? 'flex-1 justify-between gap-px' : 'flex-1 justify-between gap-1'
-  );
-  const storyRankBadgeClass = cn(
-    'flex shrink-0 items-center justify-center rounded-full border font-black leading-none tabular-nums',
-    storyCompactRows ? 'h-5 w-5 text-[8px]' : storyDenseRows ? 'h-6 w-6 text-[9px]' : 'h-7 w-7 text-[10px]'
-  );
-  const storyAvatarClass = cn(
-    'shrink-0 overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10 flex items-center justify-center',
-    storyCompactRows ? 'h-6 w-6' : 'h-8 w-8'
-  );
-  const getStoryRankBadgeClass = (rankIndex: number) => {
-    if (rankIndex === 0) return 'bg-[#fff8dc] text-[#9a6a00] border-[#e8c84f]/80 ring-1 ring-[#f8e6a2]/70 shadow-[0_3px_10px_rgba(232,200,79,0.22)]';
-    if (rankIndex === 1) return 'bg-[#f7f9fc] text-[#687382] border-[#cdd5df]/90 ring-1 ring-[#e5e9ef]/80 shadow-[0_3px_10px_rgba(148,163,184,0.18)]';
-    if (rankIndex === 2) return 'bg-[#fff1e8] text-[#9a5a35] border-[#daa17d]/80 ring-1 ring-[#f0c8af]/70 shadow-[0_3px_10px_rgba(200,131,90,0.18)]';
-    return 'bg-ios-gray/10 text-ios-gray border-transparent';
-  };
-  const getToxicRankBadgeClass = (rankIndex: number, isChampion: boolean) => {
-    if (isChampion) return 'bg-transparent text-ios-gray/55 border-transparent';
-    if (rankIndex === 0) return 'bg-[#fde8a8] text-[#8a6200] border-[#d4a017]/80 ring-1 ring-[#f8dea8]/80 shadow-[0_3px_12px_rgba(212,160,23,0.28)]';
-    if (rankIndex === 1) return 'bg-[#f5f7f9] text-[#5b6470] border-[#aeb6bf]/80 ring-1 ring-[#d3dae1]/80';
-    if (rankIndex === 2) return 'bg-white text-[#d40000] border-[#f7d117]/90 ring-1 ring-[#d40000]/35 shadow-[0_3px_12px_rgba(212,0,0,0.14)]';
-    return 'bg-ios-gray/10 text-ios-gray border-transparent';
-  };
-  const renderToxicRankBadgeContent = (rankIndex: number, isChampion: boolean) => (
-    rankIndex === 2 && !isChampion
-      ? (
-          <img
-            src={TOXIC_THIRD_PLACE_BADGE_SRC}
-            alt="Manchester United crest"
-            className="h-[82%] w-[82%] object-contain"
-          />
-        )
-      : (
-          <span>
-            {isChampion ? rankIndex + 1 : rankIndex === 0 ? '👑' : rankIndex === 1 ? '🥲' : rankIndex + 1}
-          </span>
-        )
-  );
-  const getToxicAwardChipClass = (isGold?: boolean) => (
-    isGold
-      ? 'border-[#d4a017]/55 bg-[linear-gradient(135deg,#fbe7a2,#e3b341)] text-[#6b4e00]'
-      : 'border-ios-gray/20 bg-ios-gray/10 text-ios-gray'
-  );
-  const formatStoryDiff = (value: number) => (value > 0 ? `+${value}` : String(value));
-  const isStoryMyRow = (playerId: string) => Boolean(myMatchStanding && playerId === myMatchStanding.id);
-  const storyMyRowHighlightClass = 'rounded-[12px] bg-primary/[0.07] ring-1 ring-primary/40';
-  const storyTitleDate = useMemo(() => {
-    const sourceDate =
-      ('date' in tournament && tournament.date)
-        ? tournament.date
-        : ('startedAt' in tournament && tournament.startedAt ? new Date(tournament.startedAt) : new Date());
-    const safeDate = sourceDate instanceof Date && !Number.isNaN(sourceDate.getTime()) ? sourceDate : new Date();
-    const day = String(safeDate.getDate()).padStart(2, '0');
-    const month = String(safeDate.getMonth() + 1).padStart(2, '0');
-    const year = String(safeDate.getFullYear()).slice(-2);
-    return `${day}/${month}/${year}`;
-  }, [tournament]);
-  const getShareCardVariantTitle = (variant: ShareCardVariant) => {
-    if (variant === 'my-match-card') return 'My Match Card';
-    if (variant === 'shame-card') return 'Hall of Shame Card';
-    if (variant === 'cupu-certificate') return 'Sertifikat Cupu';
-    return 'Standings Card';
-  };
-  const buildStorySavedTitle = (variant: ShareCardVariant) => (
-    `${(tournament.name || 'FOM Play Klasemen').trim()} ${getShareCardVariantTitle(variant)} ${storyTitleDate}`
-  );
-  const buildStoryFileName = (title: string, pageIndex = 0, pageCount = 1) => {
-    const fileSafeTitle = title
-      .toLowerCase()
-      .replace(/\//g, '-')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 72) || 'fom-play-klasemen';
-    return pageCount > 1 ? `${fileSafeTitle}-${pageIndex + 1}-of-${pageCount}.png` : `${fileSafeTitle}.png`;
-  };
-  const syncStoryVariantBeforeExport = async () => {
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  };
-  const renderStoryImageBlob = async (dimensions = storyExportDimensions) => {
-    const sourceNode = storyExportRef.current;
-    if (!sourceNode) throw new Error('Share card preview is not ready yet.');
-    await document.fonts?.ready;
-    const exportImages = Array.from(sourceNode.querySelectorAll('img')) as HTMLImageElement[];
-    await Promise.all(exportImages.map(async (image) => {
-      if (image.complete && image.naturalWidth > 0) return;
-      try {
-        await image.decode();
-      } catch {
-        await new Promise<void>((resolve) => {
-          image.addEventListener('load', () => resolve(), { once: true });
-          image.addEventListener('error', () => resolve(), { once: true });
-        });
-      }
-    }));
-
-    const blob = await htmlToImageBlob(sourceNode, {
-      width: dimensions.width,
-      height: dimensions.height,
-      canvasWidth: dimensions.canvasWidth,
-      canvasHeight: dimensions.canvasHeight,
-      pixelRatio: 1,
-      cacheBust: true,
-      backgroundColor: 'transparent'
-    });
-    if (!blob) throw new Error('Unable to export story image.');
-    await validateStoryImageBlob(blob, dimensions);
-    return blob;
-  };
-  const renderStoryImageBlobs = async (variant: ShareCardVariant) => {
-    const blobs: Blob[] = [];
-    const pageCount = getShareCardPageCount(variant);
-    const exportDimensions = getExportDimensionsForVariant(variant);
-    setShareCardVariant(variant);
-    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-      setStoryExportPageIndex(pageIndex);
-      await syncStoryVariantBeforeExport();
-      blobs.push(await renderStoryImageBlob(exportDimensions));
-    }
-    setStoryExportPageIndex(0);
-    return blobs;
-  };
-  const downloadStoryBlob = (blob: Blob, fileName: string) => {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-  };
-  const showStoryBlobInPreview = (
-    blob: Blob,
-    fileName = '',
-    downloads: Array<{ blob: Blob; fileName: string }> = []
-  ) => {
-    if (storyImageUrlRef.current) URL.revokeObjectURL(storyImageUrlRef.current);
-    const url = URL.createObjectURL(blob);
-    storyImageUrlRef.current = url;
-    setStoryImageBlob(blob);
-    setStoryImageDownloads(downloads.length > 0 ? downloads : [{ blob, fileName }]);
-    setStoryImageFileName(fileName);
-    setStoryImageUrl(url);
-  };
-  const downloadStoryPreviewFiles = () => {
-    const downloads = storyImageDownloads.length > 0
-      ? storyImageDownloads
-      : storyImageBlob
-        ? [{ blob: storyImageBlob, fileName: storyImageFileName || 'fom-play-share.png' }]
-        : [];
-    downloads.forEach((download, index) => {
-      window.setTimeout(() => {
-        downloadStoryBlob(download.blob, download.fileName || `fom-play-share-${index + 1}.png`);
-      }, index * 120);
-    });
-  };
-  const handleStoryAction = async (variant: ShareCardVariant) => {
-    if (isStoryImageBusy) return;
-    if (variant === 'my-match-card' && !canExportMyMatchCard) return;
-    if (variant === 'standings-card' && !canExportStandingsCard) return;
-    if (variant === 'shame-card' && !canExportShameCard) return;
-    storyPreviewReturnFocusRef.current = shareMenuButtonRef.current;
-    setStoryImageError('');
-    setIsStoryImageBusy(true);
-    try {
-      const storySavedTitle = buildStorySavedTitle(variant);
-      const blobs = await renderStoryImageBlobs(variant);
-      const firstBlob = blobs[0];
-      if (!firstBlob) throw new Error('Unable to export story image.');
-      const storyFileNames = blobs.map((_, pageIndex) => buildStoryFileName(storySavedTitle, pageIndex, blobs.length));
-      showStoryBlobInPreview(
-        firstBlob,
-        storyFileNames[0] || '',
-        blobs.map((blob, pageIndex) => ({ blob, fileName: storyFileNames[pageIndex] || '' }))
-      );
-      setIsStoryPreviewOpen(true);
-      const files = blobs.map((blob, pageIndex) => (
-        new File([blob], storyFileNames[pageIndex] || buildStoryFileName(storySavedTitle, pageIndex, blobs.length), { type: 'image/png' })
-      ));
-      const sharePayload = {
-        files,
-        title: storySavedTitle,
-        text: variant === 'my-match-card'
-          ? 'My Match Card dari FOM Play'
-          : variant === 'shame-card'
-            ? 'Hall of Shame dari FOM Play'
-            : 'Klasemen dari FOM Play'
-      };
-
-      if (navigator.share && (!navigator.canShare || navigator.canShare(sharePayload))) {
-        await navigator.share(sharePayload);
-        onShareFeedback('success', files.length > 1 ? `${files.length} share card berhasil dibagikan.` : 'Share card berhasil dibagikan.');
-      } else {
-        blobs.forEach((blob, pageIndex) => {
-          downloadStoryBlob(blob, buildStoryFileName(storySavedTitle, pageIndex, blobs.length));
-        });
-        onShareFeedback('ready', blobs.length > 1 ? `${blobs.length} share card berhasil dibuat dan diunduh.` : 'Share card berhasil dibuat dan diunduh.');
-      }
-    } catch (err) {
-      console.error('Share card export failed:', err);
-      setStoryImageError('Gagal membuat share card. Preview tetap bisa discreenshot.');
-      setIsStoryPreviewOpen(true);
-      onShareFeedback('failed', 'Gagal membuat share card. Coba lagi sebentar.');
-    } finally {
-      setIsStoryImageBusy(false);
-    }
-  };
-  const handlePickCardPhoto = () => {
-    if (isProcessingCardPhoto || isStoryImageBusy) return;
-    cardPhotoInputRef.current?.click();
-  };
-  const handleCardPhotoChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    if (file.size > 12 * 1024 * 1024) {
-      onShareFeedback('failed', 'Foto terlalu besar. Pilih foto di bawah 12 MB.');
-      return;
-    }
-    setIsProcessingCardPhoto(true);
-    try {
-      const processed = await processLocalCardPhoto(file);
-      setCardPhoto(processed);
-      // Let React commit the photo card before the exporter reads the DOM node,
-      // otherwise the first capture races the re-render and grabs the no-photo layout.
-      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-      await handleStoryAction('my-match-card');
-    } catch (err) {
-      console.error('Local card photo processing failed:', err);
-      onShareFeedback('failed', 'Foto tidak bisa diproses. Coba foto lain.');
-    } finally {
-      setIsProcessingCardPhoto(false);
-    }
-  };
-  const handleRemoveCardPhoto = async () => {
-    if (isProcessingCardPhoto || isStoryImageBusy) return;
-    setCardPhoto(null);
-    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    await handleStoryAction('my-match-card');
-  };
-  const handleCertificateAction = async (award: ToxicAwardCard) => {
-    if (isStoryImageBusy) return;
-    storyPreviewReturnFocusRef.current = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    setSelectedCertificateAwardKey(getToxicAwardCardKey(award));
-    setShareCardVariant('cupu-certificate');
-    setStoryExportPageIndex(0);
-    setStoryImageError('');
-    setIsStoryImageBusy(true);
-    try {
-      await syncStoryVariantBeforeExport();
-      const blob = await renderStoryImageBlob(getExportDimensionsForVariant('cupu-certificate'));
-      const fileName = buildStoryFileName(`${tournament.name || 'FOM Play'} ${award.label} Sertifikat Cupu ${storyTitleDate}`);
-      showStoryBlobInPreview(blob, fileName, [{ blob, fileName }]);
-      setIsStoryPreviewOpen(true);
-      onShareFeedback('ready', 'Sertifikat Cupu siap diunduh.');
-    } catch (err) {
-      console.error('Certificate export failed:', err);
-      setStoryImageError('Gagal membuat sertifikat. Preview tetap bisa discreenshot.');
-      setIsStoryPreviewOpen(true);
-      onShareFeedback('failed', 'Gagal membuat sertifikat. Coba lagi sebentar.');
-  } finally {
-      setIsStoryImageBusy(false);
-    }
-  };
   const scrollToOfficialStandingPlayer = useCallback((playerId: string) => {
     setExpandedStandingPlayerId(playerId);
     setShowAllOfficialHistoryPlayerId(null);
@@ -978,17 +442,6 @@ export const KlasemenScreen = ({
       });
     });
   }, []);
-  const handleToxicSummaryAction = useCallback((action?: ToxicSummaryAction) => {
-    if (!action) return;
-    if (action.type === 'player') {
-      scrollToToxicStandingPlayer(action.playerId);
-      return;
-    }
-
-    const award = toxicStandings.awardCards.find((item) => getToxicAwardCardKey(item) === action.awardKey);
-    if (!award) return;
-    void handleCertificateAction(award);
-  }, [handleCertificateAction, scrollToToxicStandingPlayer, toxicStandings.awardCards]);
   const personalStandingShortcut = (() => {
     if (!hasLoginMatchPlayer || !myMatchStanding) return null;
     if (isToxicTabActive) {
@@ -1010,581 +463,6 @@ export const KlasemenScreen = ({
       metric: `${myMatchStanding.totalPoints} pts`,
     };
   })();
-  const usesPhotoBackground = isMyMatchStoryMode && Boolean(cardPhoto);
-  const renderShareCardBackground = () => {
-    if (usesPhotoBackground && cardPhoto) {
-      const scrim = getAdaptiveScrimOpacity(cardPhoto.bottomLuminance);
-      return (
-        <>
-          <div className="absolute inset-0 bg-black" />
-          <img
-            src={cardPhoto.dataUrl}
-            alt=""
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-          <div
-            className="absolute inset-0"
-            style={{
-              background: `linear-gradient(180deg, rgba(16,16,16,0.04) 38%, rgba(16,16,16,${Math.min(0.55, scrim * 0.6)}) 72%, rgba(16,16,16,${scrim}) 100%)`,
-            }}
-          />
-        </>
-      );
-    }
-    return (
-      <>
-        <div className="absolute inset-0 bg-[#07111f]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_10%,rgba(255,85,0,0.44)_0%,rgba(255,85,0,0.16)_28%,rgba(7,17,31,0)_56%),radial-gradient(circle_at_78%_84%,rgba(245,158,11,0.36)_0%,rgba(245,158,11,0.12)_24%,rgba(7,17,31,0)_55%),linear-gradient(160deg,#09111f_0%,#15100a_54%,#05070b_100%)]" />
-        <div className="absolute left-1/2 top-0 h-full w-px bg-white/10" />
-        <div className="absolute left-[-22%] top-[32%] h-px w-[144%] bg-white/10" />
-        <div className="absolute right-[-22%] bottom-[-10%] h-[240px] w-[240px] rounded-full border border-white/10" />
-        <div className="absolute left-[-28%] top-[-12%] h-[220px] w-[220px] rounded-full border border-white/8" />
-      </>
-    );
-  };
-  const renderCupuCertificateExportContent = (showError = false) => {
-    const award = selectedCertificateAward;
-    const recipientPlayers = award ? [award.player, award.secondaryPlayer].filter((player): player is NonNullable<typeof award.player> => Boolean(player)) : [];
-    const recipientName = recipientPlayers.map((player) => player.name).join(' & ') || 'Pemain Cupu';
-    const recipientFontSize = recipientName.length > 36 ? 23 : recipientName.length > 25 ? 26 : 31;
-    const primaryRow = selectedCertificateRows[0] || null;
-    const recordLabel = primaryRow ? `${primaryRow.w}W-${primaryRow.l}L` : '-';
-    const diffLabel = primaryRow ? formatStoryDiff(primaryRow.pointsDiff) : '-';
-    const witnessCount = Math.max(1, sortedPlayers.length - recipientPlayers.length);
-    const title = award?.label || 'King of Cupu';
-    const bodyCopy = award
-      ? `adalah penerima ${award.label} pada mabar ${tournament.name || 'FOM Play'}, ${dateLabel}, dengan rekor ${recordLabel} dan DIFF ${diffLabel}.`
-      : `adalah pemain paling cupu pada mabar ${tournament.name || 'FOM Play'}, ${dateLabel}.`;
-
-    return (
-      <div className="relative h-full w-full overflow-hidden bg-[#FBF7EC] p-[14px] text-[#101010]">
-        <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_50%_-8%,rgba(201,161,74,0.24),rgba(251,247,236,0)_54%),linear-gradient(135deg,rgba(255,255,255,0.56),rgba(245,226,175,0.28))]" />
-        <div className="absolute inset-[10px] rounded-lg border-2 border-[#C9A14A]" />
-        <div className="absolute inset-[15px] rounded-[5px] border border-[#C9A14A]/45" />
-        <div className="absolute inset-0 opacity-[0.035] bg-[url('/assets/fom-logomark-app.png')] bg-[length:44px_44px] rotate-[-10deg] scale-125" />
-
-        <div className="relative flex h-full flex-col items-center px-5 pb-[18px] pt-[19px] text-center">
-          <div className="h-[24px] w-[124px] overflow-hidden" aria-label="FOM Play">
-            <img
-              src="/assets/fom-play-logo-direction-b-light.png"
-              alt="FOM Play"
-              className="h-[62px] w-auto max-w-none -translate-x-[27px] -translate-y-[19px] object-contain"
-            />
-          </div>
-
-          {showError && storyImageError && (
-            <p className="mt-2 rounded-full bg-black/8 px-3 py-1 text-[8px] font-bold text-[#8A6A1F]">
-              {storyImageError}
-            </p>
-          )}
-
-          <p className="mt-[9px] text-[8px] font-black uppercase leading-none tracking-[0.30em] text-[#B7861F]">Sertifikat</p>
-          <h2 className="font-ceremony mt-1 text-[29px] font-normal leading-none text-[#101010]">{title}</h2>
-
-          <p className="mt-3 max-w-[238px] text-[10px] font-medium leading-[1.52] text-[#6E6E73]">
-            Dengan ini menyatakan secara sah dan tidak bisa diganggu gugat bahwa
-          </p>
-
-          <p
-            className="font-ceremony mt-2 max-w-[276px] border-b border-[#C9A14A]/55 px-4 pb-1.5 font-normal italic leading-[1.08] text-[#8A6A1F]"
-            style={{ fontSize: recipientFontSize }}
-          >
-            {recipientName}
-          </p>
-
-          <p className="mt-2.5 max-w-[258px] text-[10px] font-medium leading-[1.5] text-[#6E6E73]">
-            {bodyCopy}
-          </p>
-
-          {award?.note && (
-            <div className="mt-3 w-full rounded-2xl border border-[#C9A14A]/35 bg-white/52 px-3.5 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.70)]">
-              <p className="text-[7.2px] font-black uppercase leading-none tracking-[0.15em] text-[#B7861F]">Reason</p>
-              <p className="mt-1.5 text-[9.4px] font-bold italic leading-snug text-[#6B5A38]">{award.note}</p>
-            </div>
-          )}
-
-          <div className="mt-auto grid w-full grid-cols-[88px_minmax(0,1fr)_62px] items-end gap-3">
-            <div className="min-w-0 text-left">
-              <p className="font-ceremony text-[17px] font-normal italic leading-none text-[#101010]">Panitia Mabar</p>
-              <p className="mt-1 w-[86px] border-t border-black/30 pt-1 text-[7px] font-black uppercase leading-none tracking-[0.12em] text-[#9A9AA0]">
-                {witnessCount} saksi mata
-              </p>
-            </div>
-
-            <div className="justify-self-center rounded-2xl border border-[#C9A14A]/60 bg-[#101010] px-4 py-3 text-center rotate-[-1.5deg]">
-              <p className="max-w-[104px] text-[12px] font-black uppercase leading-tight text-[#E8C45A]">{title} {award?.emoji || '👑'}</p>
-              <p className="mt-1.5 text-[6.5px] font-black uppercase leading-none tracking-[0.14em] text-[#E8C45A]/55">Penobatan Sah</p>
-            </div>
-
-            <div className="relative h-[62px] w-[62px] shrink-0 justify-self-end">
-              <div className="absolute inset-0 rotate-[-14deg] rounded-full border-2 border-[#B7861F]/65" />
-              <div className="absolute inset-[7px] rotate-[-14deg] rounded-full border border-[#B7861F]/50" />
-              <div className="absolute inset-[7px] flex rotate-[-14deg] items-center justify-center text-center text-[6px] font-black uppercase leading-[1.5] tracking-[0.10em] text-[#8A6A1F]">
-                Certified<br />Cupu<br />2026
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
-  const renderMyMatchPhotoCardContent = (showError = false) => {
-    const player = myMatchStanding;
-    const glowRoast = toxicModeEnabled ? myMatchGlowRoast : '';
-    return (
-      <div className="relative z-10 flex h-full flex-col px-5 pb-6 pt-5 text-white">
-        <header className="flex shrink-0 items-center">
-          <img
-            src="/fom-long-logotype-white.png"
-            alt=""
-            className="h-6 w-auto object-contain drop-shadow-[0_1px_5px_rgba(0,0,0,0.5)]"
-          />
-        </header>
-
-        {showError && storyImageError && (
-          <p className="mt-2 rounded-full bg-black/40 px-3 py-1.5 text-[10px] font-bold text-white/90">
-            {storyImageError}
-          </p>
-        )}
-
-        <div className="flex-1" />
-
-        <section>
-          <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-white/82 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
-            {(tournament.name || 'FOM Play Match')} · {storyTitleDate}
-          </p>
-          <h2 className="mt-2 text-[34px] font-black leading-[0.96] tracking-tight text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.5)]">
-            {player?.name || 'Player'}
-          </h2>
-
-          <div className="mt-4 grid grid-cols-3">
-            <div>
-              <p className="text-[7.5px] font-black uppercase tracking-[0.16em] text-white/62">Record</p>
-              <p className="mt-1 text-[19px] font-black leading-none tabular-nums text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
-                {player ? `${player.w}W-${player.l}L` : '-'}
-              </p>
-            </div>
-            <div className="border-l border-white/28 pl-3">
-              <p className="text-[7.5px] font-black uppercase tracking-[0.16em] text-white/62">Diff</p>
-              <p className={cn('mt-1 text-[19px] font-black leading-none tabular-nums drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]', (player?.pointsDiff || 0) < 0 ? 'text-red-300' : 'text-white')}>
-                {player ? formatStoryDiff(player.pointsDiff) : '-'}
-              </p>
-            </div>
-            <div className="border-l border-white/28 pl-3">
-              <p className="text-[7.5px] font-black uppercase tracking-[0.16em] text-white/62">Pts</p>
-              <p className="mt-1 text-[19px] font-black leading-none tabular-nums text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
-                {player?.totalPoints ?? '-'}
-              </p>
-            </div>
-          </div>
-
-          {toxicModeEnabled && myMatchToxicRow && (
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              {glowDownAward?.playerId === player?.id && (
-                <span className="rounded-full border border-amber-300/60 bg-black/35 px-2.5 py-1 text-[8px] font-black uppercase tracking-[0.12em] text-amber-200 backdrop-blur-sm">
-                  Glow Down
-                </span>
-              )}
-              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold italic text-white/78 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]">
-                {glowRoast || `"${myMatchToxicRow.roast}"`}
-              </span>
-            </div>
-          )}
-
-          <div className="mt-4">
-            <img
-              src="/fom-long-logotype-white.png"
-              alt="FOM Play"
-              className="h-3 w-auto object-contain opacity-80 drop-shadow-[0_1px_3px_rgba(0,0,0,0.5)]"
-            />
-          </div>
-        </section>
-      </div>
-    );
-  };
-  const renderMyMatchStoryExportContent = (showError = false) => {
-    const player = myMatchStanding;
-    const toxicRank = myMatchToxicRow?.toxicRank;
-    return (
-      <div className="relative z-10 flex h-full flex-col px-5 pb-4 pt-4 text-white">
-        <header className="mb-4 flex h-9 shrink-0 items-center justify-center">
-          <img src="/fom-long-logotype-white.png" alt="" className="h-7 w-auto object-contain" />
-        </header>
-
-        {showError && storyImageError && (
-          <p className="mb-2 rounded-full bg-black/28 px-3 py-1.5 text-[10px] font-bold text-white/90">
-            {storyImageError}
-          </p>
-        )}
-
-        <section className="relative overflow-hidden rounded-2xl border border-white/16 bg-white/[0.08] px-5 py-5 text-center shadow-[0_18px_46px_rgba(0,0,0,0.30)] backdrop-blur-md">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.16)_0%,rgba(255,255,255,0)_46%)]" />
-          <p className="relative text-[10px] font-black uppercase tracking-[0.24em] text-white/62">My Match Card</p>
-          <div className="relative mx-auto mt-5 flex h-[104px] w-[104px] items-center justify-center overflow-hidden rounded-full border-[3px] border-white/35 bg-white/12 text-[30px] font-black text-white shadow-[0_18px_40px_rgba(0,0,0,0.28)]">
-            {player?.avatar ? (
-              <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
-            ) : (
-              <span>{player?.initials || 'ME'}</span>
-            )}
-          </div>
-          <h2 className="relative mt-4 text-[27px] font-black leading-tight tracking-tight text-white">
-            {player?.name || 'Login Player'}
-          </h2>
-          <p className="relative mt-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white/58">
-            {tournament.name || 'FOM Play Match'}
-          </p>
-        </section>
-
-        <section className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-xl border border-white/14 bg-white/[0.09] px-3 py-3">
-            <p className="text-[8px] font-black uppercase tracking-[0.18em] text-white/48">Official Rank</p>
-            <p className="mt-2 text-[26px] font-black leading-none text-white tabular-nums">#{myMatchOfficialRank || '-'}</p>
-          </div>
-          <div className="rounded-xl border border-white/14 bg-white/[0.09] px-3 py-3">
-            <p className="text-[8px] font-black uppercase tracking-[0.18em] text-white/48">Record</p>
-            <p className="mt-2 text-[26px] font-black leading-none text-white tabular-nums">
-              {player ? `${player.w}-${player.l}-${player.d}` : '-'}
-            </p>
-          </div>
-          <div className="rounded-xl border border-white/14 bg-white/[0.09] px-3 py-3">
-            <p className="text-[8px] font-black uppercase tracking-[0.18em] text-white/48">Diff</p>
-            <p className={cn('mt-2 text-[26px] font-black leading-none tabular-nums', (player?.pointsDiff || 0) < 0 ? 'text-red-300' : 'text-amber-200')}>
-              {player ? formatStoryDiff(player.pointsDiff) : '-'}
-            </p>
-          </div>
-          <div className="rounded-xl border border-white/14 bg-white/[0.09] px-3 py-3">
-            <p className="text-[8px] font-black uppercase tracking-[0.18em] text-white/48">Points</p>
-            <p className="mt-2 text-[26px] font-black leading-none text-white tabular-nums">{player?.totalPoints ?? '-'}</p>
-          </div>
-        </section>
-
-        {toxicModeEnabled && myMatchToxicRow && (
-          <section className="mt-3 rounded-2xl border border-amber-300/30 bg-[#fff4db]/95 px-4 py-4 text-[#18120a] shadow-[0_14px_34px_rgba(0,0,0,0.24)]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[9px] font-black uppercase tracking-[0.18em] text-amber-800/70">Hall of Shame</p>
-                <p className="mt-1 text-[18px] font-black leading-tight">#{toxicRank} Toxic Rank</p>
-              </div>
-              <span className="rounded-full bg-[linear-gradient(135deg,#f59e0b,#e65e14)] px-2.5 py-1 text-[8px] font-black uppercase tracking-wide text-white">
-                {toxicIntensityLabel}
-              </span>
-            </div>
-            {(myMatchFirstRank || glowDownAward?.playerId === player?.id) && (
-              <div className="mt-3 flex items-center gap-2">
-                {typeof myMatchFirstRank === 'number' && (
-                  <span className="rounded-full border border-amber-800/25 bg-white/70 px-2 py-1 text-[8.5px] font-black uppercase tracking-wide text-amber-900/80 tabular-nums">
-                    R1 #{myMatchFirstRank} → Final #{myMatchOfficialRank || '-'}
-                  </span>
-                )}
-                {glowDownAward?.playerId === player?.id && (
-                  <span className="rounded-full bg-[linear-gradient(135deg,#e8c45a,#b7861f)] px-2 py-1 text-[8.5px] font-black uppercase tracking-wide text-[#3a2a05]">
-                    Glow Down
-                  </span>
-                )}
-              </div>
-            )}
-            <p className="mt-3 text-[12px] font-semibold italic leading-snug text-[#6b4a18]">"{myMatchGlowRoast || myMatchToxicRow.roast}"</p>
-          </section>
-        )}
-
-        <div className="flex-1" />
-        <footer className="mt-4 flex shrink-0 justify-center text-white/74">
-          <div className="inline-flex items-center justify-center gap-2.5">
-            <span className="text-[8.5px] font-medium leading-none">fomplay.asia/app</span>
-            <span className="text-[8.5px] font-medium leading-none text-white/38">|</span>
-            <span className="text-[8.5px] font-medium leading-none">{storyTitleDate}</span>
-          </div>
-        </footer>
-      </div>
-    );
-  };
-  const renderStandingsStoryContent = (showError = false) => {
-    const rowPadClass = storyCompactRows
-      ? 'min-h-[40px] py-1'
-      : storyDenseRows
-        ? 'min-h-[44px] py-1.5'
-        : 'min-h-[52px] py-2';
-    const nameClass = storyDenseRows ? 'text-[12px]' : 'text-[13px]';
-    const ptsClass = storyDenseRows ? 'text-[15px]' : 'text-[16px]';
-    return (
-      <div className={storyExportShellClass}>
-        <header className={storyExportLogoHeaderClass}>
-          <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className={storyExportLogoClass} />
-        </header>
-
-        {showError && storyImageError && (
-          <p className="mb-1 rounded-full bg-black/28 px-3 py-1.5 text-[10px] font-bold text-white/90">
-            {storyImageError}
-          </p>
-        )}
-
-        <section className={storySummaryCardClass} style={storySummaryCardStyle}>
-          <p className="text-[8px] font-black uppercase leading-none tracking-[0.2em] text-[#ffb27a]">Final Standings</p>
-          <div className="mt-1.5 flex items-end justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className={storyTitleClass}>{tournament.name || '-'}</h2>
-              <p className={storySubtitleClass}>{locationDateLabel}</p>
-            </div>
-            <span className={storyTimerClass}>{totalElapsed}</span>
-          </div>
-          <div className="mt-2.5 grid grid-cols-4 gap-1.5 text-center">
-            <div className={storySummaryStatClass}>
-              <p className={storyStatLabelClass}>Mode</p>
-              <p className={storyStatValueClass}>{tournament.format}</p>
-            </div>
-            <div className={storySummaryStatClass}>
-              <p className={storyStatLabelClass}>Players</p>
-              <p className={cn(storyStatValueClass, 'tabular-nums')}>{sortedPlayers.length}</p>
-            </div>
-            <div className={storySummaryStatClass}>
-              <p className={storyStatLabelClass}>Court</p>
-              <p className={cn(storyStatValueClass, 'tabular-nums')}>{courtsCount}</p>
-            </div>
-            <div className={storySummaryStatClass}>
-              <p className={storyStatLabelClass}>Round</p>
-              <p className={cn(storyStatValueClass, 'tabular-nums')}>{displayedRoundCount}/{totalRounds || 0}</p>
-            </div>
-          </div>
-        </section>
-
-        <section className={storyRankingCardClass}>
-          <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-black/[0.06] px-1.5 pb-1.5 text-[7.5px] font-black uppercase leading-none tracking-wider text-on-surface/45">
-            <span>Player</span>
-            <span className="text-right">Pts · Diff</span>
-          </div>
-          <div className={storyRankingRowsClass}>
-            {storyPlayers.map((player, i) => {
-              const rank = storyRankOffset + i;
-              const diff = player.pointsDiff;
-              return (
-                <div
-                  key={player.id}
-                  className={cn(
-                    'flex items-center justify-between gap-2 border-b border-black/[0.055] px-1.5 last:border-b-0',
-                    rowPadClass,
-                    isStoryMyRow(player.id) && cn(storyMyRowHighlightClass, 'border-b-transparent')
-                  )}
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                    <div className={cn(
-                      storyRankBadgeClass,
-                      rank === 0 && 'standings-medal-badge standings-medal-gold',
-                      rank === 1 && 'standings-medal-badge standings-medal-silver',
-                      rank === 2 && 'standings-medal-badge standings-medal-bronze',
-                      getStoryRankBadgeClass(rank)
-                    )}>
-                      {rank + 1}
-                    </div>
-                    {storyShowAvatars && (
-                      <div className={storyAvatarClass}>
-                        {player.avatar ? (
-                          <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
-                        ) : (
-                          <span className="text-[9px] font-bold text-ios-gray">{player.initials}</span>
-                        )}
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className={cn('truncate font-bold leading-tight text-on-surface', nameClass)}>
-                        {player.name}
-                        {isStoryMyRow(player.id) && (
-                          <span className="ml-1.5 text-[7px] font-black uppercase tracking-[0.08em] text-primary">· ME</span>
-                        )}
-                      </p>
-                      <p className="mt-0.5 text-[7.5px] font-black uppercase leading-none tracking-[0.06em] text-ios-gray/50 tabular-nums">
-                        {player.w}W · {player.l}L · {player.matches}M
-                      </p>
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right leading-none">
-                    <p className={cn('font-black tabular-nums text-on-surface', ptsClass)}>{player.totalPoints}</p>
-                    <p className={cn(
-                      'mt-0.5 text-[9px] font-black tabular-nums',
-                      diff > 0 ? 'text-[#1E8E3E]' : diff < 0 ? 'text-error' : 'text-ios-gray/60'
-                    )}>
-                      {formatStoryDiff(diff)}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-            {storyPlayers.length === 0 && (
-              <div className="rounded-[12px] border border-white/18 bg-white/54 p-4 text-center text-[12px] font-medium text-ios-gray">
-                Player data is not available yet.
-              </div>
-            )}
-          </div>
-        </section>
-
-        <div className={storyFooterSpacerClass} />
-        <footer className={storyFooterClass}>
-          <div className={storyFooterRowClass}>
-            <span className={storyFooterTextClass}>fomplay.asia/app</span>
-            <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
-            <span className={storyFooterTextClass}>@fo.motion</span>
-            {storyPageCount > 1 && (
-              <>
-                <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
-                <span className={storyFooterTextClass}>{activeStoryPageIndex + 1}/{storyPageCount}</span>
-              </>
-            )}
-          </div>
-        </footer>
-      </div>
-    );
-  };
-  const renderToxicStoryExportContent = (showError = false) => (
-    <div className="relative z-10 flex h-full flex-col px-4 pb-3 pt-2.5 text-white">
-      <header className="mb-1.5 flex h-7 shrink-0 items-center justify-center">
-        <img src="/fom-long-logotype-white.png" alt="" className="h-[22px] w-auto object-contain" />
-      </header>
-
-      {showError && storyImageError && (
-        <p className="mb-1 rounded-full bg-black/28 px-3 py-1.5 text-[10px] font-bold text-white/90">
-          {storyImageError}
-        </p>
-      )}
-
-      <section className="relative shrink-0 overflow-hidden rounded-[20px] border border-[#b78a1c]/75 bg-[#111008] px-3.5 py-3 text-center shadow-[0_14px_36px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,215,128,0.16)]">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(196,145,23,0.34)_0%,rgba(68,50,5,0.34)_32%,rgba(17,16,8,0.96)_64%),linear-gradient(145deg,rgba(44,34,3,0.95),rgba(8,8,4,0.98))]" />
-        <p className="relative z-10 text-[8px] font-black uppercase tracking-[0.22em] text-[#c89a2c]">The Cupu D&apos;Or 2026</p>
-
-        {toxicStandings.isEmpty ? (
-          <div className="relative z-10 py-5">
-            <div className="text-[26px] leading-none">🎾</div>
-            <h3 className="mt-2 text-[18px] font-black leading-tight text-[#f3c64c]">Belum ada korban.</h3>
-            <p className="mt-1 text-[11px] font-semibold text-[#d8c792]">{toxicStandings.heroRoast}</p>
-          </div>
-        ) : (
-          <>
-            <div className="relative z-10 mt-2.5 flex justify-center gap-3">
-              {toxicStandings.heroPlayers.map((player) => (
-                <div key={player.id} className="flex min-w-0 flex-col items-center">
-                  <div className="mb-[-7px] text-[24px] leading-none drop-shadow-[0_3px_8px_rgba(252,211,77,0.35)]">👑</div>
-                  <div className="flex h-[60px] w-[60px] items-center justify-center overflow-hidden rounded-full border-[2.5px] border-[#d7a827] bg-[#9a430a] text-[22px] font-black text-white shadow-[0_0_0_1px_rgba(255,230,140,0.16),0_0_28px_rgba(197,145,23,0.34)]">
-                    {player.avatar ? (
-                      <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
-                    ) : (
-                      <span>{player.initials}</span>
-                    )}
-                  </div>
-                  <p className="mt-2 max-w-[118px] truncate text-[18px] font-black leading-tight tracking-tight text-[#f3c64c]">{player.name}</p>
-                </div>
-              ))}
-            </div>
-            <span className="relative z-10 mt-2 inline-flex max-w-full items-center rounded-full border border-[#b78a1c]/80 bg-black/18 px-3.5 py-1 text-[8.6px] font-black uppercase tracking-[0.12em] text-[#f6d36b]">
-              {toxicStandings.heroTitle} 👑
-            </span>
-            <p className="relative z-10 mx-auto mt-2 max-w-[270px] text-[10.5px] font-semibold italic leading-snug text-[#d8c792]">
-              “{toxicStandings.heroRoast}”
-            </p>
-          </>
-        )}
-      </section>
-
-      <section className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[18px] border border-amber-300/55 bg-[#fffaf0]/96 p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.14)]">
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-black/[0.06] px-1 pb-1">
-          <h3 className="text-[9px] font-black uppercase tracking-[0.14em] text-on-surface">Hall of Shame</h3>
-          <span className="rounded-full bg-[linear-gradient(135deg,#f59e0b,#e65e14)] px-2 py-0.5 text-[6.7px] font-black uppercase tracking-wide text-white">
-            {toxicStandings.sortLabel}
-          </span>
-        </div>
-        {!toxicStandings.isEmpty && (
-          <div className="grid grid-cols-[minmax(0,1fr)_42px] items-center gap-1 border-b border-black/[0.055] px-1 py-0.5 text-[6.2px] font-black uppercase leading-none tracking-wide text-on-surface/46">
-            <span>Player / Evidence</span>
-            <span className="text-center">Pts</span>
-          </div>
-        )}
-
-        {toxicStandings.isEmpty ? (
-          <div className="flex flex-1 items-center justify-center px-4 text-center">
-            <p className="text-[12px] font-semibold leading-relaxed text-ios-gray">
-              Belum ada ranking toxic untuk dibagikan.
-            </p>
-          </div>
-        ) : (
-          <div className="min-h-0 flex flex-1 flex-col justify-between gap-0.5 pt-0.5">
-            {toxicStoryRows.map((player, i) => {
-              const rankIndex = storyRankOffset + i;
-              const isChampion = Boolean(player.isChampion);
-              const storyEvidenceChips = getToxicStoryEvidenceChips(player, tournamentRounds);
-              return (
-                <div
-                  key={player.id}
-                  className={cn(
-                    'grid grid-cols-[minmax(0,1fr)_42px] items-center gap-1 border-b border-black/[0.055] px-1 py-1 last:border-b-0',
-                    isChampion && 'opacity-70'
-                  )}
-                >
-                  <div className="min-w-0 flex items-center gap-1.5">
-                    <div className={cn(
-                      'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[8px] font-black leading-none',
-                      getToxicRankBadgeClass(rankIndex, isChampion)
-                    )}>
-                      {renderToxicRankBadgeContent(rankIndex, isChampion)}
-                    </div>
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ios-gray/10 text-[7.5px] font-black text-ios-gray">
-                      {player.avatar ? (
-                        <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
-                      ) : player.initials}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[9.7px] font-black leading-tight text-on-surface">{player.name}</p>
-                      {player.award && (
-                        <span className={cn('mt-0.5 inline-flex max-w-full rounded-full border px-[5px] py-[1px] text-[5.8px] font-black uppercase leading-none tracking-wide', getToxicAwardChipClass(player.award.isGold))}>
-                          {player.award.label} {player.award.emoji || ''}
-                        </span>
-                      )}
-                      <div className="mt-1 flex flex-wrap gap-0.5">
-                        {storyEvidenceChips.map((chip) => (
-                          <span
-                            key={chip.label}
-                            className={cn(
-                              'inline-flex rounded-full border px-[5px] py-[1px] text-[5.8px] font-black uppercase leading-none tracking-wide',
-                              chip.tone === 'danger' && 'border-red-200 bg-red-50 text-error',
-                              chip.tone === 'good' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
-                              chip.tone === 'gold' && 'border-amber-300 bg-amber-50 text-[#8b6410]',
-                              chip.tone === 'default' && 'border-black/[0.08] bg-white/72 text-ios-gray'
-                            )}
-                          >
-                            {chip.label}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="mt-0.5 truncate text-[6.8px] font-semibold italic leading-tight text-ios-gray/78">
-                        {player.roast}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-[11px] font-black leading-none text-on-surface tabular-nums">{player.totalPoints}</p>
-                    <p className={cn('mt-0.5 text-[7px] font-black leading-none tabular-nums', player.pointsDiff > 0 ? infoTheme.accent : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
-                      {formatToxicPodiumDiff(player.pointsDiff)}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <footer className="mt-1.5 flex shrink-0 justify-center text-white/78">
-        <div className="inline-flex items-center justify-center gap-2.5">
-          <span className="text-[8px] font-medium leading-none">fomplay.asia/app</span>
-          <span className="text-[8px] font-medium leading-none text-white/38">|</span>
-          <span className="text-[8px] font-medium leading-none">Jangan baper, ya</span>
-          {storyPageCount > 1 && (
-            <>
-              <span className="text-[8px] font-medium leading-none text-white/38">|</span>
-              <span className="text-[8px] font-medium leading-none">{activeStoryPageIndex + 1}/{storyPageCount}</span>
-            </>
-          )}
-        </div>
-      </footer>
-    </div>
-  );
-
   return (
     <div className="relative min-h-screen overflow-hidden bg-white z-0">
       <main
@@ -1639,12 +517,9 @@ export const KlasemenScreen = ({
           <div className="mt-2 flex flex-col gap-0.5 text-[9.5px] font-extrabold uppercase leading-[1.5] tracking-[0.12em] text-ios-gray/68">
             {standingsDetailLineOne.length > 0 && <p>{standingsDetailLineOne.join(' · ')}</p>}
             {standingsDetailLineTwo.length > 0 && <p>{standingsDetailLineTwo.join(' · ')}</p>}
-          </div>
-
-          <div className="mt-5 grid min-h-[46px] grid-cols-3 items-center">
-            <SummaryStripStat label="Rounds" value={isTournamentEnded ? `${totalRounds || displayedRoundCount}` : `${displayedRoundCount}/${totalRounds || 0}`} />
-            <SummaryStripStat label="Duration" value={totalElapsedStat} />
-            <SummaryStripStat label="Points" value={totalStandingPoints} />
+            {standingsDetailLineStats.length > 0 && (
+              <p className="text-on-surface/72">{standingsDetailLineStats.join(' · ')}</p>
+            )}
           </div>
 
           <div
@@ -1691,126 +566,16 @@ export const KlasemenScreen = ({
               </button>
             )}
             <div className="flex-1" />
-            <div ref={shareMenuRef} className="relative self-center pb-1.5">
+            <div className="self-center pb-1.5">
               <button
-                ref={shareMenuButtonRef}
                 type="button"
-                onClick={() => setIsShareMenuOpen((open) => !open)}
-                className={cn(
-                  'tap-target flex h-8 w-12 flex-col items-center justify-center gap-1 rounded-full border transition-colors',
-                  isShareMenuOpen
-                    ? 'border-primary/20 bg-primary/[0.07] text-primary'
-                    : 'border-transparent bg-transparent text-primary'
-                )}
-                aria-expanded={isShareMenuOpen}
-                aria-haspopup="menu"
-                aria-controls={isShareMenuOpen ? 'standings-share-options-menu' : undefined}
-                aria-label="Share options"
+                onClick={() => onShare(tournament)}
+                className="tap-target inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary/[0.08] px-3 text-primary"
+                aria-label="Share match link"
               >
-                <span className="h-[2.5px] w-6 rounded-full bg-current" />
-                <span className="h-[2.5px] w-9 rounded-full bg-current opacity-70" />
-                <span className="h-[2.5px] w-5 rounded-full bg-current opacity-35" />
+                <Share2 size={16} strokeWidth={2.2} />
+                <span className="text-[12px] font-bold leading-none tracking-[-0.01em]">Share</span>
               </button>
-              {isShareMenuOpen && (
-                <>
-                  <button
-                    type="button"
-                    className="fixed inset-0 z-[118] cursor-default bg-black/[0.08] sm:hidden"
-                    aria-label="Close share options"
-                    onClick={() => setIsShareMenuOpen(false)}
-                  />
-                  <div
-                    id="standings-share-options-menu"
-                    className="fixed inset-x-4 bottom-[calc(var(--app-safe-bottom,0px)+86px)] z-[119] mx-auto w-[min(22rem,calc(100vw-32px))] overflow-hidden rounded-[24px] border border-black/[0.08] bg-white/96 p-2.5 text-on-surface shadow-[0_22px_56px_rgba(15,23,42,0.22)] backdrop-blur-xl sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-[calc(100%+10px)] sm:w-[min(18rem,calc(100vw-40px))] sm:rounded-[20px] sm:p-2 sm:shadow-[0_18px_44px_rgba(15,23,42,0.18)]"
-                    role="menu"
-                  >
-                    <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-ios-gray/18 sm:hidden" />
-                    <div className="px-2 pb-2 pt-1">
-                      <p className="text-[8.5px] font-black uppercase leading-none tracking-[0.18em] text-ios-gray/54">
-                        Share
-                      </p>
-                      <p className="mt-1 text-[11px] font-semibold leading-snug text-ios-gray/74">
-                        Link dan kartu siap preview sebelum download.
-                      </p>
-                    </div>
-                    <div className="h-px bg-black/[0.055]" />
-                    <div className="mt-1 flex flex-col gap-0.5">
-                      <ShareMenuItem
-                        label="Share Link"
-                        description="Copy match link untuk dibuka bareng."
-                        meta="Link"
-                        icon={<Share2 size={15} strokeWidth={2.3} />}
-                        onClick={() => {
-                          setIsShareMenuOpen(false);
-                          onShare(tournament);
-                        }}
-                      />
-                      {toxicModeEnabled && (
-                        <ShareMenuItem
-                          label={isStoryImageBusy ? 'Preparing' : canExportShameCard ? 'Shame Card · Story' : 'Score first: Shame Card'}
-                          description={canExportShameCard ? '9:16 Hall of Shame buat grup.' : 'Butuh score dulu agar toxic valid.'}
-                          meta="Story"
-                          preview="shame"
-                          tone={canExportShameCard ? 'shame' : 'locked'}
-                          disabled={isStoryImageBusy || !canExportShameCard}
-                          icon={isStoryImageBusy ? (
-                            <RefreshCw size={15} strokeWidth={2.3} className="animate-spin motion-reduce:animate-none" />
-                          ) : canExportShameCard ? (
-                            <Flame size={15} strokeWidth={2.3} />
-                          ) : (
-                            <Lock size={15} strokeWidth={2.3} />
-                          )}
-                          onClick={() => {
-                            if (!canExportShameCard) return;
-                            setIsShareMenuOpen(false);
-                            void handleStoryAction('shame-card');
-                          }}
-                        />
-                      )}
-                      <ShareMenuItem
-                        label={isStoryImageBusy ? 'Preparing' : canExportStandingsCard ? 'Standings Card · Story' : 'Score first: Standings Card'}
-                        description={canExportStandingsCard ? '9:16 official ranking siap share.' : 'Ranking muncul setelah ada score.'}
-                        meta="Official"
-                        preview="official"
-                        tone={canExportStandingsCard ? 'primary' : 'locked'}
-                        disabled={isStoryImageBusy || !canExportStandingsCard}
-                        icon={isStoryImageBusy ? (
-                          <RefreshCw size={15} strokeWidth={2.3} className="animate-spin motion-reduce:animate-none" />
-                        ) : canExportStandingsCard ? (
-                          <FileImage size={15} strokeWidth={2.3} />
-                        ) : (
-                          <Lock size={15} strokeWidth={2.3} />
-                        )}
-                        onClick={() => {
-                          if (!canExportStandingsCard) return;
-                          setIsShareMenuOpen(false);
-                          void handleStoryAction('standings-card');
-                        }}
-                      />
-                      <ShareMenuItem
-                        label={isStoryImageBusy ? 'Preparing' : canExportMyMatchCard ? 'My Match Card · Personal' : hasLoginMatchPlayer ? 'Score first: My Match Card' : 'Login to get your Match Card'}
-                        description={canExportMyMatchCard ? '9:16 kartu pribadi login player.' : hasLoginMatchPlayer ? 'Butuh score player login dulu.' : 'Manual player tetap bisa lihat standings.'}
-                        meta="Login"
-                        preview="personal"
-                        tone={canExportMyMatchCard ? 'primary' : 'locked'}
-                        disabled={isStoryImageBusy || !canExportMyMatchCard}
-                        icon={isStoryImageBusy ? (
-                          <RefreshCw size={15} strokeWidth={2.3} className="animate-spin motion-reduce:animate-none" />
-                        ) : canExportMyMatchCard ? (
-                          <UserRound size={15} strokeWidth={2.3} />
-                        ) : (
-                          <Lock size={15} strokeWidth={2.3} />
-                        )}
-                        onClick={() => {
-                          if (!canExportMyMatchCard) return;
-                          setIsShareMenuOpen(false);
-                          void handleStoryAction('my-match-card');
-                        }}
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
             </div>
           </div>
         </section>
@@ -1820,7 +585,7 @@ export const KlasemenScreen = ({
             <button
               type="button"
               onClick={() => { setRewindEntrySource('banner'); setIsRewindOpen(true); }}
-              className="tap-target relative flex w-full items-center gap-3.5 overflow-hidden rounded-[20px] bg-[#111111] px-4 py-4 text-left shadow-[0_14px_34px_rgba(15,23,42,0.18)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100"
+              className="tap-target relative flex w-full items-center gap-3.5 overflow-hidden rounded-[20px] bg-[#111111] px-4 py-4 text-left shadow-[0_8px_22px_rgba(15,23,42,0.10)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100"
               aria-label={rewindResult || hasRemoteRewind ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
             >
               <span className="pointer-events-none absolute -right-8 -top-8 h-[110px] w-[110px] rounded-full bg-[rgba(230,94,20,0.25)]" style={{ filter: 'blur(24px)' }} />
@@ -1851,7 +616,7 @@ export const KlasemenScreen = ({
                 }
               }}
               className={cn(
-                'tap-target flex w-full items-center gap-2.5 rounded-[18px] border px-3 py-2.5 text-left shadow-[0_8px_20px_rgba(15,23,42,0.045)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100',
+                'tap-target flex w-full items-center gap-2.5 rounded-[18px] border px-3 py-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.04)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100',
                 personalStandingShortcut.tone === 'toxic'
                   ? 'border-[#D4A017]/28 bg-[#FFFBEF] text-[#8A6A1F]'
                   : 'border-primary/14 bg-[#FFF8F3] text-primary'
@@ -1891,24 +656,6 @@ export const KlasemenScreen = ({
                 {personalStandingShortcut.metric}
               </span>
             </button>
-            {canExportMyMatchCard && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (isStoryImageBusy) return;
-                  void handleStoryAction('my-match-card');
-                }}
-                disabled={isStoryImageBusy}
-                className="tap-target inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-primary px-4 text-[13.5px] font-extrabold text-white shadow-[0_10px_24px_rgba(230,94,20,0.24)] transition-transform active:scale-[0.992] disabled:opacity-60 motion-reduce:transition-none motion-reduce:active:scale-100"
-              >
-                {isStoryImageBusy ? (
-                  <RefreshCw size={16} strokeWidth={2.4} className="animate-spin motion-reduce:animate-none" />
-                ) : (
-                  <UserRound size={16} strokeWidth={2.4} />
-                )}
-                Get My Match Card
-              </button>
-            )}
           </section>
         )}
 
@@ -1941,7 +688,7 @@ export const KlasemenScreen = ({
 
         {isToxicTabActive && toxicStandings.tickerMessage && (
           <section
-            className="toxic-ticker relative isolate overflow-hidden rounded-[18px] border border-[#B7861F]/45 bg-[#151008] px-3.5 py-3 text-[#E8C45A] shadow-[0_12px_28px_rgba(17,16,8,0.18)]"
+            className="toxic-ticker relative isolate overflow-hidden rounded-[18px] border border-[#B7861F]/45 bg-[#151008] px-3.5 py-3 text-[#E8C45A] shadow-[0_8px_20px_rgba(17,16,8,0.10)]"
             role="status"
             aria-live="polite"
             aria-atomic="true"
@@ -1989,8 +736,8 @@ export const KlasemenScreen = ({
             aria-labelledby={STANDINGS_TAB_TOXIC_ID}
           >
             {toxicStandings.isEmpty ? (
-              <div className="mx-5 rounded-[22px] border border-[#B7861F]/35 bg-[#FFFBEF] px-5 py-7 text-center shadow-[0_12px_28px_rgba(15,23,42,0.10)]">
-                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-[#D4A017]/28 bg-white/66 text-[#B7861F] shadow-[0_8px_20px_rgba(120,78,0,0.10)]">
+              <div className="mx-5 rounded-[22px] border border-[#B7861F]/35 bg-[#FFFBEF] px-5 py-7 text-center shadow-[0_6px_16px_rgba(15,23,42,0.05)]">
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full border border-[#D4A017]/28 bg-white/66 text-[#B7861F]">
                   <Flame size={20} strokeWidth={2.35} />
                 </div>
                 <p className="mt-3 text-[9px] font-black uppercase leading-none tracking-[0.16em] text-[#B7861F]">Shame committee</p>
@@ -2012,7 +759,7 @@ export const KlasemenScreen = ({
                 </div>
               </div>
             ) : toxicStandings.isPeacefulTie ? (
-              <div className="mx-5 rounded-[22px] border border-[#B7861F]/35 bg-[#FFFBEF] px-5 py-7 text-center shadow-[0_12px_28px_rgba(15,23,42,0.10)]">
+              <div className="mx-5 rounded-[22px] border border-[#B7861F]/35 bg-[#FFFBEF] px-5 py-7 text-center shadow-[0_6px_16px_rgba(15,23,42,0.05)]">
                 <p className="text-[9px] font-black uppercase leading-none tracking-[0.16em] text-[#B7861F]">No public victim</p>
                 <h3 className="mt-2 text-[18px] font-black tracking-tight text-on-surface">{toxicStandings.heroTitle}</h3>
                 <p className="mx-auto mt-2 max-w-[270px] text-[12.5px] font-semibold italic leading-relaxed text-ios-gray">
@@ -2022,29 +769,12 @@ export const KlasemenScreen = ({
             ) : (
               <>
                 <div className="flex items-center justify-between gap-3 px-5">
-                  <div className="min-w-0">
-                    <p className="text-[9px] font-black uppercase leading-none tracking-[0.18em] text-[#8A6A1F]">
-                      {isTournamentEnded ? 'Final Hall of Shame' : 'Hall of Shame'}
-                    </p>
-                    {isTournamentEnded && (
-                      <p className="mt-1 text-[9px] font-bold leading-none text-ios-gray/52">
-                        Results locked after finish.
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-[8px] font-black uppercase leading-none tracking-[0.14em] text-[#C5C5CA]/75">
-                      {toxicStandings.sortLabel}
-                    </span>
-                    {isTournamentEnded && (
-                      <span className="shrink-0 rounded-full border border-[#D4A017]/35 bg-[#151008] px-2 py-1 text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-[#F4D77B]">
-                        Locked Final
-                      </span>
-                    )}
-                    <span className="shrink-0 rounded-full border border-[#D4A017]/35 bg-[#FFF7E0] px-2 py-1 text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-[#9A6500]">
-                      {toxicIntensityLabel}
-                    </span>
-                  </div>
+                  <p className="min-w-0 truncate text-[9px] font-black uppercase leading-none tracking-[0.18em] text-[#8A6A1F]">
+                    {isTournamentEnded ? 'Final Hall of Shame' : 'Hall of Shame'}
+                  </p>
+                  <span className="shrink-0 rounded-full border border-[#D4A017]/35 bg-[#FFF7E0] px-2 py-1 text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-[#9A6500]">
+                    {toxicIntensityLabel}
+                  </span>
                 </div>
 
                 <div
@@ -2052,8 +782,8 @@ export const KlasemenScreen = ({
                   data-ceremony-run-id={toxicConfettiRunId}
                   data-toxic-hero-layout={hasCoKingHero ? 'duo' : 'solo'}
                   className={cn(
-                    'toxic-ceremony-card relative mx-5 mt-3 overflow-hidden rounded-[24px] border border-[#C9A14A]/45 bg-[#131008] text-center shadow-[0_18px_48px_rgba(17,16,8,0.36),inset_0_1px_0_rgba(255,215,128,0.16)]',
-                    hasCoKingHero ? 'px-5 py-5' : 'px-5 py-[22px]'
+                    'toxic-ceremony-card relative mt-3 overflow-hidden border-y border-[#C9A14A]/40 bg-[#131008] text-center shadow-[inset_0_1px_0_rgba(255,215,128,0.16)]',
+                    hasCoKingHero ? 'px-6 py-6' : 'px-6 py-7'
                   )}
                 >
                   <div className="absolute inset-0 bg-[radial-gradient(120%_90%_at_50%_0%,rgba(201,161,74,0.28),rgba(201,161,74,0.04)_55%),#131008]" />
@@ -2154,48 +884,13 @@ export const KlasemenScreen = ({
                   <p className="toxic-roast-reveal relative z-20 mx-auto mt-4 max-w-[270px] text-[13px] font-semibold italic leading-relaxed text-[#d8c792]">
                     “{toxicStandings.heroRoast}”
                   </p>
+                  <p className="relative z-20 mt-3.5 text-[7.5px] font-black uppercase leading-none tracking-[0.2em] text-[#C9A14A]/50">
+                    {toxicStandings.sortLabel}
+                  </p>
                 </div>
 
-                {toxicSummaryItems.length > 0 && (
-                  <div className="mx-5 mt-3 grid grid-cols-3 gap-1.5">
-                    {toxicSummaryItems.map((item) => (
-                      <button
-                        type="button"
-                        key={`${item.label}-${item.value}`}
-                        onClick={() => handleToxicSummaryAction(item.action)}
-                        disabled={!item.action}
-                        className={cn(
-                          'tap-target min-w-0 rounded-[16px] border px-2.5 py-2.5 text-left shadow-[0_8px_18px_rgba(120,78,0,0.055)] transition-transform disabled:active:scale-100 disabled:opacity-100 motion-reduce:transition-none',
-                          item.tone === 'danger'
-                            ? 'border-red-200/70 bg-red-50 text-error'
-                            : item.tone === 'gold'
-                              ? 'border-[#D4A017]/30 bg-[#FFF7E0] text-[#8A6A1F]'
-                              : 'border-black/[0.055] bg-white text-on-surface',
-                          item.action && 'active:shadow-[0_6px_14px_rgba(120,78,0,0.08)]'
-                        )}
-                        aria-label={`${item.label}: ${item.value}. ${item.ctaLabel || item.detail}`}
-                      >
-                        <p className="truncate text-[7.2px] font-black uppercase leading-none tracking-[0.13em] opacity-65">
-                          {item.label}
-                        </p>
-                        <p className="mt-1.5 truncate text-[12px] font-black leading-tight tracking-[-0.01em]">
-                          {item.value}
-                        </p>
-                        <p className="mt-0.5 truncate text-[8.5px] font-bold leading-tight opacity-58">
-                          {item.detail}
-                        </p>
-                        {item.ctaLabel && (
-                          <p className="mt-2 text-[7px] font-black uppercase leading-none tracking-[0.12em] opacity-70">
-                            {item.ctaLabel} →
-                          </p>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
                 {toxicStandings.rows.length >= 3 && (
-                  <div className="relative mx-5 mt-3.5 overflow-hidden rounded-[22px] bg-[#141414] px-4 pb-0 pt-4 shadow-[0_14px_32px_rgba(17,16,8,0.24)]">
+                  <div className="relative mx-5 mt-3.5 overflow-hidden rounded-[22px] bg-[#141414] px-4 pb-0 pt-4 shadow-[0_10px_26px_rgba(17,16,8,0.12)]">
                     <div className="absolute inset-0 opacity-[0.03] bg-[url('/assets/fom-logomark-app.png')] bg-[length:54px_54px] rotate-[-8deg] scale-125" />
                     <div className="relative z-10">
                       <div className="flex items-center justify-between gap-3">
@@ -2296,7 +991,7 @@ export const KlasemenScreen = ({
                     type="button"
                     id={getOfficialPlayerRowId(champion.id)}
                     className={cn(
-                      'relative flex w-full items-center gap-3.5 rounded-[22px] bg-[#141414] px-4 py-4 text-left shadow-[0_16px_34px_rgba(15,23,42,0.16)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100',
+                      'relative flex w-full items-center gap-3.5 rounded-[22px] bg-[#141414] px-4 py-4 text-left shadow-[0_10px_26px_rgba(15,23,42,0.10)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100',
                       isChampionExpanded && 'rounded-b-[18px]',
                       isChampionHighlighted && 'standings-row-highlight-pulse ring-2 ring-primary/38 ring-offset-2 ring-offset-white'
                     )}
@@ -2523,7 +1218,7 @@ export const KlasemenScreen = ({
 
               {!shouldShowOfficialStandings && (
                 <div className="mx-5 mt-4 rounded-[22px] border border-dashed border-black/[0.09] bg-[#FAFAFB] px-5 py-7 text-center">
-                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white text-primary shadow-[0_8px_18px_rgba(15,23,42,0.06)]">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-white text-primary">
                     <BarChart2 size={18} strokeWidth={2.2} />
                   </div>
                   <p className="mt-3 text-[17px] font-display font-bold tracking-[-0.028em] text-on-surface">
@@ -2544,12 +1239,12 @@ export const KlasemenScreen = ({
               <div className="min-w-0">
                 <h3 className="text-[9px] font-black uppercase leading-none tracking-[0.16em] text-[#8A6A1F]">Amunisi Grup WA</h3>
                 <p className="mt-1 text-[10.5px] font-semibold italic leading-snug text-ios-gray/58">
-                  Sertifikat resmi buat bahan ketawa setelah match.
+                  Versi story siap share ada di FOM Rewind.
                 </p>
               </div>
               <div className="mt-[-1px] flex shrink-0 flex-col items-end gap-1.5">
                 <span className="rounded-full border border-[#D4A017]/30 bg-[#FFF7E0] px-2 py-1 text-[7px] font-black uppercase leading-none tracking-[0.12em] text-[#A06B00]">
-                  {toxicStandings.awardCards.length} Sertifikat
+                  {toxicStandings.awardCards.length} Award
                 </span>
                 {toxicStandings.awardCards.length > 1 && (
                   <span className="text-[7px] font-black uppercase leading-none tracking-[0.12em] text-[#B7861F]/62">
@@ -2573,7 +1268,7 @@ export const KlasemenScreen = ({
                 if (toxicStandings.awardCards.length <= 1) return;
                 const nextIndex = Math.max(0, Math.min(
                   toxicStandings.awardCards.length - 1,
-                  Math.round(event.currentTarget.scrollLeft / 270)
+                  Math.round(event.currentTarget.scrollLeft / 208)
                 ));
                 setActiveAwardCardIndex((currentIndex) => (currentIndex === nextIndex ? currentIndex : nextIndex));
               }}
@@ -2582,60 +1277,40 @@ export const KlasemenScreen = ({
                   <button
                     type="button"
                     key={getToxicAwardCardKey(award)}
-                    onClick={() => void handleCertificateAction(award)}
-                    disabled={isStoryImageBusy}
-                    className="tap-target relative isolate min-w-[258px] max-w-[258px] snap-start overflow-hidden rounded-[22px] border border-[#D4A017]/45 bg-[linear-gradient(135deg,#FFFDF6_0%,#FFFAEC_48%,#F5E2AF_100%)] p-4 text-left shadow-[0_16px_34px_rgba(120,78,0,0.16),inset_0_1px_0_rgba(255,255,255,0.72)] transition-transform active:scale-[0.985] disabled:opacity-60 motion-reduce:transition-none motion-reduce:active:scale-100"
-                    aria-label={`Open certificate ${award.label}, ${index + 1} of ${toxicStandings.awardCards.length}`}
+                    onClick={() => scrollToToxicStandingPlayer(award.player.id)}
+                    className="tap-target relative isolate min-w-[196px] max-w-[196px] snap-start overflow-hidden rounded-[18px] border border-[#D4A017]/40 bg-[linear-gradient(135deg,#FFFDF6_0%,#FFFAEC_52%,#F7EBC4_100%)] p-3 text-left shadow-[0_6px_16px_rgba(120,78,0,0.07),inset_0_1px_0_rgba(255,255,255,0.72)] transition-transform active:scale-[0.985] motion-reduce:transition-none motion-reduce:active:scale-100"
+                    aria-label={`Lihat ${award.label} di Full Shame Table, ${index + 1} of ${toxicStandings.awardCards.length}`}
                   >
                     <div className="absolute inset-0 -z-10 opacity-[0.04] bg-[url('/assets/fom-logomark-app.png')] bg-[length:44px_44px] rotate-[-10deg] scale-125" />
-                    <div className="absolute -right-9 -top-9 -z-10 h-28 w-28 rounded-full bg-[#D4A017]/18 blur-xl" />
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="text-[7.4px] font-black uppercase leading-none tracking-[0.18em] text-[#A06B00]">Sertifikat Resmi</p>
-                        <p className="mt-1.5 text-[7.4px] font-black uppercase leading-none tracking-[0.12em] text-[#C4A36A]">
-                          Certificate #{String(index + 1).padStart(2, '0')} · {index + 1}/{toxicStandings.awardCards.length}
-                        </p>
-                      </div>
-                      <div className={cn(
-                        'relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border text-[21px] shadow-[0_9px_20px_rgba(120,78,0,0.18)]',
+                    <div className="flex items-center gap-2">
+                      <span className={cn(
+                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-[15px]',
                         award.isGold
                           ? 'border-[#B7861F]/50 bg-[linear-gradient(135deg,#FDE68A,#D4A017)]'
-                          : 'border-[#D4A017]/35 bg-white/70'
+                          : 'border-[#D4A017]/30 bg-white/70'
                       )}>
-                        <span className="absolute -bottom-1 left-2 h-3 w-1.5 rotate-[16deg] rounded-b-sm bg-[#D4A017]/45" />
-                        <span className="absolute -bottom-1 right-2 h-3 w-1.5 rotate-[-16deg] rounded-b-sm bg-[#D4A017]/45" />
-                        <span className="relative z-10 leading-none">{award.emoji || '🏅'}</span>
-                      </div>
+                        {award.emoji || '🏅'}
+                      </span>
+                      <p className="min-w-0 flex-1 text-[13px] font-black leading-tight tracking-[-0.02em] text-on-surface">{award.label}</p>
                     </div>
-
-                    <p className="mt-3.5 text-[16px] font-black leading-tight tracking-[-0.025em] text-on-surface">{award.label}</p>
-                    <div className="mt-3 space-y-1.5">
+                    <div className="mt-2.5 space-y-1">
                       {[award.player, award.secondaryPlayer].map((awardPlayer) => (
                         awardPlayer ? (
-                          <div key={awardPlayer.id} className="flex min-w-0 items-center gap-2 rounded-full border border-[#D4A017]/18 bg-white/58 py-1.5 pl-1.5 pr-2.5">
-                            <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#F1E3BE] text-[8.5px] font-black text-[#8A6A1F]">
+                          <div key={awardPlayer.id} className="flex min-w-0 items-center gap-1.5 rounded-full border border-[#D4A017]/16 bg-white/58 py-1 pl-1 pr-2">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#F1E3BE] text-[7.5px] font-black text-[#8A6A1F]">
                               {awardPlayer.avatar ? (
                                 <img className="h-full w-full object-cover" src={awardPlayer.avatar} alt="" referrerPolicy="no-referrer" />
                               ) : awardPlayer.initials}
                             </span>
-                            <span className="min-w-0 truncate text-[11.5px] font-extrabold text-on-surface/84">{awardPlayer.name}</span>
+                            <span className="min-w-0 truncate text-[10.5px] font-extrabold text-on-surface/84">{awardPlayer.name}</span>
                           </div>
                         ) : null
                       ))}
                     </div>
-                    <div className="mt-3.5 border-t border-dashed border-[#B7861F]/35 pt-2.5">
-                      <p className="text-[7.6px] font-black uppercase leading-none tracking-[0.16em] text-[#B7861F]">Reason</p>
-                      <p className="mt-1.5 line-clamp-3 text-[10.5px] font-semibold italic leading-snug text-[#7A6A4C]">{award.note}</p>
-                    </div>
-                    <div className="mt-3 flex items-center justify-between gap-2 rounded-full border border-[#D4A017]/20 bg-white/54 px-2.5 py-1.5">
-                      <span className="min-w-0 truncate text-[7.4px] font-black uppercase leading-none tracking-[0.12em] text-[#B7861F]/75">
-                        Tap to open certificate
-                      </span>
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#151008] px-2 py-1 text-[8px] font-black uppercase leading-none tracking-[0.08em] text-[#F4D77B]">
-                        <FileImage size={10} strokeWidth={2.4} />
-                        Open
-                      </span>
-                    </div>
+                    <p className="mt-2 line-clamp-2 min-h-[24px] text-[9.5px] font-semibold italic leading-snug text-[#7A6A4C]">{award.note}</p>
+                    <p className="mt-2 border-t border-dashed border-[#B7861F]/30 pt-1.5 text-[7.2px] font-black uppercase leading-none tracking-[0.12em] text-[#B7861F]/75">
+                      Lihat evidence →
+                    </p>
                   </button>
                 ))}
               </div>
@@ -2971,20 +1646,7 @@ export const KlasemenScreen = ({
           </div>
         )}
 
-        <section className={cn('px-0 pb-8', isToxicTabActive ? 'pt-5' : 'pt-9')}>
-          <button
-            onClick={() => onShare(tournament)}
-            className={cn(
-              'mx-auto flex h-[52px] w-full items-center justify-center gap-2 rounded-[14px] border border-white/12 text-[15px] font-bold tracking-[0.01em] text-white tap-target',
-              shareCtaIsShame
-                ? 'bg-[linear-gradient(135deg,#f59e0b,#e65e14)] shadow-[0_8px_22px_rgba(245,158,11,0.28)]'
-                : 'bg-primary shadow-[0_10px_26px_rgba(230,94,20,0.28)]'
-            )}
-          >
-            <Share2 size={16} />
-            {shareCtaLabel}
-          </button>
-        </section>
+        <div className={cn('pb-8', isToxicTabActive ? 'pt-2' : 'pt-6')} />
       </main>
 
       <div
@@ -2995,7 +1657,7 @@ export const KlasemenScreen = ({
         className="fixed inset-x-0 z-[94] px-4"
         style={{ bottom: 'calc(var(--app-safe-bottom, 0px) + 14px)' }}
       >
-        <div className="mx-auto grid w-[min(100%,258px)] grid-cols-2 items-center gap-1.5 rounded-full border border-black/[0.06] bg-white/88 px-2 py-2 shadow-[0_14px_36px_rgba(15,23,42,0.13)] backdrop-blur-xl">
+        <div className="mx-auto grid w-[min(100%,258px)] grid-cols-2 items-center gap-1.5 rounded-full border border-black/[0.06] bg-white/88 px-2 py-2 shadow-[0_10px_28px_rgba(15,23,42,0.10)] backdrop-blur-xl">
           <button
             type="button"
             onClick={onOpenActive}
@@ -3017,141 +1679,6 @@ export const KlasemenScreen = ({
 
       {showSharedTrialCta && <SharedViewerFomPlayCta />}
 
-      <input
-        ref={cardPhotoInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleCardPhotoChange}
-      />
-
-      <div
-        aria-hidden="true"
-        data-share-exporter="true"
-        className="pointer-events-none fixed left-0 top-0 z-0 opacity-0"
-        style={{ width: storyExportDimensions.width, height: storyExportDimensions.height }}
-      >
-        <div
-          ref={storyExportRef}
-          className="relative overflow-hidden bg-black"
-          style={{ width: storyExportDimensions.width, height: storyExportDimensions.height }}
-        >
-          {canRenderCurrentShareCard ? (
-            <>
-              {!isCupuCertificateStoryMode && renderShareCardBackground()}
-
-              {isCupuCertificateStoryMode ? renderCupuCertificateExportContent() : isMyMatchStoryMode ? (usesPhotoBackground ? renderMyMatchPhotoCardContent() : renderMyMatchStoryExportContent()) : isToxicStoryMode ? renderToxicStoryExportContent() : renderStandingsStoryContent()}
-            </>
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-black text-[12px] font-black uppercase tracking-[0.16em] text-white/35">
-              Share card locked
-            </div>
-          )}
-        </div>
-      </div>
-
-      {isStoryPreviewOpen && (
-        <div
-          ref={storyPreviewDialogRef}
-          className="fixed inset-0 z-[240] flex items-center justify-center bg-black/86 px-3 py-3"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Share card preview"
-          onClick={(event) => {
-            if (event.target !== event.currentTarget) return;
-            closeStoryPreview();
-          }}
-        >
-          <button
-            ref={storyPreviewCloseButtonRef}
-            type="button"
-            onClick={closeStoryPreview}
-            className="tap-target absolute right-4 z-[250] h-10 w-10 rounded-full border border-white/15 bg-white/12 text-white backdrop-blur-xl inline-flex items-center justify-center"
-            style={{ top: 'calc(var(--app-safe-top, 0px) + 12px)' }}
-            aria-label="Close story preview"
-          >
-            <X size={19} />
-          </button>
-
-          {storyImageBlob && (
-            <button
-              type="button"
-              onClick={downloadStoryPreviewFiles}
-              className="tap-target absolute left-4 z-[250] inline-flex h-10 items-center justify-center gap-2 rounded-full border border-white/15 bg-white/12 px-4 text-[12px] font-extrabold text-white backdrop-blur-xl"
-              style={{ top: 'calc(var(--app-safe-top, 0px) + 12px)' }}
-              aria-label={isCupuCertificateStoryMode ? 'Download certificate' : 'Download share card'}
-            >
-              <Download size={16} />
-              {storyImageDownloads.length > 1 ? 'Download all' : 'Download'}
-            </button>
-          )}
-
-          {previewShareCardPageCount > 1 && (
-            <div
-              className="absolute left-1/2 z-[250] inline-flex h-8 -translate-x-1/2 items-center justify-center rounded-full border border-white/12 bg-white/10 px-3 text-[11px] font-black uppercase tracking-[0.08em] text-white/82 backdrop-blur-xl"
-              style={{ top: 'calc(var(--app-safe-top, 0px) + 16px)' }}
-            >
-              1/{previewShareCardPageCount} cards
-            </div>
-          )}
-
-          {isMyMatchStoryMode && (
-            <div
-              className="absolute left-1/2 z-[250] flex -translate-x-1/2 items-center gap-2"
-              style={{ bottom: 'calc(var(--app-safe-bottom, 0px) + 16px)' }}
-            >
-              <button
-                type="button"
-                onClick={handlePickCardPhoto}
-                disabled={isProcessingCardPhoto || isStoryImageBusy}
-                className="tap-target inline-flex h-11 items-center justify-center gap-2 rounded-full border border-white/15 bg-white/12 px-5 text-[13px] font-extrabold text-white backdrop-blur-xl disabled:opacity-60"
-              >
-                {isProcessingCardPhoto ? (
-                  <RefreshCw size={16} className="animate-spin motion-reduce:animate-none" />
-                ) : (
-                  <FileImage size={16} />
-                )}
-                {isProcessingCardPhoto ? 'Memproses' : cardPhoto ? 'Ganti foto' : 'Tambah foto'}
-              </button>
-              {cardPhoto && (
-                <button
-                  type="button"
-                  onClick={handleRemoveCardPhoto}
-                  disabled={isProcessingCardPhoto || isStoryImageBusy}
-                  className="tap-target inline-flex h-11 items-center justify-center rounded-full border border-white/15 bg-white/8 px-4 text-[13px] font-extrabold text-white/85 backdrop-blur-xl disabled:opacity-60"
-                >
-                  Hapus
-                </button>
-              )}
-            </div>
-          )}
-
-          {storyImageUrl ? (
-            <img
-              src={storyImageUrl}
-              alt="Generated share card"
-              className={cn(
-                'max-h-[calc(100dvh-24px)] object-contain shadow-[0_24px_80px_rgba(0,0,0,0.45)]',
-                isCupuCertificateStoryMode ? 'aspect-[4/5] bg-[#FBF7EC]' : 'aspect-[9/16] bg-black'
-              )}
-              style={{ width: isCupuCertificateStoryMode ? 'min(calc(100vw - 24px), 420px)' : 'min(calc(100vw - 24px), 430px)' }}
-            />
-          ) : (
-            <div
-              className={cn(
-                'relative max-h-[calc(100dvh-24px)] overflow-hidden shadow-[0_24px_80px_rgba(0,0,0,0.45)]',
-                isCupuCertificateStoryMode ? 'aspect-[4/5] bg-[#FBF7EC]' : 'aspect-[9/16] bg-black'
-              )}
-              style={{ width: isCupuCertificateStoryMode ? 'min(calc(100vw - 24px), 420px)' : 'min(calc(100vw - 24px), 430px)' }}
-            >
-              {!isCupuCertificateStoryMode && renderShareCardBackground()}
-
-              {isCupuCertificateStoryMode ? renderCupuCertificateExportContent(true) : isMyMatchStoryMode ? (usesPhotoBackground ? renderMyMatchPhotoCardContent(true) : renderMyMatchStoryExportContent(true)) : isToxicStoryMode ? renderToxicStoryExportContent(true) : renderStandingsStoryContent(true)}
-            </div>
-          )}
-        </div>
-      )}
-
       {isRewindOpen && (
         <RewindFlow
           tournament={tournament}
@@ -3159,6 +1686,7 @@ export const KlasemenScreen = ({
           toxicStandings={toxicStandings}
           shareId={rewindShareId}
           currentUserUid={currentUserUid || undefined}
+          currentUserPlayerId={myMatchStanding?.id}
           isReadOnly={Boolean(isSharedViewer)}
           entrySource={rewindEntrySource}
           existingResult={rewindResult}
@@ -3178,201 +1706,6 @@ const OfficialCrownIcon = ({ className }: { className?: string }) => (
   >
     <path d="M1 9h12l-1.2-6.6-3 2.8L7 1 5.2 5.2l-3-2.8L1 9Z" fill="currentColor" />
   </svg>
-);
-
-type ToxicSummaryItem = {
-  label: string;
-  value: string;
-  detail: string;
-  tone?: 'default' | 'danger' | 'gold';
-  action?: ToxicSummaryAction;
-  ctaLabel?: string;
-};
-
-type ToxicSummaryAction =
-  | { type: 'player'; playerId: string }
-  | { type: 'award'; awardKey: string };
-
-type SharePreviewVariant = 'shame' | 'official' | 'personal';
-
-const getSharePreviewFrameClass = (preview: SharePreviewVariant) => (
-  preview === 'shame'
-    ? 'border-[#B7861F]/32 bg-[#151008]'
-    : preview === 'personal'
-      ? 'border-primary/16 bg-[#FFF3ED]'
-      : 'border-black/[0.06] bg-white'
-);
-
-const getSharePreviewAccentClass = (preview: SharePreviewVariant) => (
-  preview === 'shame' ? 'bg-[#E8C45A]' : 'bg-primary'
-);
-
-const getSharePreviewAvatarClass = (preview: SharePreviewVariant) => (
-  preview === 'shame' ? 'bg-[#D4A017]' : 'bg-ios-gray/18'
-);
-
-const getSharePreviewFooterClass = (preview: SharePreviewVariant) => (
-  preview === 'shame' ? 'bg-[#E8C45A]/50' : 'bg-ios-gray/16'
-);
-
-const getWorstToxicLossSummary = (rounds: Round[]) => {
-  let worstLoss: { score: string; losers: string; loserIds: string[]; margin: number } | null = null;
-
-  rounds.forEach((round) => {
-    (round.matches || []).forEach((match) => {
-      if (!hasMatchScoreProgress(match)) return;
-      const scoreA = Number(match.teamA?.score || 0);
-      const scoreB = Number(match.teamB?.score || 0);
-      const margin = Math.abs(scoreA - scoreB);
-      if (margin <= 0 || (worstLoss && worstLoss.margin >= margin)) return;
-
-      const losingTeam = scoreA > scoreB ? match.teamB : match.teamA;
-      const scoreFor = scoreA > scoreB ? scoreB : scoreA;
-      const scoreAgainst = scoreA > scoreB ? scoreA : scoreB;
-      worstLoss = {
-        score: `${scoreFor}-${scoreAgainst}`,
-        losers: formatPlayerNames(losingTeam.players),
-        loserIds: losingTeam.players.map((player) => player.id),
-        margin,
-      };
-    });
-  });
-
-  return worstLoss;
-};
-
-const buildToxicSummaryItems = (toxicStandings: ToxicStandingsData, rounds: Round[]): ToxicSummaryItem[] => {
-  if (toxicStandings.isEmpty || toxicStandings.isPeacefulTie) return [];
-
-  const heroNames = toxicStandings.heroPlayers.map((player) => getShortPlayerName(player.name)).join(' & ');
-  const diffStat = toxicStandings.heroStats.find((stat) => stat.label === 'Diff');
-  const worstLoss = getWorstToxicLossSummary(rounds);
-  const toxicPlayerIds = new Set(toxicStandings.rows.map((player) => player.id));
-  const worstLossPlayerId = worstLoss?.loserIds.find((playerId) => toxicPlayerIds.has(playerId));
-  const duoPetakaAward = toxicStandings.awardCards.find((award) => award.id === 'duo-petaka');
-  const summaryItems: ToxicSummaryItem[] = [
-    {
-      label: toxicStandings.heroPlayers.length > 1 ? 'Co-King' : 'King',
-      value: heroNames || '-',
-      detail: diffStat ? `Diff ${diffStat.value}` : toxicStandings.heroTitle,
-      tone: 'gold',
-      action: toxicStandings.heroPlayers[0] ? { type: 'player', playerId: toxicStandings.heroPlayers[0].id } : undefined,
-      ctaLabel: 'Lihat row',
-    },
-  ];
-
-  if (worstLoss) {
-    summaryItems.push({
-      label: 'Worst Loss',
-      value: worstLoss.score,
-      detail: worstLoss.losers,
-      tone: 'danger',
-      action: worstLossPlayerId ? { type: 'player', playerId: worstLossPlayerId } : undefined,
-      ctaLabel: 'Buka bukti',
-    });
-  }
-
-  if (duoPetakaAward) {
-    const duoNames = [
-      duoPetakaAward.player,
-      duoPetakaAward.secondaryPlayer,
-    ].filter(Boolean).map((player) => getShortPlayerName(player?.name || '')).join(' & ');
-    summaryItems.push({
-      label: 'Pair Award',
-      value: duoNames || 'Awarded',
-      detail: 'Chemistry perlu diselamatkan',
-      tone: 'gold',
-      action: { type: 'award', awardKey: getToxicAwardCardKey(duoPetakaAward) },
-      ctaLabel: 'Sertifikat',
-    });
-  } else {
-    summaryItems.push({
-      label: 'Awards',
-      value: `${toxicStandings.awardCards.length}`,
-      detail: 'Sertifikat aktif',
-    });
-  }
-
-  return summaryItems.slice(0, 3);
-};
-
-const ShareMenuItem = ({
-  label,
-  description,
-  icon,
-  meta,
-  preview,
-  tone = 'default',
-  disabled = false,
-  onClick,
-}: {
-  label: string;
-  description: string;
-  icon: ReactNode;
-  meta?: string;
-  preview?: SharePreviewVariant;
-  tone?: 'default' | 'primary' | 'shame' | 'locked';
-  disabled?: boolean;
-  onClick: () => void;
-}) => (
-  <button
-    type="button"
-    onClick={onClick}
-    disabled={disabled}
-    className={cn(
-      'tap-target group flex w-full items-center gap-3 rounded-[14px] px-2.5 py-2.5 text-left transition-colors active:bg-ios-gray/[0.06] disabled:opacity-58 disabled:active:bg-transparent',
-      tone === 'shame' && !disabled && 'active:bg-[#FFF6E0]',
-      tone === 'primary' && !disabled && 'active:bg-[#FFF3ED]'
-    )}
-    role="menuitem"
-    aria-label={label}
-  >
-    <span className={cn(
-      'flex h-9 w-9 shrink-0 items-center justify-center rounded-full',
-      tone === 'shame'
-        ? 'bg-[#151008] text-[#E8C45A]'
-        : tone === 'primary'
-          ? 'bg-primary/[0.09] text-primary'
-          : tone === 'locked'
-            ? 'bg-ios-gray/[0.08] text-ios-gray'
-            : 'bg-[#F7F7FA] text-ios-gray'
-    )}>
-      {icon}
-    </span>
-    <span className="min-w-0 flex-1">
-      <span className="block truncate text-[13px] font-extrabold leading-tight tracking-[-0.01em] text-on-surface">
-        {label}
-      </span>
-      <span className="mt-0.5 block truncate text-[10.5px] font-semibold leading-tight text-ios-gray/72">
-        {description}
-      </span>
-    </span>
-    {preview && (
-      <span
-        className={cn(
-          'relative h-10 w-7 shrink-0 overflow-hidden rounded-[7px] border shadow-[0_5px_12px_rgba(15,23,42,0.08)]',
-          getSharePreviewFrameClass(preview)
-        )}
-        aria-hidden="true"
-      >
-        <span className={cn('absolute inset-x-1 top-1 h-1 rounded-full', getSharePreviewAccentClass(preview))} />
-        <span className={cn('absolute left-1 top-3 h-3 w-3 rounded-full', getSharePreviewAvatarClass(preview))} />
-        <span className={cn('absolute bottom-1.5 left-1 right-1 h-1 rounded-full', getSharePreviewFooterClass(preview))} />
-      </span>
-    )}
-    {meta && (
-      <span className={cn(
-        'shrink-0 rounded-full px-2 py-1 text-[8px] font-black uppercase leading-none tracking-[0.08em]',
-        tone === 'shame'
-          ? 'bg-[#FFF6D8] text-[#9A6A00]'
-          : tone === 'locked'
-            ? 'bg-ios-gray/[0.08] text-ios-gray'
-            : 'bg-primary/[0.08] text-primary'
-      )}>
-        {meta}
-      </span>
-    )}
-  </button>
 );
 
 type RankMovement = {
@@ -3539,7 +1872,10 @@ const ToxicPodiumColumn = ({
       <p className={cn('mt-0.5 line-clamp-2 text-[7px] font-extrabold uppercase leading-tight tracking-[0.12em]', podiumCopy.labelClass)}>
         {player.award?.label || podiumCopy.badge}
       </p>
-      <p className="mt-1 line-clamp-2 min-h-[30px] text-[9px] font-semibold italic leading-[1.25] text-white/48">
+      <p className="mt-1 text-[8px] font-bold leading-none tabular-nums text-[#E8C45A]/72">
+        {player.totalPoints} PTS · {formatToxicPodiumDiff(player.pointsDiff)}
+      </p>
+      <p className="mt-1 line-clamp-2 min-h-[24px] text-[9px] font-semibold italic leading-[1.25] text-white/48">
         “{podiumQuote || podiumCopy.quote}”
       </p>
       <div className={cn(
@@ -3553,6 +1889,12 @@ const ToxicPodiumColumn = ({
 };
 
 const formatToxicPodiumDiff = (value: number) => (value > 0 ? `+${value}` : String(value));
+
+const getToxicAwardChipClass = (isGold?: boolean) => (
+  isGold
+    ? 'border-[#d4a017]/55 bg-[linear-gradient(135deg,#fbe7a2,#e3b341)] text-[#6b4e00]'
+    : 'border-ios-gray/20 bg-ios-gray/10 text-ios-gray'
+);
 
 const formatToxicPodiumRecord = (player: ToxicStandingRow) => `${player.w}W-${player.l}L`;
 
@@ -3572,28 +1914,6 @@ const getToxicTableEvidenceChips = (player: ToxicStandingRow) => ([
 ] as Array<{ label: string; tone: 'default' | 'good' | 'danger' }>);
 
 type ToxicEvidenceChip = ReturnType<typeof getToxicTableEvidenceChips>[number];
-
-const getToxicStoryEvidenceChips = (player: ToxicStandingRow, rounds: Round[]) => {
-  const worstGame = getToxicPlayerWorstGameSummary(player, rounds);
-
-  return [
-    {
-      label: `${player.w}W-${player.l}L`,
-      tone: player.w > player.l ? 'good' : player.l > player.w ? 'danger' : 'default',
-    },
-    {
-      label: `DIFF ${formatToxicPodiumDiff(player.pointsDiff)}`,
-      tone: player.pointsDiff > 0 ? 'good' : player.pointsDiff < 0 ? 'danger' : 'default',
-    },
-    worstGame ? {
-      label: `Worst ${worstGame.score}`,
-      tone: 'gold',
-    } : {
-      label: `${player.matches}M`,
-      tone: 'default',
-    },
-  ] as Array<{ label: string; tone: 'default' | 'good' | 'danger' | 'gold' }>;
-};
 
 type ToxicEvidenceDetailCard = {
   label: string;
@@ -3797,44 +2117,42 @@ const getToxicStandingControlLabel = ({
   `${isExpanded ? 'Collapse' : 'Expand'} ${player.name} shame evidence. Toxic rank ${rankNumber}, normal rank ${player.normalRank}, ${formatAccessibleCount(player.w, 'win')}, ${formatAccessibleCount(player.l, 'loss', 'losses')}, ${formatAccessibleCount(player.matches, 'match', 'matches')}, ${formatAccessibleCount(player.totalPoints, 'point')}, diff ${formatAccessibleDiff(player.pointsDiff)}.`
 );
 
+// Satu kalimat pendek saja — stat (pts/diff) tampil terpisah di kolom podium,
+// supaya quote tidak pernah terpotong "…".
 const getToxicPodiumQuote = (player: ToxicStandingRow, place: 1 | 2 | 3) => {
-  const diff = formatToxicPodiumDiff(player.pointsDiff);
-  const record = formatToxicPodiumRecord(player);
-  const pts = player.totalPoints;
-
   switch (player.award?.id) {
     case 'king-of-cupu':
-      return `${record}, DIFF ${diff}. Takhta bawah valid.`;
+      return 'Takhta bawah valid.';
     case 'runner-up-cupu':
-      return `${pts} pts, DIFF ${diff}. Nyalip takhta dari pinggir.`;
+      return 'Nyalip takhta dari pinggir.';
     case 'sultan-of-bye':
-      return player.award.note || 'Bangku cadangan ikut jadi saksi.';
+      return 'Bangku cadangan ikut jadi saksi.';
     case 'tukang-nyumbang-poin':
-      return `DIFF ${diff}. Poin lawan ikut kenyang.`;
+      return 'Poin lawan ikut kenyang.';
     case 'spesialis-kalah-tipis':
-      return `${player.l}x kalah. Drama tipis, ending tetap sakit.`;
+      return 'Drama tipis, ending tetap sakit.';
     case 'bulldozer-korban':
-      return player.award.note || `DIFF ${diff}. Pernah kena tabrak scoreboard.`;
+      return 'Pernah kena tabrak scoreboard.';
     case 'sweaty-tryhard':
-      return `${player.w}x menang. Juara normal, cameo di Shame.`;
+      return 'Juara normal, cameo di Shame.';
     case 'mr-konsisten':
-      return `${record}. Stabil, tapi tetap kena panggung.`;
+      return 'Stabil, tapi tetap kena panggung.';
     case 'duo-petaka':
-      return player.award.note || 'Chemistry perlu evaluasi publik.';
+      return 'Chemistry perlu evaluasi publik.';
     default:
       break;
   }
 
-  if (player.bucket === 'last-place') return `${record}, DIFF ${diff}. Cupu D'Or mendarat.`;
-  if (player.bucket === 'near-bottom') return `${pts} pts, DIFF ${diff}. Masih bau zona cupu.`;
-  if (player.bucket === 'big-minus') return `DIFF ${diff}. Kalkulator sudah menyerah.`;
-  if (player.bucket === 'bye-collector') return 'Sitting rapi. Energi aman, reputasi rawan.';
-  if (player.bucket === 'losing-streak') return `${player.l}x kalah. Streak-nya salah arah.`;
+  if (player.bucket === 'last-place') return "Cupu D'Or mendarat.";
+  if (player.bucket === 'near-bottom') return 'Masih bau zona cupu.';
+  if (player.bucket === 'big-minus') return 'Kalkulator sudah menyerah.';
+  if (player.bucket === 'bye-collector') return 'Sitting rapi, reputasi rawan.';
+  if (player.bucket === 'losing-streak') return 'Streak-nya salah arah.';
   if (player.bucket === 'heartbreaker') return 'Kalah tipis, lukanya tetap tebal.';
-  if (player.bucket === 'champion') return `${player.w}x menang. Terlalu serius untuk fun match.`;
-  if (place === 1) return `${record}, DIFF ${diff}. Podium bawah resmi.`;
-  if (place === 2) return `${pts} pts. Hampir jadi headline.`;
-  return `DIFF ${diff}. Cukup kacau untuk podium.`;
+  if (player.bucket === 'champion') return 'Terlalu serius untuk fun match.';
+  if (place === 1) return 'Podium bawah resmi.';
+  if (place === 2) return 'Hampir jadi headline.';
+  return 'Cukup kacau untuk podium.';
 };
 
 const OfficialPlayerDetailCard = ({
@@ -4179,15 +2497,3 @@ const getOfficialAvatarTone = (rankIndex: number) => {
   return tones[(rankIndex - 1) % tones.length];
 };
 
-const SummaryStripStat = ({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | number;
-}) => (
-  <div className="flex min-w-0 flex-col justify-center border-l border-black/[0.07] pl-5 first:border-l-0 first:pl-0">
-    <p className="text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/62">{label}</p>
-    <p className="mt-1.5 whitespace-nowrap text-[20px] font-display font-bold leading-none tracking-[-0.025em] text-on-surface/92 tabular-nums">{value}</p>
-  </div>
-);

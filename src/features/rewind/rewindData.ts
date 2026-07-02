@@ -1,7 +1,7 @@
 import type { Tournament, TournamentHistory, ToxicIntensity } from '../../types';
 import { hasMatchScoreProgress, type StandingsPlayer } from '../matches/standingsUtils';
 import type { ToxicStandingsData } from '../matches/toxicStandings';
-import { normalizeToxicIntensity } from '../matches/toxicSettings';
+import { getToxicIntensityLabel, normalizeToxicIntensity } from '../matches/toxicSettings';
 import {
   buildMatchNightAggregate,
   buildRankTimelines,
@@ -62,8 +62,10 @@ export type RewindSlide =
   | { type: 'podium-cupu'; headline: string; subline: string; players: Array<RewindPlayerRef & { rank: number; pts: number; diff: number }> }
   | { type: 'cupu'; players: RewindPlayerRef[]; title: string; rankLabel: string; record: string; diff: number; pts: number; quote: string }
   | { type: 'awards'; headline: string; awards: Array<{ id: string; label: string; emoji?: string; playerNames: string; players: RewindPlayerRef[]; note: string }> }
+  | { type: 'certificate'; title: string; emoji?: string; recipientName: string; bodyCopy: string; note?: string; witnessCount: number }
   | { type: 'standings'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[] }
   | { type: 'standings-toxic'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[] }
+  | { type: 'my-card'; player: RewindPlayerRef; matchName: string; dateLabel: string; officialRank: number; playerCount: number; record: string; diff: number; pts: number; toxicRank?: number; roast?: string; intensityLabel?: string; photoUrl?: string }
   | { type: 'outro'; headline: string; photoUrl?: string; shareUrl: string };
 
 export type RewindData = {
@@ -84,8 +86,10 @@ export const REWIND_SLIDE_LABELS: Record<RewindSlideType, string> = {
   'podium-cupu': 'Podium Cupu',
   cupu: "Cupu D'Or",
   awards: 'Toxic Awards',
+  certificate: 'Sertifikat Cupu',
   standings: 'Final Standings',
   'standings-toxic': 'Hall of Shame',
+  'my-card': 'My Card',
   outro: 'Outro',
 };
 
@@ -236,6 +240,7 @@ export const buildRewindData = ({
   photos,
   shareId,
   copyBank,
+  currentUserPlayerId,
 }: {
   tournament: Tournament | TournamentHistory;
   sortedPlayers: StandingsPlayer[];
@@ -243,6 +248,7 @@ export const buildRewindData = ({
   photos: RewindPhoto[];
   shareId?: string;
   copyBank?: RewindCopyLine[] | null;
+  currentUserPlayerId?: string;
 }): RewindData => {
   const seed = String(tournament.id || tournament.startedAt || tournament.name || 'fom-rewind');
   const intensity = normalizeToxicIntensity(tournament.toxicIntensity);
@@ -567,6 +573,26 @@ export const buildRewindData = ({
     }
   }
 
+  // 10b — Sertifikat Cupu (toxic on; max 3 supaya deck nggak kepanjangan —
+  // sisanya tetap tampil sebagai award card di Klasemen)
+  if (toxicOn) {
+    toxicStandings.awardCards.slice(0, 3).forEach((award) => {
+      const recipients = [award.player, award.secondaryPlayer]
+        .filter((p): p is NonNullable<typeof p> => Boolean(p));
+      const primaryRow = toxicStandings.rows.find((row) => row.id === award.player.id);
+      const recordLabel = primaryRow ? `${primaryRow.w}W-${primaryRow.l}L` : '';
+      slides.push({
+        type: 'certificate',
+        title: award.label,
+        emoji: award.emoji,
+        recipientName: recipients.map((p) => p.name).join(' & ') || 'Pemain Cupu',
+        bodyCopy: `adalah penerima ${award.label} pada mabar ${tournament.name || 'FOM Play'}${dateLabel ? `, ${dateLabel}` : ''}${primaryRow ? `, dengan rekor ${recordLabel} dan DIFF ${formatDiff(primaryRow.pointsDiff)}` : ''}.`,
+        note: award.note,
+        witnessCount: Math.max(1, sortedPlayers.length - recipients.length),
+      });
+    });
+  }
+
   // 11 — Full Official Standings (semua pemain — mockup T1)
   const shortDateLabel = startedAt > 0
     ? matchDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -629,6 +655,28 @@ export const buildRewindData = ({
               : undefined,
         };
       }),
+    });
+  }
+
+  // 12b — My Card (personal, hanya kalau user login ikut main). Tidak ikut
+  // dipersist ke Firestore (lihat RewindFlow) — kartu ini milik yang generate.
+  const myPlayer = currentUserPlayerId ? playersById.get(currentUserPlayerId) : undefined;
+  if (myPlayer) {
+    const myToxicRow = toxicOn ? toxicStandings.rows.find((row) => row.id === myPlayer.id) : undefined;
+    slides.push({
+      type: 'my-card',
+      player: toPlayerRef(myPlayer),
+      matchName: tournament.name || 'FOM Play Match',
+      dateLabel: shortDateLabel || dateLabel,
+      officialRank: rankById.get(myPlayer.id) || 0,
+      playerCount: sortedPlayers.length,
+      record: `${myPlayer.w}W-${myPlayer.l}L${myPlayer.d > 0 ? `-${myPlayer.d}D` : ''}`,
+      diff: myPlayer.pointsDiff,
+      pts: myPlayer.totalPoints,
+      toxicRank: myToxicRow?.toxicRank,
+      roast: myToxicRow?.roast,
+      intensityLabel: myToxicRow ? getToxicIntensityLabel(tournament.toxicIntensity) : undefined,
+      photoUrl: coverPhoto?.dataUrl,
     });
   }
 
