@@ -112,7 +112,12 @@ Implemented & deployed:
 - **FR-4.5 finish-flow prompt**: `useRoundProgressionActions` menerima callback `onTournamentFinalized`; App meng-arm one-shot `rewindPromptTournamentId` saat match final (TANPA hijack navigasi — panel "Results are ready" di ended-match screen tetap). Saat host membuka Klasemen (via View Standings) untuk match itu, upload Rewind auto-terbuka sekali (`autoPromptRewind` prop). Shared viewer tidak kena. Analytics `entrySource` membedakan `finish_flow` vs `banner`.
 - e2e: assertion baru di `active-match-finish-flow` (setelah View Standings → "Every mabar deserves" muncul → tutup). Semua test yang tersentuh lolos; 4 kegagalan suite penuh tetap pre-existing (finished-flow "Match" selector ambigu + auth-flow flaky, bukan regresi).
 
-Phase berikutnya (belum): dot indicator foto berubah (FR-4.3), pre-load foto galeri match (FR-5.3), auto-create share saat generate (supaya QR selalu punya shareId untuk match yang belum di-share).
+### 2026-07-02 (revisi 5) — Fix persist untuk alur umum
+
+- **Bug persist**: pada alur paling umum (baru selesai match → generate Rewind dari klasemen), objek tournament adalah `Tournament` (bukan `TournamentHistory`) & biasanya belum ada shareId → gate `isHistoryDoc: 'userId' in tournament` false → **tidak ada yang tersimpan**. Padahal `tournament.id` untuk match ended = id dokumen `tournaments/{id}` milik host. Fix: `persistRewindResult` sekarang selalu mencoba `updateDoc(tournaments/{id}, {rewind})` (best-effort, fail-closed kalau bukan owner/doc tak ada). History Detail replay kini jalan untuk match yang baru selesai.
+- Shared-link replay tetap jalan bila host pernah men-share match (shareId tersimpan → shared snapshot ikut ter-update).
+
+Phase berikutnya (belum, butuh keputusan): auto-create share saat generate (supaya QR & shared-link replay jalan untuk match yang belum pernah di-share — implikasi privasi/biaya menulis dokumen share publik otomatis). FR-4.3 dot indicator & FR-5.3 pre-load galeri: N/A di model hybrid (foto lokal, tidak ada galeri tersimpan untuk dibandingkan updatedAt-nya).
 
 ## Phase A — Data Layer: Stat Baru
 

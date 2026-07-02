@@ -33,13 +33,11 @@ export const persistRewindResult = async ({
   currentUid,
   shareId,
   slides,
-  isHistoryDoc,
 }: {
   tournamentId: string;
   currentUid: string;
   shareId?: string;
   slides: GeneratedRewindSlide[];
-  isHistoryDoc: boolean;
 }): Promise<TournamentRewind | null> => {
   if (!tournamentId || !currentUid || slides.length === 0) return null;
 
@@ -62,13 +60,13 @@ export const persistRewindResult = async ({
     }
   }
 
-  // History document (ended matches viewed later from History Detail).
-  if (isHistoryDoc) {
-    try {
-      await updateDoc(doc(db, TOURNAMENTS_COLLECTION, tournamentId), { rewind });
-    } catch (err) {
-      console.warn('Rewind history update failed:', err);
-    }
+  // Owned tournament doc: a finished match's tournamentId is the same
+  // `tournaments/{id}` history doc the host owns, so History Detail can replay
+  // later. Best-effort: fails closed if the doc doesn't exist / host isn't owner.
+  try {
+    await updateDoc(doc(db, TOURNAMENTS_COLLECTION, tournamentId), { rewind });
+  } catch (err) {
+    console.warn('Rewind history update failed:', err);
   }
 
   return rewind;

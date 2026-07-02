@@ -292,7 +292,6 @@ export const RewindFlow = ({
         currentUid: currentUserUid,
         shareId,
         slides: generated,
-        isHistoryDoc: 'userId' in tournament,
       });
     }
   };
