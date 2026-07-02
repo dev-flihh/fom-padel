@@ -2,6 +2,7 @@ import type { Round, Tournament, TournamentHistory, ToxicIntensity } from '../..
 import { DEFAULT_TOXIC_COPY_CONFIG, resolveToxicCopyConfig, type ToxicCopyConfig } from './toxicCopyConfig';
 import { hasMatchScoreProgress, type StandingsPlayer } from './standingsUtils';
 import { normalizeToxicIntensity } from './toxicSettings';
+import { isFixedPartnerTournament } from './partnerMode';
 export type { StandingsPlayer } from './standingsUtils';
 
 export type ToxicAwardId =
@@ -502,7 +503,9 @@ export const buildToxicStandings = ({
       assignAward(pickCandidate(candidates), createAward(copyConfig, 'spesialis-kalah-tipis', `${maxCloseLoss}x kalah selisih 1-2 poin.`));
     }
 
-    const duoPetakaCandidate = Array.from(pairStatsByKey.values())
+    // Mode fix partner: duo-petaka di-skip — pasangan terburuk = tim terbawah,
+    // yang kedua anggotanya sudah dapat king-of-cupu (stats mereka identik).
+    const duoPetakaCandidate = isFixedPartnerTournament(tournament) ? undefined : Array.from(pairStatsByKey.values())
       .filter((pair) => pair.together >= MIN_DUO_PETAKA_MATCHES && (pair.losses > 0 || pair.diff < 0))
       .sort((a, b) => (
         b.losses - a.losses ||

@@ -1,7 +1,8 @@
-import { type MatchFormat } from '../../types';
+import { type MatchFormat, type PartnerMode } from '../../types';
 
 export const getMatchSettingsSummary = ({
   format,
+  partnerMode = 'rotating',
   courts,
   numRounds,
   durationMinutes,
@@ -9,6 +10,7 @@ export const getMatchSettingsSummary = ({
   selectedPlayerCount
 }: {
   format: MatchFormat;
+  partnerMode?: PartnerMode;
   courts: number;
   numRounds: number;
   durationMinutes?: number;
@@ -16,8 +18,13 @@ export const getMatchSettingsSummary = ({
   selectedPlayerCount: number;
 }) => {
   const minPlayersNeeded = courts * 4;
-  const isReady = selectedPlayerCount >= minPlayersNeeded;
-  const missingPlayersCount = Math.max(0, minPlayersNeeded - selectedPlayerCount);
+  // Fix partner butuh jumlah pemain genap supaya semua kebagian pasangan.
+  const needsEvenPlayers = partnerMode === 'fixed' && selectedPlayerCount % 2 !== 0;
+  const isReady = selectedPlayerCount >= minPlayersNeeded && !needsEvenPlayers;
+  const missingPlayersCount = Math.max(
+    needsEvenPlayers ? 1 : 0,
+    minPlayersNeeded - selectedPlayerCount
+  );
   const courtCountLabel = `${courts} court${courts > 1 ? 's' : ''}`;
   const roundCountLabel = `${numRounds} round${numRounds > 1 ? 's' : ''}`;
   const durationLabel = durationMinutes ? `${durationMinutes} min` : '';

@@ -7,7 +7,8 @@ import { fetchToxicCopyConfig } from '../../services/toxicCopyRemoteConfig';
 import { type Player, type Round, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
 import { getMatchThemeColor } from '../tournaments/matchTheme';
 import { formatDurationFromMs, getTournamentElapsedMs } from './matchTimeUtils';
-import { buildOfficialStandings, hasMatchScoreProgress, type StandingsPlayer } from './standingsUtils';
+import { buildOfficialStandings, buildOfficialTeamStandings, hasMatchScoreProgress, type StandingsPlayer } from './standingsUtils';
+import { isFixedPartnerTournament } from './partnerMode';
 import type { ToxicCopyConfig } from './toxicCopyConfig';
 import { buildToxicStandings, type ToxicAwardCard, type ToxicHeroStat as ToxicHeroStatData, type ToxicStandingRow, type ToxicStandingsData } from './toxicStandings';
 import { getToxicIntensityLabel } from './toxicSettings';
@@ -167,6 +168,14 @@ export const KlasemenScreen = ({
   ), [currentUser?.displayName, currentUser?.email, currentUserPhotoURL, currentUserUid, friends, tournament]);
   const sortedPlayers = officialStandings.players;
   const hasCountableStandingScore = officialStandings.hasCountableScore;
+  // Mode fix partner: tab official menampilkan baris per-tim; data individual
+  // (sortedPlayers) tetap dipakai untuk toxic, rewind, dan stats lain.
+  const isFixedPartnerMode = isFixedPartnerTournament(tournament) && (tournament.fixedTeams || []).length > 0;
+  const officialRows = useMemo(() => (
+    isFixedPartnerMode
+      ? buildOfficialTeamStandings({ tournament, officialStandings }).players
+      : sortedPlayers
+  ), [isFixedPartnerMode, officialStandings, sortedPlayers, tournament]);
 
   const activeRoundIndex = tournamentRounds.findIndex((round) => (
     round.matches.some((match) => match.status === 'active')
@@ -266,6 +275,7 @@ export const KlasemenScreen = ({
   ].filter(Boolean);
   const standingsDetailLineTwo = [
     tournament.format,
+    isFixedPartnerMode ? 'Fix Partner' : '',
     `${sortedPlayers.length} players`,
     toxicModeEnabled ? 'Shame on' : '',
   ].filter(Boolean);
@@ -276,10 +286,10 @@ export const KlasemenScreen = ({
     totalElapsedMs > 0 ? totalElapsedStat : '',
     totalStandingPoints > 0 ? `${totalStandingPoints} pts` : '',
   ].filter(Boolean);
-  const shouldShowOfficialStandings = hasCountableStandingScore && sortedPlayers.length > 0;
-  const officialDisplayPlayers = shouldShowOfficialStandings ? sortedPlayers : [];
+  const shouldShowOfficialStandings = hasCountableStandingScore && officialRows.length > 0;
+  const officialDisplayPlayers = shouldShowOfficialStandings ? officialRows : [];
   const showOfficialChampionStrip = !isToxicTabActive && isTournamentEnded && shouldShowOfficialStandings;
-  const officialListPlayers = showOfficialChampionStrip ? sortedPlayers.slice(1) : officialDisplayPlayers;
+  const officialListPlayers = showOfficialChampionStrip ? officialRows.slice(1) : officialDisplayPlayers;
   const officialPanelState = shouldShowOfficialStandings
     ? isTournamentEnded
       ? {
@@ -325,8 +335,8 @@ export const KlasemenScreen = ({
   ), [toxicStandings.tickerMessage, toxicTickerEvidenceChips]);
 
   const officialRankById = useMemo(() => (
-    new Map(sortedPlayers.map((player, index) => [player.id, index + 1]))
-  ), [sortedPlayers]);
+    new Map(officialRows.map((player, index) => [player.id, index + 1]))
+  ), [officialRows]);
   const previousOfficialStandings = useMemo(() => {
     if (isTournamentEnded || latestScoredRoundIndex <= 0) return null;
     return buildOfficialStandings({
@@ -341,9 +351,13 @@ export const KlasemenScreen = ({
       currentUserPhotoURL,
     });
   }, [currentUser?.displayName, currentUser?.email, currentUserPhotoURL, currentUserUid, friends, isTournamentEnded, latestScoredRoundIndex, tournament, tournamentRounds]);
-  const previousOfficialRankById = useMemo(() => (
-    new Map((previousOfficialStandings?.players || []).map((player, index) => [player.id, index + 1]))
-  ), [previousOfficialStandings]);
+  const previousOfficialRankById = useMemo(() => {
+    if (!previousOfficialStandings) return new Map<string, number>();
+    const previousRows = isFixedPartnerMode
+      ? buildOfficialTeamStandings({ tournament, officialStandings: previousOfficialStandings }).players
+      : previousOfficialStandings.players;
+    return new Map(previousRows.map((player, index) => [player.id, index + 1]));
+  }, [isFixedPartnerMode, previousOfficialStandings, tournament]);
   const previousToxicRankById = useMemo(() => {
     if (!toxicModeEnabled || !previousOfficialStandings?.hasCountableScore) return new Map<string, number>();
     const previousToxicStandings = buildToxicStandings({
@@ -382,7 +396,14 @@ export const KlasemenScreen = ({
   const myMatchToxicRow = myMatchStanding
     ? toxicStandings.rows.find((player) => player.id === myMatchStanding.id) || null
     : null;
-  const myMatchOfficialRank = myMatchStanding ? officialRankById.get(myMatchStanding.id) || 0 : 0;
+  // Baris official milik user: di mode fixed bisa jadi baris tim yang
+  // menampung user sebagai partner (id baris = id anchor, bukan id user).
+  const myOfficialRow = currentUserMatchPlayer
+    ? officialRows.find((row) => (
+        row.id === currentUserMatchPlayer.id || row.partnerId === currentUserMatchPlayer.id
+      )) || null
+    : null;
+  const myMatchOfficialRank = myOfficialRow ? officialRankById.get(myOfficialRow.id) || 0 : 0;
   const hasLoginMatchPlayer = Boolean(currentUserUid && myMatchStanding);
 
   useEffect(() => {
@@ -454,13 +475,13 @@ export const KlasemenScreen = ({
         metric: `DIFF ${formatToxicPodiumDiff(myMatchToxicRow.pointsDiff)}`,
       };
     }
-    if (!shouldShowOfficialStandings || !myMatchOfficialRank) return null;
+    if (!shouldShowOfficialStandings || !myMatchOfficialRank || !myOfficialRow) return null;
     return {
       tone: 'official' as const,
-      eyebrow: 'Your rank',
+      eyebrow: myOfficialRow.isTeamRow ? 'Your team rank' : 'Your rank',
       value: `#${myMatchOfficialRank}`,
-      detail: `${myMatchStanding.w}W · ${myMatchStanding.l}L · ${myMatchStanding.matches}M`,
-      metric: `${myMatchStanding.totalPoints} pts`,
+      detail: `${myOfficialRow.w}W · ${myOfficialRow.l}L · ${myOfficialRow.matches}M`,
+      metric: `${myOfficialRow.totalPoints} pts`,
     };
   })();
   return (
@@ -611,8 +632,8 @@ export const KlasemenScreen = ({
                   scrollToToxicStandingPlayer(myMatchToxicRow.id);
                   return;
                 }
-                if (myMatchStanding) {
-                  scrollToOfficialStandingPlayer(myMatchStanding.id);
+                if (myOfficialRow) {
+                  scrollToOfficialStandingPlayer(myOfficialRow.id);
                 }
               }}
               className={cn(
@@ -964,7 +985,7 @@ export const KlasemenScreen = ({
               {shouldShowOfficialStandings && (
                 <div className="mt-2.5 flex items-center gap-3.5">
                   <div className="min-w-0 flex-1 text-[8px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/52">
-                    Player
+                    {isFixedPartnerMode ? 'Team' : 'Player'}
                   </div>
                   <div className="grid w-[88px] grid-cols-4 rounded-full bg-ios-gray/[0.045] px-1.5 py-1 text-center text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-ios-gray/58">
                     <span>W</span>
@@ -979,11 +1000,11 @@ export const KlasemenScreen = ({
               )}
             </div>
 
-            {showOfficialChampionStrip && sortedPlayers[0] && (() => {
-              const champion = sortedPlayers[0];
+            {showOfficialChampionStrip && officialRows[0] && (() => {
+              const champion = officialRows[0];
               const isChampionExpanded = expandedStandingPlayerId === champion.id;
               const isChampionHighlighted = highlightedOfficialStandingPlayerId === champion.id;
-              const championRoundHistory = buildOfficialRoundHistory(tournamentRounds, champion.id);
+              const championRoundHistory = buildOfficialRoundHistory(tournamentRounds, champion.id, Boolean(champion.isTeamRow));
               const championDetailId = getOfficialPlayerDetailId(champion.id);
               return (
                 <div className="mx-5 mt-2.5">
@@ -1013,17 +1034,28 @@ export const KlasemenScreen = ({
                         01
                       </span>
                     </div>
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary text-[14px] font-extrabold leading-none text-white">
-                      {champion.avatar ? (
-                        <img className="h-full w-full object-cover" src={champion.avatar} alt={champion.name} referrerPolicy="no-referrer" />
-                      ) : (
-                        <span>{champion.initials.slice(0, 1)}</span>
+                    <div className="relative h-11 w-11 shrink-0">
+                      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-primary text-[14px] font-extrabold leading-none text-white">
+                        {champion.avatar ? (
+                          <img className="h-full w-full object-cover" src={champion.avatar} alt={champion.name} referrerPolicy="no-referrer" />
+                        ) : (
+                          <span>{champion.initials.slice(0, 1)}</span>
+                        )}
+                      </div>
+                      {champion.isTeamRow && (
+                        <div className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center overflow-hidden rounded-full bg-white/25 text-[9px] font-extrabold leading-none text-white ring-2 ring-[#141414]">
+                          {champion.partnerAvatar ? (
+                            <img className="h-full w-full object-cover" src={champion.partnerAvatar} alt={champion.partnerName || ''} referrerPolicy="no-referrer" />
+                          ) : (
+                            <span>{(champion.partnerInitials || '?').slice(0, 1)}</span>
+                          )}
+                        </div>
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-1.5">
                         <p className="text-[8px] font-extrabold uppercase leading-none tracking-[0.18em] text-primary">Champion</p>
-                        {champion.id === myMatchStanding?.id && (
+                        {champion.id === myOfficialRow?.id && (
                           <span className="inline-flex rounded-full bg-white/10 px-1.5 py-0.5 text-[7px] font-black uppercase leading-none tracking-[0.08em] text-white/72">
                             You
                           </span>
@@ -1082,8 +1114,8 @@ export const KlasemenScreen = ({
                 const isLeader = rankIndex === 0;
                 const isExpanded = expandedStandingPlayerId === player.id;
                 const isHighlighted = highlightedOfficialStandingPlayerId === player.id;
-                const isCurrentUserStanding = player.id === myMatchStanding?.id;
-                const roundHistory = buildOfficialRoundHistory(tournamentRounds, player.id);
+                const isCurrentUserStanding = player.id === myOfficialRow?.id;
+                const roundHistory = buildOfficialRoundHistory(tournamentRounds, player.id, Boolean(player.isTeamRow));
                 const playerDetailId = getOfficialPlayerDetailId(player.id);
                 const previousRank = previousOfficialRankById.get(player.id);
                 const officialMovement = getRankMovement(rankNumber, previousRank, previousOfficialRankById.size > 0);
@@ -1131,14 +1163,28 @@ export const KlasemenScreen = ({
                         </span>
                       </div>
 
-                      <div className={cn(
-                        'flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full text-[13px] font-bold leading-none ring-1 ring-black/[0.025]',
-                        getOfficialAvatarTone(rankIndex)
-                      )}>
-                        {player.avatar ? (
-                          <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
-                        ) : (
-                          <span>{player.initials.slice(0, 1)}</span>
+                      <div className="relative h-10 w-10 shrink-0">
+                        <div className={cn(
+                          'flex h-full w-full items-center justify-center overflow-hidden rounded-full text-[13px] font-bold leading-none ring-1 ring-black/[0.025]',
+                          getOfficialAvatarTone(rankIndex)
+                        )}>
+                          {player.avatar ? (
+                            <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+                          ) : (
+                            <span>{player.initials.slice(0, 1)}</span>
+                          )}
+                        </div>
+                        {player.isTeamRow && (
+                          <div className={cn(
+                            'absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center overflow-hidden rounded-full text-[9px] font-bold leading-none ring-2 ring-white',
+                            getOfficialAvatarTone(rankIndex)
+                          )}>
+                            {player.partnerAvatar ? (
+                              <img className="h-full w-full object-cover" src={player.partnerAvatar} alt={player.partnerName || ''} referrerPolicy="no-referrer" />
+                            ) : (
+                              <span>{(player.partnerInitials || '?').slice(0, 1)}</span>
+                            )}
+                          </div>
                         )}
                       </div>
 
@@ -2402,7 +2448,7 @@ const formatPlayerNames = (players: Player[]) => (
   players.map((player) => getShortPlayerName(player.name)).join(' & ')
 );
 
-const buildOfficialRoundHistory = (rounds: Round[], playerId: string): OfficialRoundHistoryItem[] => {
+const buildOfficialRoundHistory = (rounds: Round[], playerId: string, omitTeammate = false): OfficialRoundHistoryItem[] => {
   const history: OfficialRoundHistoryItem[] = [];
 
   rounds.forEach((round) => {
@@ -2430,7 +2476,11 @@ const buildOfficialRoundHistory = (rounds: Round[], playerId: string): OfficialR
     const scoreFor = Number(playerTeam.score || 0);
     const scoreAgainst = Number(opponentTeam.score || 0);
     const hasScore = match.status === 'completed' || scoreFor > 0 || scoreAgainst > 0 || (match.pointsA || '0') !== '0' || (match.pointsB || '0') !== '0';
-    const teammateNames = formatPlayerNames(playerTeam.players.filter((player) => player.id !== playerId));
+    // Baris tim (fix partner): partner selalu sama & sudah tampil di nama tim,
+    // jadi cukup tampilkan lawan agar tidak redundan.
+    const teammateNames = omitTeammate
+      ? ''
+      : formatPlayerNames(playerTeam.players.filter((player) => player.id !== playerId));
     const opponentNames = formatPlayerNames(opponentTeam.players);
     const detail = [
       teammateNames ? `w/ ${teammateNames}` : '',

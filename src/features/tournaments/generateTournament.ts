@@ -1,5 +1,7 @@
 import { Match, Player, Round, Tournament } from '../../types';
 import { sanitizeInactivePlayerIds } from './tournamentDraft';
+import { getPartnerMode, sanitizeFixedTeams } from '../matches/partnerMode';
+import { buildFixedTeamRounds } from '../matches/fixedTeamScheduler';
 
 export const generateTournamentFromSettings = (settings: Tournament, now = Date.now()): Tournament => {
   const players = [...settings.players].filter(p => !!p);
@@ -9,8 +11,27 @@ export const generateTournamentFromSettings = (settings: Tournament, now = Date.
   const rounds: Round[] = [];
   const numRounds = settings.numRounds;
   const maxMatchesPerRound = settings.courts;
+  const partnerMode = getPartnerMode(settings);
+  const sanitizedFixedTeams = partnerMode === 'fixed'
+    ? sanitizeFixedTeams(players, settings.fixedTeams)
+    : [];
 
-  if (settings.format === 'Americano') {
+  if (partnerMode === 'fixed') {
+    const fixedSettings: Tournament = {
+      ...settings,
+      players,
+      inactivePlayerIds: sanitizedInactivePlayerIds,
+      fixedTeams: sanitizedFixedTeams,
+    };
+    // Hanya Americano fixed yang pre-generate semua ronde (mengikuti UX stepper
+    // Americano). Mexicano/Match Play fixed generate per-ronde seperti aslinya.
+    const fixedRounds = buildFixedTeamRounds(
+      fixedSettings,
+      settings.format === 'Americano' ? numRounds : 1,
+      now
+    );
+    rounds.push(...fixedRounds);
+  } else if (settings.format === 'Americano') {
     // Pre-generate all rounds for Americano with partner/opponent diversity balancing.
     const playerMatchCounts: Record<string, number> = {};
     const partnerCounts: Record<string, Record<string, number>> = {};
@@ -224,6 +245,8 @@ export const generateTournamentFromSettings = (settings: Tournament, now = Date.
     ...settings,
     id: tournamentId,
     backgroundId: settings.backgroundId,
+    partnerMode,
+    fixedTeams: sanitizedFixedTeams,
     inactivePlayerIds: sanitizedInactivePlayerIds,
     courtChanges: [],
     rounds,

@@ -3,6 +3,8 @@ import { formatDurationFromMs } from './matchTimeUtils';
 import { sanitizeInactivePlayerIds } from '../tournaments/tournamentDraft';
 import type { Player, ToxicIntensity, Tournament } from '../../types';
 import { getToxicIntensityLabel, normalizeToxicIntensity } from './toxicSettings';
+import { getPartnerMode, swapFixedTeamMembers } from './partnerMode';
+import { rebuildFixedTeamFutureRounds } from './fixedTeamScheduler';
 
 type AddNotification = (
   title: string,
@@ -42,6 +44,18 @@ export const useMatchMutationActions = ({
   addNotification,
   rebuildAmericanoFutureRounds,
 }: Params) => {
+  // Ronde mendatang hanya perlu di-rebuild untuk format yang pre-generate
+  // (Americano rotating & Americano fixed). Mexicano/Match Play membuat ronde
+  // baru saat progression, jadi tidak ada yang perlu di-rebuild.
+  const rebuildFutureRoundsForTournament = (
+    baseTournament: Tournament,
+    targetNumRounds: number
+  ): Tournament['rounds'] => (
+    getPartnerMode(baseTournament) === 'fixed'
+      ? rebuildFixedTeamFutureRounds(baseTournament, targetNumRounds)
+      : rebuildAmericanoFutureRounds(baseTournament, targetNumRounds)
+  );
+
   const applyManualPlayerReplacement = (
     baseTournament: Tournament,
     replacement: ManualPlayerReplacement
@@ -68,6 +82,12 @@ export const useMatchMutationActions = ({
     return {
       ...baseTournament,
       players: nextPlayers,
+      fixedTeams: (baseTournament.fixedTeams || []).map((team) => ({
+        ...team,
+        playerIds: team.playerIds.map((playerId) => (
+          playerId === safeManualPlayerId ? replacement.newPlayer.id : playerId
+        )) as [string, string],
+      })),
       inactivePlayerIds: sanitizeInactivePlayerIds(
         nextPlayers,
         (baseTournament.inactivePlayerIds || []).map((playerId) => (
@@ -147,7 +167,7 @@ export const useMatchMutationActions = ({
       nextTournament.format === 'Americano'
         ? {
             ...nextTournament,
-            rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds),
+            rounds: rebuildFutureRoundsForTournament(nextTournament, nextTournament.numRounds),
           }
         : nextTournament
     );
@@ -275,7 +295,7 @@ export const useMatchMutationActions = ({
       tournament.format === 'Americano' && tournament.rounds.length > 0
         ? {
             ...nextTournament,
-            rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds),
+            rounds: rebuildFutureRoundsForTournament(nextTournament, nextTournament.numRounds),
           }
         : nextTournament
     );
@@ -311,7 +331,7 @@ export const useMatchMutationActions = ({
         ...tournament,
         inactivePlayerIds: sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds),
       };
-      nextRounds = rebuildAmericanoFutureRounds(nextTournamentBase, nextNumRounds);
+      nextRounds = rebuildFutureRoundsForTournament(nextTournamentBase, nextNumRounds);
     }
 
     const completedRoundCount = nextRounds.filter((round) => (
@@ -369,7 +389,7 @@ export const useMatchMutationActions = ({
       tournament.format === 'Americano' && tournament.rounds.length > 0
         ? {
             ...nextTournament,
-            rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds),
+            rounds: rebuildFutureRoundsForTournament(nextTournament, nextTournament.numRounds),
           }
         : nextTournament
     );
@@ -386,6 +406,7 @@ export const useMatchMutationActions = ({
   };
 
   const handleSwapPlayer = (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => {
+    let swappedOutPlayer: Player | null = null;
     const newRounds = tournament.rounds.map((round) => {
       const isMatchInRound = round.matches.some((match) => match.id === matchId);
       if (!isMatchInRound) return round;
@@ -395,6 +416,7 @@ export const useMatchMutationActions = ({
         if (match.id === matchId) {
           const players = team === 'A' ? [...match.teamA.players] : [...match.teamB.players];
           oldPlayer = players[playerIndex];
+          swappedOutPlayer = oldPlayer;
           players[playerIndex] = newPlayer;
           return {
             ...match,
@@ -408,7 +430,28 @@ export const useMatchMutationActions = ({
       const newPlayersBye = round.playersBye.map((player) => player.id === newPlayer.id ? oldPlayer! : player);
       return { ...round, matches: newMatches, playersBye: newPlayersBye };
     });
-    const nextTournament: Tournament = { ...tournament, rounds: newRounds };
+    let nextTournament: Tournament = { ...tournament, rounds: newRounds };
+
+    // Mode fix partner: penggantian di court berlaku permanen ke tim tetap —
+    // pemain baru mewarisi slot tim pemain lama (atau bertukar tim jika
+    // dua-duanya sudah bertim), lalu ronde pre-generated disusun ulang.
+    if (getPartnerMode(tournament) === 'fixed' && swappedOutPlayer) {
+      nextTournament = {
+        ...nextTournament,
+        fixedTeams: swapFixedTeamMembers(
+          tournament.fixedTeams || [],
+          (swappedOutPlayer as Player).id,
+          newPlayer.id
+        ),
+      };
+      if (tournament.format === 'Americano' && nextTournament.rounds.length > 0) {
+        nextTournament = {
+          ...nextTournament,
+          rounds: rebuildFixedTeamFutureRounds(nextTournament, nextTournament.numRounds),
+        };
+      }
+    }
+
     setTournament(nextTournament);
     addNotification('Player Replaced', 'The player has been replaced on the active court.', 'system');
   };
@@ -468,7 +511,7 @@ export const useMatchMutationActions = ({
         ? {
             ...nextTournament,
             inactivePlayerIds: sanitizedInactive,
-            rounds: rebuildAmericanoFutureRounds(
+            rounds: rebuildFutureRoundsForTournament(
               { ...nextTournament, inactivePlayerIds: sanitizedInactive },
               nextTournament.numRounds
             ),

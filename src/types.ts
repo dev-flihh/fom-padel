@@ -1,4 +1,5 @@
 export type MatchFormat = 'Match Play' | 'Americano' | 'Mexicano';
+export type PartnerMode = 'rotating' | 'fixed';
 export type RankingCriteria = 'Matches Won' | 'Points Won';
 export type ScoringType = 'Golden Point' | 'Advantage';
 export type ToxicIntensity = 'mild' | 'medium' | 'savage';
@@ -24,6 +25,14 @@ export interface Team {
   players: Player[];
   score: number;
   sets?: number[]; // Array of games won in each set
+}
+
+// Pasangan tetap untuk partnerMode 'fixed' — ditentukan saat setup dan
+// dipertahankan sepanjang sesi. playerIds merujuk ke Tournament.players.
+export interface FixedTeam {
+  id: string;
+  playerIds: [string, string];
+  name?: string;
 }
 
 export interface Match {
@@ -71,6 +80,8 @@ export interface Tournament {
   id?: string;
   name: string;
   format: MatchFormat;
+  partnerMode?: PartnerMode; // absen = 'rotating' (perilaku lama)
+  fixedTeams?: FixedTeam[];
   backgroundId?: string;
   themeColorId?: string;
   toxicModeEnabled?: boolean;
@@ -97,6 +108,8 @@ export interface TournamentHistory {
   userId: string;
   name: string;
   format: MatchFormat;
+  partnerMode?: PartnerMode;
+  fixedTeams?: FixedTeam[];
   backgroundId?: string;
   themeColorId?: string;
   toxicModeEnabled?: boolean;

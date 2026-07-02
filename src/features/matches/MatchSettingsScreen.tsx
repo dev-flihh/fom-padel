@@ -18,7 +18,7 @@ import { useMatchSettingsPlayers } from './useMatchSettingsPlayers';
 import { useMatchSettingsRosterSync } from './useMatchSettingsRosterSync';
 import { useMatchSettingsWizard } from './useMatchSettingsWizard';
 import { dedupePlayersById, sortPlayersByName } from './matchSetupUtils';
-import { CRITERIA_IMPACT_COPY, FORMAT_IMPACT_COPY, MATCH_SETTINGS_WIZARD_STEPS, SCORING_IMPACT_COPY } from './matchSettingsCopy';
+import { CRITERIA_IMPACT_COPY, FORMAT_IMPACT_COPY, MATCH_SETTINGS_WIZARD_STEPS, PARTNER_MODE_IMPACT_COPY, PARTNER_MODE_LABELS, SCORING_IMPACT_COPY } from './matchSettingsCopy';
 import { getMatchSettingsSummary } from './matchSettingsSummary';
 import { MATCH_SETTINGS_WIZARD_CLASSNAMES } from './matchSettingsStyles';
 
@@ -140,6 +140,8 @@ export const MatchSettingsScreen = ({
   });
   const {
     format,
+    partnerMode,
+    fixedTeams,
     toxicModeEnabled,
     toxicIntensity,
     criteria,
@@ -163,6 +165,8 @@ export const MatchSettingsScreen = ({
     setGameName,
     setVenueName,
     applyFormatChoice,
+    applyPartnerModeChoice,
+    swapFixedTeamPlayers,
     selectThemeColor,
     handleGenerate
   } = useMatchSettingsDraft({
@@ -202,6 +206,7 @@ export const MatchSettingsScreen = ({
     reviewStructureLabel
   } = getMatchSettingsSummary({
     format,
+    partnerMode,
     courts,
     numRounds,
     durationMinutes,
@@ -233,6 +238,7 @@ export const MatchSettingsScreen = ({
     missingPlayersCount,
     courts,
     selectedPlayerCount: effectiveSelectedPlayers.length,
+    requireEvenPlayers: partnerMode === 'fixed',
     onComplete: handleGenerate
   });
   const { backgroundOptions, effectiveSelectedBackgroundId } = useMatchBackgroundSelection({
@@ -293,6 +299,9 @@ export const MatchSettingsScreen = ({
       {settingsStep === 1 && (
         <FormatStep
           format={format}
+          partnerMode={partnerMode}
+          partnerModeImpactCopy={PARTNER_MODE_IMPACT_COPY}
+          partnerModeLabels={PARTNER_MODE_LABELS}
           criteria={criteria}
           scoringType={scoringType}
           courts={courts}
@@ -307,6 +316,7 @@ export const MatchSettingsScreen = ({
           wizardTitleClass={wizardTitleClass}
           wizardSubtitleClass={wizardSubtitleClass}
           onFormatChange={applyFormatChoice}
+          onPartnerModeChange={applyPartnerModeChoice}
           onCriteriaChange={setCriteria}
           onScoringTypeChange={setScoringType}
           onCourtsChange={setCourts}
@@ -326,12 +336,16 @@ export const MatchSettingsScreen = ({
           missingPlayersCount={missingPlayersCount}
           wizardStatusLabel={wizardStatusLabel}
           currentUserId={auth.currentUser?.uid || currentUser?.uid}
+          partnerMode={partnerMode}
+          fixedTeams={fixedTeams}
+          fixedTeamPlayers={effectiveSelectedPlayers}
           wizardHeadingClass={wizardHeadingClass}
           wizardTitleClass={wizardTitleClass}
           wizardSubtitleClass={wizardSubtitleClass}
           onOpenFriends={onOpenFriends}
           onOpenAddPlayer={() => setIsAddModalOpen(true)}
           onTogglePlayer={handleTogglePlayer}
+          onSwapFixedTeamPlayers={swapFixedTeamPlayers}
         />
       )}
 
@@ -360,6 +374,8 @@ export const MatchSettingsScreen = ({
           venueDisplayLabel={venueDisplayLabel}
           format={format}
           formatIcon={FORMAT_IMPACT_COPY[format].icon}
+          partnerModeLabel={PARTNER_MODE_LABELS[partnerMode]}
+          fixedTeamCount={partnerMode === 'fixed' ? fixedTeams.length : null}
           criteria={criteria}
           toxicModeEnabled={toxicModeEnabled}
           toxicIntensity={toxicIntensity}

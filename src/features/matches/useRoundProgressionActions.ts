@@ -2,6 +2,8 @@ import type { Dispatch, SetStateAction } from 'react';
 import { auth } from '../../firebase';
 import { normalizeCourtChanges } from '../history/historyPersistence';
 import { formatDurationFromMs } from './matchTimeUtils';
+import { getPartnerMode } from './partnerMode';
+import { buildNextFixedMexicanoRound, buildNextFixedTeamRound, getActiveFixedTeams } from './fixedTeamScheduler';
 import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
 import type { Match, Player, Tournament, TournamentHistory } from '../../types';
 
@@ -222,6 +224,14 @@ export const useRoundProgressionActions = ({
       );
       return;
     }
+    if (!isConfiguredLastRound && getPartnerMode(tournament) === 'fixed' && getActiveFixedTeams(tournament).length < 2) {
+      addNotification(
+        'Not Enough Active Teams',
+        'At least 2 complete fixed teams are required to continue to the next round.',
+        'system'
+      );
+      return;
+    }
 
     const hasPreGeneratedNextRound = Boolean(tournament.rounds[currentRoundIndex + 1]);
     const shouldFinishBecauseNoPreparedRound = tournament.format === 'Americano' && !hasPreGeneratedNextRound;
@@ -255,6 +265,8 @@ export const useRoundProgressionActions = ({
           userId: user.uid,
           name: tournament.name,
           format: tournament.format,
+          partnerMode: tournament.partnerMode || 'rotating',
+          fixedTeams: tournament.fixedTeams || [],
           backgroundId: tournament.backgroundId,
           themeColorId: tournament.themeColorId,
           toxicModeEnabled: Boolean(tournament.toxicModeEnabled),
@@ -282,6 +294,7 @@ export const useRoundProgressionActions = ({
             userId: historyItem.userId,
             name: historyItem.name,
             format: historyItem.format,
+            ...(historyItem.partnerMode === 'fixed' ? { partnerMode: historyItem.partnerMode } : {}),
             ...(historyItem.backgroundId ? { backgroundId: historyItem.backgroundId } : {}),
             ...(historyItem.themeColorId ? { themeColorId: historyItem.themeColorId } : {}),
             ...(historyItem.toxicModeEnabled ? { toxicModeEnabled: true } : {}),
@@ -356,6 +369,47 @@ export const useRoundProgressionActions = ({
         });
       }
       onTournamentFinalized?.(finalizedTournamentId);
+      return;
+    }
+
+    // Mode fix partner: Mexicano pakai klasemen tim, Match Play pakai fixture
+    // merata. Americano fixed tidak lewat sini — ronde-nya sudah pre-generated
+    // dan diaktifkan oleh cabang else di bawah, sama seperti Americano biasa.
+    if (getPartnerMode(tournament) === 'fixed' && tournament.format !== 'Americano') {
+      const nextRound = tournament.format === 'Mexicano'
+        ? buildNextFixedMexicanoRound(tournament, nextRoundId, now)
+        : buildNextFixedTeamRound(tournament, nextRoundId, now);
+
+      const nextTournament: Tournament = {
+        ...tournament,
+        rounds: [
+          ...tournament.rounds.map((round, idx) => (
+            idx === currentRoundIndex
+              ? {
+                  ...round,
+                  matches: round.matches.map((match) => ({
+                    ...match,
+                    status: 'completed' as const,
+                    duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+                  })),
+                }
+              : round
+          )),
+          nextRound,
+        ],
+        endedAt: undefined,
+      };
+      setTournament(nextTournament);
+      await persistActiveTournamentSnapshot(nextTournament);
+      try {
+        await syncSharedMatchesSnapshot(nextTournament);
+      } catch (err) {
+        console.error('Shared match next round sync error:', err, {
+          authUid: auth.currentUser?.uid || null,
+          userUid: user?.uid || null,
+        });
+      }
+      addNotification('New Round!', `Round ${nextRoundId} has started. Check your match schedule.`, 'match');
       return;
     }
 

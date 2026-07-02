@@ -6,6 +6,7 @@ export const buildRoomSettingsSnapshotFromTournament = (
 ): RoomSettingsSnapshot => ({
   name: tournament.name,
   format: tournament.format,
+  partnerMode: tournament.partnerMode || 'rotating',
   criteria: tournament.criteria,
   scoringType: tournament.scoringType,
   backgroundId: tournament.backgroundId,
@@ -32,6 +33,10 @@ export const buildTournamentDraftFromRoom = ({
   ...baseTournament,
   name: settings.name,
   format: settings.format,
+  partnerMode: settings.partnerMode || 'rotating',
+  // Pairing tim tetap dibentuk di wizard match (auto-pair saat pemain final),
+  // bukan di level room — roster room masih bisa berubah sampai launch.
+  fixedTeams: [],
   criteria: settings.criteria,
   scoringType: settings.scoringType,
   backgroundId: settings.backgroundId,

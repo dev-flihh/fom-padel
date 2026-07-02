@@ -135,6 +135,7 @@ service cloud.firestore {
              data.id is string && data.userId == request.auth.uid &&
              data.name is string && data.name.size() > 0 &&
              data.format in ['Americano', 'Mexicano', 'Match Play'] &&
+             (!('partnerMode' in data) || data.partnerMode in ['rotating', 'fixed']) &&
              data.date is timestamp &&
              data.numRounds is number && data.numPlayers is number;
     }

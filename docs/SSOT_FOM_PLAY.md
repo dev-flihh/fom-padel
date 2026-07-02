@@ -134,6 +134,7 @@ Notes:
 
 ### 6.2 Important Tournament fields
 - `format`: `Americano` | `Mexicano` | `Match Play`
+- `partnerMode`: `rotating` (default) | `fixed`; when `fixed`, `fixedTeams` holds the locked pairs
 - `criteria`: standings criteria choice, currently `Matches Won` or `Points Won`
 - `scoringType`: `Golden Point` or `Advantage` for Match Play
 - `backgroundId`: selected visual background for active / standings presentation
@@ -589,7 +590,19 @@ Scoring model:
 - `Golden Point` and `Advantage` are both supported
 - set win is currently simplified around six-game lead by two games
 
-## 8.4 Shared Viewer Logic
+## 8.4 Partner Mode (Rotating vs Fix Partner)
+Every format supports a `partnerMode` axis (`rotating` default, `fixed`):
+- `rotating` keeps the legacy behavior described in 8.1–8.3
+- `fixed` locks pairs chosen at setup (`Tournament.fixedTeams`); opponents rotate between teams
+- pairs are formed in the Players step (auto-paired in selection order, tap-to-swap); player count must be even
+- Americano fixed pre-generates all rounds via a greedy fixture scheduler (fewest matches first, fewest meetings, avoid immediate rematch); byes happen at team level
+- Mexicano fixed generates the next round from team standings (1v2, 3v4, ...)
+- Match Play fixed generates rounds progressively from the same greedy fixture scheduler
+- official standings render one row per team (anchor member stats; identical to team stats); toxic, rewind, and MMR keep using per-player data
+- mid-session: court swap updates `fixedTeams` permanently; a single added player stays as bye until paired via swap; deactivating a player benches the whole team
+- `duo-petaka` toxic award is skipped in fixed mode (bottom team already gets king-of-cupu)
+
+## 8.5 Shared Viewer Logic
 - shared viewer opens tournament state from `sharedMatches/{shareId}`
 - shared viewer can switch between active and standings mode
 - shared viewer is read-only everywhere

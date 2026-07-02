@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { getRandomMatchBackground } from '../matches/matchBackgrounds';
 import { generateTournamentFromSettings } from './generateTournament';
 import { sanitizeInactivePlayerIds } from './tournamentDraft';
+import { getPartnerMode } from '../matches/partnerMode';
 import type { Player, Screen, Tournament } from '../../types';
 
 type AddNotification = (
@@ -88,8 +89,11 @@ export const useTournamentSetupActions = ({
       players: nextPlayers,
       inactivePlayerIds: sanitizedInactive,
     };
+    const isFixedPartner = getPartnerMode(tournament) === 'fixed';
+    // Mode fix partner: pemain baru belum punya tim, jadi tidak memengaruhi
+    // jadwal — dia jadi bye sampai host memasangkannya lewat ganti pemain.
     const persistedTournament = (
-      tournament.format === 'Americano' && tournament.rounds.length > 0
+      !isFixedPartner && tournament.format === 'Americano' && tournament.rounds.length > 0
         ? {
             ...nextTournament,
             rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds),
@@ -101,7 +105,9 @@ export const useTournamentSetupActions = ({
 
     addNotification(
       'New Player Added',
-      `${newPlayer.name} akan ikut mulai ronde berikutnya.`,
+      isFixedPartner
+        ? `${newPlayer.name} masuk daftar tanpa tim. Pakai ganti pemain untuk memasangkannya ke tim.`
+        : `${newPlayer.name} akan ikut mulai ronde berikutnya.`,
       'system'
     );
   };

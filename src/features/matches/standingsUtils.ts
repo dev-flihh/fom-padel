@@ -11,6 +11,13 @@ export type StandingsPlayer = {
   d: number;
   pointsDiff: number;
   totalPoints: number;
+  // Diisi hanya pada baris tim (partnerMode 'fixed'): identitas pasangan dari
+  // pemain anchor. Stats baris = stats tim (anggota selalu main bersama).
+  isTeamRow?: boolean;
+  partnerId?: string;
+  partnerName?: string;
+  partnerAvatar?: string;
+  partnerInitials?: string;
 };
 
 export type OfficialStandingsData = {
@@ -176,11 +183,60 @@ export const buildOfficialStandings = ({
 
   return {
     hasCountableScore,
-    players: Object.values(playerStatsMap).sort((a, b) => {
-      if (b.w !== a.w) return b.w - a.w;
-      if (b.pointsDiff !== a.pointsDiff) return b.pointsDiff - a.pointsDiff;
-      if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
-      return a.name.localeCompare(b.name, 'id-ID');
-    }),
+    players: Object.values(playerStatsMap).sort(compareStandingsPlayers),
+  };
+};
+
+export const compareStandingsPlayers = (a: StandingsPlayer, b: StandingsPlayer) => {
+  if (b.w !== a.w) return b.w - a.w;
+  if (b.pointsDiff !== a.pointsDiff) return b.pointsDiff - a.pointsDiff;
+  if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+  return a.name.localeCompare(b.name, 'id-ID');
+};
+
+// Klasemen tim untuk partnerMode 'fixed': satu baris per pasangan tetap.
+// Stats diambil dari anggota dengan jumlah match terbanyak (stats individunya
+// identik dengan stats tim karena mereka selalu main bersama); id baris tetap
+// id pemain anchor supaya round history & expand existing tetap jalan.
+export const buildOfficialTeamStandings = ({
+  tournament,
+  officialStandings,
+}: {
+  tournament: Tournament | TournamentHistory;
+  officialStandings: OfficialStandingsData;
+}): OfficialStandingsData => {
+  const fixedTeams = tournament.fixedTeams || [];
+  if (fixedTeams.length === 0) return officialStandings;
+
+  const playerById = new Map(officialStandings.players.map((player) => [player.id, player]));
+  const claimedIds = new Set<string>();
+  const teamRows: StandingsPlayer[] = [];
+
+  fixedTeams.forEach((team) => {
+    const [firstId, secondId] = team.playerIds || [];
+    const first = firstId ? playerById.get(firstId) : undefined;
+    const second = secondId ? playerById.get(secondId) : undefined;
+    if (!first || !second || first.id === second.id) return;
+    claimedIds.add(first.id);
+    claimedIds.add(second.id);
+    const anchor = second.matches > first.matches ? second : first;
+    const partner = anchor === first ? second : first;
+    teamRows.push({
+      ...anchor,
+      name: `${anchor.name} & ${partner.name}`,
+      isTeamRow: true,
+      partnerId: partner.id,
+      partnerName: partner.name,
+      partnerAvatar: partner.avatar,
+      partnerInitials: partner.initials,
+    });
+  });
+
+  // Pemain tanpa tim (edge: data lama / roster berubah) tetap tampil individual.
+  const leftoverPlayers = officialStandings.players.filter((player) => !claimedIds.has(player.id));
+
+  return {
+    hasCountableScore: officialStandings.hasCountableScore,
+    players: [...teamRows, ...leftoverPlayers].sort(compareStandingsPlayers),
   };
 };

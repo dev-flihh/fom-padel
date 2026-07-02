@@ -1,4 +1,4 @@
-import type { MatchFormat, Player, RankingCriteria, ScoringType, ToxicIntensity, Tournament } from '../../types';
+import type { MatchFormat, PartnerMode, Player, RankingCriteria, ScoringType, ToxicIntensity, Tournament } from '../../types';
 
 export type RoomStatus =
   | 'draft'
@@ -115,6 +115,7 @@ export interface HostFinanceMatchSnapshot extends RoomFinanceSummary {
 export interface RoomSettingsSnapshot {
   name: string;
   format: MatchFormat;
+  partnerMode?: PartnerMode;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
   backgroundId?: string;

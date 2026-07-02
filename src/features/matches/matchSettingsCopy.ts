@@ -1,6 +1,6 @@
 import { type ElementType } from 'react';
 import { RefreshCw, TrendingUp, Trophy } from 'lucide-react';
-import { type MatchFormat, type RankingCriteria, type ScoringType } from '../../types';
+import { type MatchFormat, type PartnerMode, type RankingCriteria, type ScoringType } from '../../types';
 
 export const MATCH_SETTINGS_WIZARD_STEPS = [
   { label: 'Info', title: 'Match Info', context: 'Naming your match' },
@@ -29,11 +29,21 @@ export const FORMAT_IMPACT_COPY: Record<MatchFormat, {
     icon: TrendingUp
   },
   'Match Play': {
-    tagline: 'Fixed teams',
-    body: 'Teams stay the same from start to finish with a classic head-to-head flow.',
-    impact: 'Best for team rivalry or a more serious match setup.',
+    tagline: 'Tennis scoring',
+    body: 'Classic head-to-head flow with tennis-style game scoring (0, 15, 30, 40).',
+    impact: 'Best for a more serious, traditional match setup.',
     icon: Trophy
   }
+};
+
+export const PARTNER_MODE_IMPACT_COPY: Record<PartnerMode, string> = {
+  'rotating': 'Partners are re-drawn every round, so everyone mixes across the group.',
+  'fixed': 'You set the pairs once and they stay together all session. Standings are ranked per team.'
+};
+
+export const PARTNER_MODE_LABELS: Record<PartnerMode, string> = {
+  'rotating': 'Rotating',
+  'fixed': 'Fix Partner'
 };
 
 export const CRITERIA_IMPACT_COPY: Record<RankingCriteria, string> = {

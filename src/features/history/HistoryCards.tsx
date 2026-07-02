@@ -154,6 +154,11 @@ export const TournamentHistoryCard = ({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2 text-[10.5px] font-black uppercase leading-[1.2] tracking-[0.12em]">
               <span className="truncate" style={{ color: formatTheme.color }}>{formatTheme.label}</span>
+              {tournament.partnerMode === 'fixed' && (
+                <span className="rounded-full bg-ios-gray/[0.08] px-2 py-0.5 text-[9.5px] font-black leading-none tracking-[0.12em] text-ios-gray">
+                  Fix Partner
+                </span>
+              )}
               {isLatest && (
                 <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[9.5px] font-black leading-none tracking-[0.12em] text-primary">
                   Latest

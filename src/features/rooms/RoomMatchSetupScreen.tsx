@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
-import { type MatchFormat, type RankingCriteria, type ScoringType } from '../../types';
+import { type MatchFormat, type PartnerMode, type RankingCriteria, type ScoringType } from '../../types';
 import { FormatStep } from '../matches/FormatStep';
-import { CRITERIA_IMPACT_COPY, FORMAT_IMPACT_COPY, SCORING_IMPACT_COPY } from '../matches/matchSettingsCopy';
+import { CRITERIA_IMPACT_COPY, FORMAT_IMPACT_COPY, PARTNER_MODE_IMPACT_COPY, PARTNER_MODE_LABELS, SCORING_IMPACT_COPY } from '../matches/matchSettingsCopy';
 import { MATCH_SETTINGS_WIZARD_CLASSNAMES } from '../matches/matchSettingsStyles';
 import type { Room, RoomSettingsSnapshot } from './types';
 
@@ -36,6 +36,7 @@ export const RoomMatchSetupScreen = ({
   onSave: (settings: RoomSettingsSnapshot) => Promise<void>;
 }) => {
   const [format, setFormat] = useState<MatchFormat>(room.settings.format || 'Mexicano');
+  const [partnerMode, setPartnerMode] = useState<PartnerMode>(room.settings.partnerMode === 'fixed' ? 'fixed' : 'rotating');
   const [criteria, setCriteria] = useState<RankingCriteria>(room.settings.criteria || 'Matches Won');
   const [scoringType, setScoringType] = useState<ScoringType>(room.settings.scoringType || 'Golden Point');
   const [courts, setCourts] = useState(Math.max(1, Number(room.settings.courts || 1)));
@@ -67,6 +68,7 @@ export const RoomMatchSetupScreen = ({
       ...room.settings,
       name: room.title,
       format,
+      partnerMode,
       criteria,
       scoringType: format === 'Match Play' ? scoringType : undefined,
       courts,
@@ -101,6 +103,9 @@ export const RoomMatchSetupScreen = ({
       <main className="mx-auto w-full max-w-md px-7 py-5">
         <FormatStep
           format={format}
+          partnerMode={partnerMode}
+          partnerModeImpactCopy={PARTNER_MODE_IMPACT_COPY}
+          partnerModeLabels={PARTNER_MODE_LABELS}
           criteria={criteria}
           scoringType={scoringType}
           courts={courts}
@@ -115,6 +120,7 @@ export const RoomMatchSetupScreen = ({
           wizardTitleClass={MATCH_SETTINGS_WIZARD_CLASSNAMES.title}
           wizardSubtitleClass={MATCH_SETTINGS_WIZARD_CLASSNAMES.subtitle}
           onFormatChange={applyFormatChoice}
+          onPartnerModeChange={setPartnerMode}
           onCriteriaChange={setCriteria}
           onScoringTypeChange={setScoringType}
           onCourtsChange={setCourts}

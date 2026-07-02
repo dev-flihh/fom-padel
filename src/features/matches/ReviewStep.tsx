@@ -13,6 +13,8 @@ export const ReviewStep = ({
   venueDisplayLabel,
   format,
   formatIcon,
+  partnerModeLabel,
+  fixedTeamCount,
   criteria,
   toxicModeEnabled,
   toxicIntensity,
@@ -33,6 +35,8 @@ export const ReviewStep = ({
   venueDisplayLabel: string;
   format: MatchFormat;
   formatIcon: ElementType;
+  partnerModeLabel: string;
+  fixedTeamCount: number | null;
   criteria: RankingCriteria;
   toxicModeEnabled: boolean;
   toxicIntensity: ToxicIntensity;
@@ -53,6 +57,12 @@ export const ReviewStep = ({
   const summaryItems = [
     { icon: MapPin, label: 'Venue', value: venueDisplayLabel, step: 0 },
     { icon: formatIcon, label: 'Format', value: format, step: 1 },
+    {
+      icon: Users,
+      label: 'Partner',
+      value: fixedTeamCount !== null ? `${partnerModeLabel} · ${fixedTeamCount} teams` : partnerModeLabel,
+      step: 1
+    },
     { icon: Trophy, label: 'Ranking', value: criteria, step: 1 },
     { icon: Zap, label: 'Structure', value: structureLabel, step: 1 },
     { icon: Users, label: 'Players', value: `${playerCount} players`, step: 2 },

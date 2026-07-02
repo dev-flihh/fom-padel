@@ -14,6 +14,7 @@ export const useMatchSettingsWizard = ({
   missingPlayersCount,
   courts,
   selectedPlayerCount,
+  requireEvenPlayers = false,
   onComplete
 }: {
   controlledStep?: number;
@@ -23,6 +24,7 @@ export const useMatchSettingsWizard = ({
   missingPlayersCount: number;
   courts: number;
   selectedPlayerCount: number;
+  requireEvenPlayers?: boolean;
   onComplete: () => void;
 }) => {
   const [localStep, setLocalStep] = useState(0);
@@ -50,8 +52,13 @@ export const useMatchSettingsWizard = ({
 
   const wizardCtaLabel = settingsStep === lastStepIndex ? 'Generate Match' : 'Continue';
   const wizardCtaDisabled = settingsStep >= 2 && !isReady;
+  const blockedByOddPlayers = requireEvenPlayers
+    && selectedPlayerCount % 2 !== 0
+    && selectedPlayerCount >= courts * 4;
   const wizardStatusLabel = !isReady
-    ? `Add ${missingPlayersCount} more player${missingPlayersCount > 1 ? 's' : ''} for ${courts} court${courts > 1 ? 's' : ''}.`
+    ? (blockedByOddPlayers
+        ? 'Fix Partner needs an even number of players so everyone has a partner.'
+        : `Add ${missingPlayersCount} more player${missingPlayersCount > 1 ? 's' : ''} for ${courts} court${courts > 1 ? 's' : ''}.`)
     : `${selectedPlayerCount} players ready.`;
 
   return {

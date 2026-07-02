@@ -21,7 +21,8 @@ import { isFomRegisteredPlayer } from '../players/playerUtils';
 import { getMatchThemeColor } from '../tournaments/matchTheme';
 import { sanitizeInactivePlayerIds } from '../tournaments/tournamentDraft';
 import { useMatchSettingsFriends } from './useMatchSettingsFriends';
-import { buildOfficialStandings } from './standingsUtils';
+import { buildOfficialStandings, buildOfficialTeamStandings } from './standingsUtils';
+import { isFixedPartnerTournament } from './partnerMode';
 import { getToxicIntensityLabel, normalizeToxicIntensity } from './toxicSettings';
 
 type MatchActiveScreenProps = {
@@ -250,7 +251,11 @@ export const MatchActiveScreen = ({
       currentUserEmail: currentUser?.email,
       currentUserPhotoURL,
     });
-    return standings.hasCountableScore ? standings.players.slice(0, 3) : [];
+    if (!standings.hasCountableScore) return [];
+    const rows = isFixedPartnerTournament(tournament) && (tournament.fixedTeams || []).length > 0
+      ? buildOfficialTeamStandings({ tournament, officialStandings: standings }).players
+      : standings.players;
+    return rows.slice(0, 3);
   }, [tournament, friends, currentUserUid, currentUser?.displayName, currentUser?.email, currentUserPhotoURL]);
   const isE2EUser = currentUserUid === 'e2e-user';
   const visibleFriends = isE2EUser && friends.length === 0 ? E2E_ACTIVE_MATCH_FRIENDS : friends;

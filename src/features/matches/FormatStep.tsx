@@ -1,7 +1,7 @@
 import { type ElementType } from 'react';
 import { Check, CircleHelp, Minus, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { type MatchFormat, type RankingCriteria, type ScoringType } from '../../types';
+import { type MatchFormat, type PartnerMode, type RankingCriteria, type ScoringType } from '../../types';
 
 type FormatImpactCopy = Record<MatchFormat, {
   tagline: string;
@@ -18,6 +18,9 @@ const clampNumericInput = (value: string, min: number, max: number) => {
 
 export const FormatStep = ({
   format,
+  partnerMode,
+  partnerModeImpactCopy,
+  partnerModeLabels,
   criteria,
   scoringType,
   courts,
@@ -32,6 +35,7 @@ export const FormatStep = ({
   wizardTitleClass,
   wizardSubtitleClass,
   onFormatChange,
+  onPartnerModeChange,
   onCriteriaChange,
   onScoringTypeChange,
   onCourtsChange,
@@ -40,6 +44,9 @@ export const FormatStep = ({
   onPointsChange
 }: {
   format: MatchFormat;
+  partnerMode: PartnerMode;
+  partnerModeImpactCopy: Record<PartnerMode, string>;
+  partnerModeLabels: Record<PartnerMode, string>;
   criteria: RankingCriteria;
   scoringType: ScoringType;
   courts: number;
@@ -54,6 +61,7 @@ export const FormatStep = ({
   wizardTitleClass: string;
   wizardSubtitleClass: string;
   onFormatChange: (value: MatchFormat) => void;
+  onPartnerModeChange: (value: PartnerMode) => void;
   onCriteriaChange: (value: RankingCriteria) => void;
   onScoringTypeChange: (value: ScoringType) => void;
   onCourtsChange: (value: number) => void;
@@ -109,6 +117,29 @@ export const FormatStep = ({
           </button>
         );
       })}
+    </div>
+
+    <div className="rounded-[26px] bg-ios-gray/[0.03] p-4">
+      <p className="text-[13px] font-bold tracking-[-0.01em] text-on-surface">Partner</p>
+      <div className="mt-3 grid grid-cols-2 gap-2 rounded-[20px] bg-white/70 p-1">
+        {(['rotating', 'fixed'] as PartnerMode[]).map((value) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => onPartnerModeChange(value)}
+            className={cn(
+              "h-11 rounded-[16px] text-[13px] font-semibold transition-all",
+              partnerMode === value ? "bg-primary text-white" : "text-on-surface"
+            )}
+          >
+            {partnerModeLabels[value]}
+          </button>
+        ))}
+      </div>
+      <p className="mt-3 flex gap-2 rounded-[18px] bg-[#fff8f2] px-3 py-2.5 text-[12px] font-medium leading-[1.55] text-[#8a3b12]">
+        <CircleHelp size={14} className="mt-0.5 shrink-0" />
+        {partnerModeImpactCopy[partnerMode]}
+      </p>
     </div>
 
     <div className="rounded-[26px] bg-ios-gray/[0.03] p-4">

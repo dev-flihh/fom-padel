@@ -1,7 +1,8 @@
 import { type Ref } from 'react';
 import { Plus, RefreshCw, Users, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { type Player } from '../../types';
+import { type FixedTeam, type PartnerMode, type Player } from '../../types';
+import { FixedTeamsPanel } from './FixedTeamsPanel';
 
 export const PlayersStep = ({
   sectionRef,
@@ -12,12 +13,16 @@ export const PlayersStep = ({
   missingPlayersCount,
   wizardStatusLabel,
   currentUserId,
+  partnerMode,
+  fixedTeams,
+  fixedTeamPlayers,
   wizardHeadingClass,
   wizardTitleClass,
   wizardSubtitleClass,
   onOpenFriends,
   onOpenAddPlayer,
-  onTogglePlayer
+  onTogglePlayer,
+  onSwapFixedTeamPlayers
 }: {
   sectionRef: Ref<HTMLElement>;
   selectedPlayers: Player[];
@@ -27,17 +32,23 @@ export const PlayersStep = ({
   missingPlayersCount: number;
   wizardStatusLabel: string;
   currentUserId?: string | null;
+  partnerMode: PartnerMode;
+  fixedTeams: FixedTeam[];
+  fixedTeamPlayers: Player[];
   wizardHeadingClass: string;
   wizardTitleClass: string;
   wizardSubtitleClass: string;
   onOpenFriends: () => void;
   onOpenAddPlayer: () => void;
   onTogglePlayer: (player: Player) => void;
+  onSwapFixedTeamPlayers: (playerIdA: string, playerIdB: string) => void;
 }) => (
   <section ref={sectionRef} className="space-y-6">
     <div className={wizardHeadingClass}>
       <h2 className={wizardTitleClass}>Add players.</h2>
-      <p className={wizardSubtitleClass}>Each court needs 4 players.</p>
+      <p className={wizardSubtitleClass}>
+        {partnerMode === 'fixed' ? 'Each court needs 4 players, and every player needs a partner.' : 'Each court needs 4 players.'}
+      </p>
     </div>
 
     <div className="rounded-[26px] bg-ios-gray/[0.03] p-4">
@@ -64,6 +75,14 @@ export const PlayersStep = ({
       </div>
     </div>
 
+    {partnerMode === 'fixed' && (
+      <FixedTeamsPanel
+        fixedTeams={fixedTeams}
+        players={fixedTeamPlayers}
+        onSwapPlayers={onSwapFixedTeamPlayers}
+      />
+    )}
+
     {selectedPlayers.length > 0 && (
       <div className="rounded-[26px] bg-ios-gray/[0.03] p-4">
         <div className="flex items-center justify-between gap-3">
@@ -84,7 +103,7 @@ export const PlayersStep = ({
                     {isSelf && <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">You</span>}
                   </div>
                 </div>
-                <button type="button" onClick={() => onTogglePlayer(player)} className="tap-target flex h-7 w-7 items-center justify-center rounded-full bg-[#fbfbfd] text-ios-gray">
+                <button type="button" aria-label={`Remove ${player.name}`} onClick={() => onTogglePlayer(player)} className="tap-target flex h-7 w-7 items-center justify-center rounded-full bg-[#fbfbfd] text-ios-gray">
                   <X size={13} />
                 </button>
               </div>

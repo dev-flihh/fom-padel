@@ -86,6 +86,8 @@ export const INITIAL_PLAYERS: Player[] = [
 export const INITIAL_TOURNAMENT: Tournament = {
   name: 'Padel Tournament',
   format: 'Mexicano',
+  partnerMode: 'rotating',
+  fixedTeams: [],
   themeColorId: 'orange',
   toxicModeEnabled: false,
   toxicIntensity: 'savage',
