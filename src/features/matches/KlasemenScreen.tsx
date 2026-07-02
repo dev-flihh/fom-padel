@@ -168,14 +168,17 @@ export const KlasemenScreen = ({
   ), [currentUser?.displayName, currentUser?.email, currentUserPhotoURL, currentUserUid, friends, tournament]);
   const sortedPlayers = officialStandings.players;
   const hasCountableStandingScore = officialStandings.hasCountableScore;
-  // Mode fix partner: tab official menampilkan baris per-tim; data individual
-  // (sortedPlayers) tetap dipakai untuk toxic, rewind, dan stats lain.
+  // Mode fix partner: unit peringkat adalah tim. officialRows dipakai untuk tab
+  // official, toxic Hall of Shame, dan seluruh deck Rewind supaya tidak ada
+  // baris kembar per tim. Rotating tetap pakai sortedPlayers (per-pemain).
   const isFixedPartnerMode = isFixedPartnerTournament(tournament) && (tournament.fixedTeams || []).length > 0;
   const officialRows = useMemo(() => (
     isFixedPartnerMode
       ? buildOfficialTeamStandings({ tournament, officialStandings }).players
       : sortedPlayers
   ), [isFixedPartnerMode, officialStandings, sortedPlayers, tournament]);
+  // Basis peringkat untuk toxic & rewind: per-tim saat fixed, per-pemain saat rotating.
+  const rankedStandings = isFixedPartnerMode ? officialRows : sortedPlayers;
 
   const activeRoundIndex = tournamentRounds.findIndex((round) => (
     round.matches.some((match) => match.status === 'active')
@@ -313,12 +316,12 @@ export const KlasemenScreen = ({
   const toxicStandings = useMemo(() => (
     buildToxicStandings({
       tournament,
-      sortedPlayers,
+      sortedPlayers: rankedStandings,
       hasCountableScore: hasCountableStandingScore,
       isEnded: isTournamentEnded,
       toxicCopyConfig,
     })
-  ), [hasCountableStandingScore, isTournamentEnded, sortedPlayers, tournament, toxicCopyConfig]);
+  ), [hasCountableStandingScore, isTournamentEnded, rankedStandings, tournament, toxicCopyConfig]);
   useEffect(() => {
     setActiveAwardCardIndex(0);
   }, [toxicStandings.awardCards.length, tournament.id]);
@@ -360,18 +363,21 @@ export const KlasemenScreen = ({
   }, [isFixedPartnerMode, previousOfficialStandings, tournament]);
   const previousToxicRankById = useMemo(() => {
     if (!toxicModeEnabled || !previousOfficialStandings?.hasCountableScore) return new Map<string, number>();
+    const previousRankedStandings = isFixedPartnerMode
+      ? buildOfficialTeamStandings({ tournament, officialStandings: previousOfficialStandings }).players
+      : previousOfficialStandings.players;
     const previousToxicStandings = buildToxicStandings({
       tournament: {
         ...tournament,
         rounds: tournamentRounds.slice(0, latestScoredRoundIndex),
       },
-      sortedPlayers: previousOfficialStandings.players,
+      sortedPlayers: previousRankedStandings,
       hasCountableScore: previousOfficialStandings.hasCountableScore,
       isEnded: false,
       toxicCopyConfig,
     });
     return new Map(previousToxicStandings.rows.map((player) => [player.id, player.toxicRank]));
-  }, [latestScoredRoundIndex, previousOfficialStandings, tournament, tournamentRounds, toxicCopyConfig, toxicModeEnabled]);
+  }, [isFixedPartnerMode, latestScoredRoundIndex, previousOfficialStandings, tournament, tournamentRounds, toxicCopyConfig, toxicModeEnabled]);
   const liveScorePlayerIds = useMemo(() => {
     if (isTournamentEnded) return new Set<string>();
     const playerIds = new Set<string>();
@@ -393,8 +399,12 @@ export const KlasemenScreen = ({
   const myMatchStanding = currentUserMatchPlayer
     ? sortedPlayers.find((player) => player.id === currentUserMatchPlayer.id) || null
     : null;
+  // Di mode fixed baris toxic adalah baris tim (id = anchor); user bisa jadi
+  // anchor atau partner, jadi cocokkan lewat id maupun partnerId.
   const myMatchToxicRow = myMatchStanding
-    ? toxicStandings.rows.find((player) => player.id === myMatchStanding.id) || null
+    ? toxicStandings.rows.find((player) => (
+        player.id === myMatchStanding.id || player.partnerId === myMatchStanding.id
+      )) || null
     : null;
   // Baris official milik user: di mode fixed bisa jadi baris tim yang
   // menampung user sebagai partner (id baris = id anchor, bukan id user).
@@ -1458,6 +1468,7 @@ export const KlasemenScreen = ({
                       </div>
                       <ToxicAvatar
                         player={player}
+                        partner={player.isTeamRow ? { avatar: player.partnerAvatar, initials: player.partnerInitials, name: player.partnerName } : null}
                         className={cn(
                           'h-10 w-10 text-[13px]',
                           isKing
@@ -1728,11 +1739,12 @@ export const KlasemenScreen = ({
       {isRewindOpen && (
         <RewindFlow
           tournament={tournament}
-          sortedPlayers={sortedPlayers}
+          sortedPlayers={rankedStandings}
           toxicStandings={toxicStandings}
           shareId={rewindShareId}
           currentUserUid={currentUserUid || undefined}
           currentUserPlayerId={myMatchStanding?.id}
+          currentUserStanding={myMatchStanding || undefined}
           isReadOnly={Boolean(isSharedViewer)}
           entrySource={rewindEntrySource}
           existingResult={rewindResult}
@@ -1836,22 +1848,45 @@ const ToxicAvatar = ({
   player,
   className,
   initialsClassName,
+  partner,
+  partnerRingClassName = 'ring-white',
 }: {
   player: ToxicAvatarPlayer;
   className?: string;
   initialsClassName?: string;
-}) => (
-  <div className={cn(
-    'flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10 font-bold leading-none',
-    className
-  )}>
-    {player.avatar ? (
-      <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
-    ) : (
-      <span className={initialsClassName}>{player.initials.slice(0, 1)}</span>
-    )}
-  </div>
-);
+  // Mode fix partner: overlay wajah partner di pojok agar baris terbaca sebagai tim.
+  partner?: { avatar?: string; initials?: string; name?: string } | null;
+  partnerRingClassName?: string;
+}) => {
+  const avatar = (
+    <div className={cn(
+      'flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10 font-bold leading-none',
+      className
+    )}>
+      {player.avatar ? (
+        <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+      ) : (
+        <span className={initialsClassName}>{player.initials.slice(0, 1)}</span>
+      )}
+    </div>
+  );
+  if (!partner) return avatar;
+  return (
+    <div className="relative shrink-0">
+      {avatar}
+      <div className={cn(
+        'absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center overflow-hidden rounded-full bg-ios-gray/20 text-[8px] font-black leading-none ring-2',
+        partnerRingClassName
+      )}>
+        {partner.avatar ? (
+          <img className="h-full w-full object-cover" src={partner.avatar} alt={partner.name || ''} referrerPolicy="no-referrer" />
+        ) : (
+          <span>{(partner.initials || '?').slice(0, 1)}</span>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const ToxicHeroStatCell = ({ stat }: { stat: ToxicHeroStatData }) => (
   <div className="border-l border-white/12 pl-4 first:border-l-0 first:pl-0">
@@ -1907,7 +1942,12 @@ const ToxicPodiumColumn = ({
   return (
     <div className="flex min-w-0 flex-col items-center text-center">
       <div className="relative">
-        <ToxicAvatar player={player} className={cn('text-[12px]', podiumCopy.avatarClass)} />
+        <ToxicAvatar
+          player={player}
+          partner={player.isTeamRow ? { avatar: player.partnerAvatar, initials: player.partnerInitials, name: player.partnerName } : null}
+          partnerRingClassName="ring-[#141414]"
+          className={cn('text-[12px]', podiumCopy.avatarClass)}
+        />
         {place === 1 && (
           <span className="absolute right-[-9px] top-[-12px] rotate-[22deg] text-[17px] leading-none" aria-hidden="true">👑</span>
         )}

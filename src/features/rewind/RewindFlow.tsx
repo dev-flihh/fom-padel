@@ -52,6 +52,7 @@ export const RewindFlow = ({
   shareId,
   currentUserUid,
   currentUserPlayerId,
+  currentUserStanding,
   isReadOnly,
   entrySource = 'banner',
   existingResult,
@@ -65,6 +66,9 @@ export const RewindFlow = ({
   currentUserUid?: string;
   // Player id milik user login di match ini — memunculkan slide personal "My Card".
   currentUserPlayerId?: string;
+  // Standing individual user (dipakai My Card di mode fixed, saat sortedPlayers
+  // berisi baris tim dan identitas per-pemain user tidak ada di dalamnya).
+  currentUserStanding?: StandingsPlayer;
   // Shared viewer: replay persisted slides only — no upload/generate/regenerate.
   isReadOnly?: boolean;
   entrySource?: 'banner' | 'finish_flow';
@@ -125,7 +129,8 @@ export const RewindFlow = ({
     shareId,
     copyBank,
     currentUserPlayerId,
-  }), [tournament, sortedPlayers, toxicStandings, photos, shareId, copyBank, currentUserPlayerId]);
+    currentUserStanding,
+  }), [tournament, sortedPlayers, toxicStandings, photos, shareId, copyBank, currentUserPlayerId, currentUserStanding]);
 
   // Real scannable QR for the outro slide, rendered as a data URL so the
   // html-to-image exporter can inline it like any other image.

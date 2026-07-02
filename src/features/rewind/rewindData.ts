@@ -93,6 +93,23 @@ export const REWIND_SLIDE_LABELS: Record<RewindSlideType, string> = {
   outro: 'Outro',
 };
 
+// Mode fixed: satu baris peringkat = satu tim. Untuk slide "hero" (champion)
+// pecah kembali jadi dua wajah pemain agar keduanya tampil. Nama anchor
+// dipulihkan dari nama gabungan "anchor & partner".
+const expandTeamMemberRefs = (row: StandingsPlayer): RewindPlayerRef[] => {
+  if (!row.isTeamRow || !row.partnerId) {
+    return [{ id: row.id, name: row.name, avatar: row.avatar, initials: row.initials }];
+  }
+  const partnerSuffix = ` & ${row.partnerName || ''}`;
+  const anchorName = row.name.endsWith(partnerSuffix)
+    ? row.name.slice(0, row.name.length - partnerSuffix.length)
+    : (row.name.split(' & ')[0] || row.name);
+  return [
+    { id: row.id, name: anchorName, avatar: row.avatar, initials: row.initials },
+    { id: row.partnerId, name: row.partnerName || '', avatar: row.partnerAvatar, initials: row.partnerInitials || '' },
+  ];
+};
+
 const toPlayerRef = (player: { id: string; name: string; avatar?: string; initials: string }): RewindPlayerRef => ({
   id: player.id,
   name: player.name,
@@ -241,6 +258,7 @@ export const buildRewindData = ({
   shareId,
   copyBank,
   currentUserPlayerId,
+  currentUserStanding,
 }: {
   tournament: Tournament | TournamentHistory;
   sortedPlayers: StandingsPlayer[];
@@ -249,6 +267,7 @@ export const buildRewindData = ({
   shareId?: string;
   copyBank?: RewindCopyLine[] | null;
   currentUserPlayerId?: string;
+  currentUserStanding?: StandingsPlayer;
 }): RewindData => {
   const seed = String(tournament.id || tournament.startedAt || tournament.name || 'fom-rewind');
   const intensity = normalizeToxicIntensity(tournament.toxicIntensity);
@@ -435,10 +454,14 @@ export const buildRewindData = ({
 
   // 4 — Champion (tie total → varian tanpa penobatan ditangani template)
   if (champion) {
+    // Fixed: champion adalah satu tim → tampilkan kedua anggotanya.
+    const championPlayers = champion.isTeamRow
+      ? expandTeamMemberRefs(champion)
+      : coChampions.slice(0, 2).map(toPlayerRef);
     slides.push({
       type: 'champion',
-      headline: isCoChampion ? 'CO-CHAMPION' : 'CHAMPION',
-      players: coChampions.slice(0, 2).map(toPlayerRef),
+      headline: isCoChampion || champion.isTeamRow ? 'CO-CHAMPION' : 'CHAMPION',
+      players: championPlayers.slice(0, 2),
       rankLabel: `#1 OF ${sortedPlayers.length}`,
       record: `${champion.w}W-${champion.l}L`,
       diff: champion.pointsDiff,
@@ -660,15 +683,23 @@ export const buildRewindData = ({
 
   // 12b — My Card (personal, hanya kalau user login ikut main). Tidak ikut
   // dipersist ke Firestore (lihat RewindFlow) — kartu ini milik yang generate.
-  const myPlayer = currentUserPlayerId ? playersById.get(currentUserPlayerId) : undefined;
+  // Mode fixed: sortedPlayers berisi baris tim, jadi identitas + rekor pribadi
+  // diambil dari currentUserStanding (individual); peringkat & roast diambil
+  // dari baris tim yang memuat user (via id anchor maupun partnerId).
+  const myPlayer = currentUserStanding
+    || (currentUserPlayerId ? playersById.get(currentUserPlayerId) : undefined);
   if (myPlayer) {
-    const myToxicRow = toxicOn ? toxicStandings.rows.find((row) => row.id === myPlayer.id) : undefined;
+    const myRankedRow = sortedPlayers.find((row) => row.id === myPlayer.id || row.partnerId === myPlayer.id);
+    const myOfficialRank = myRankedRow ? (rankById.get(myRankedRow.id) || 0) : (rankById.get(myPlayer.id) || 0);
+    const myToxicRow = toxicOn
+      ? toxicStandings.rows.find((row) => row.id === myPlayer.id || row.partnerId === myPlayer.id)
+      : undefined;
     slides.push({
       type: 'my-card',
       player: toPlayerRef(myPlayer),
       matchName: tournament.name || 'FOM Play Match',
       dateLabel: shortDateLabel || dateLabel,
-      officialRank: rankById.get(myPlayer.id) || 0,
+      officialRank: myOfficialRank,
       playerCount: sortedPlayers.length,
       record: `${myPlayer.w}W-${myPlayer.l}L${myPlayer.d > 0 ? `-${myPlayer.d}D` : ''}`,
       diff: myPlayer.pointsDiff,
