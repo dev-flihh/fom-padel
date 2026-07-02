@@ -97,6 +97,10 @@ test.describe('Active Match Finish Flow', () => {
 
     await page.getByRole('button', { name: 'View Standings' }).click();
 
+    // FR-4.5: first Klasemen open after finishing auto-prompts the Rewind upload.
+    await expect(page.getByText('Every mabar deserves')).toBeVisible();
+    await page.getByRole('button', { name: 'Tutup FOM Rewind' }).click();
+
     await expect(page.getByRole('heading', { name: 'E2E Toxic Ticker' })).toBeVisible();
     await expect(page.getByText('Official').first()).toBeVisible();
     await expect(page.getByText('Hall of Shame').first()).toBeVisible();

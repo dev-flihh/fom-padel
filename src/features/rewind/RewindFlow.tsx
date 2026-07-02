@@ -52,6 +52,7 @@ export const RewindFlow = ({
   shareId,
   currentUserUid,
   isReadOnly,
+  entrySource = 'banner',
   existingResult,
   onGenerated,
   onClose,
@@ -63,6 +64,7 @@ export const RewindFlow = ({
   currentUserUid?: string;
   // Shared viewer: replay persisted slides only — no upload/generate/regenerate.
   isReadOnly?: boolean;
+  entrySource?: 'banner' | 'finish_flow';
   existingResult: RewindResult | null;
   onGenerated: (result: RewindResult) => void;
   onClose: () => void;
@@ -109,7 +111,7 @@ export const RewindFlow = ({
   }, []);
 
   useEffect(() => {
-    if (step === 'upload') trackRewindEvent('rewind_upload_opened', { source: 'banner' });
+    if (step === 'upload') trackRewindEvent('rewind_upload_opened', { source: entrySource });
   }, [step]);
 
   const rewindData = useMemo(() => buildRewindData({
@@ -152,7 +154,7 @@ export const RewindFlow = ({
 
   useEffect(() => {
     if (step !== 'viewer' || slides.length === 0) return;
-    trackRewindEvent('rewind_viewed', { entry_source: 'banner', slide_count: slides.length });
+    trackRewindEvent('rewind_viewed', { entry_source: entrySource, slide_count: slides.length });
     // slides identity changes on regenerate, so this refires per result set.
   }, [step, slides.length]);
 

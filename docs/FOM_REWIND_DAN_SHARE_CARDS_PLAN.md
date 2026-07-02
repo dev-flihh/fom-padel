@@ -106,7 +106,13 @@ Implemented & deployed:
 - Copy bank: slot `standings-toxic` headline (per intensity) + headline data-driven untuk `standings`. Slide type baru terdaftar di RewindSlideType + REWIND_SLIDE_TYPES (remote parser).
 - Max slide kini 13 (toxic + foto). Verifikasi visual T1 & T2 sesuai mockup; 56 e2e pass, build bersih.
 
-Phase berikutnya (belum): dot indicator foto berubah (FR-4.3), entrypoint finish-flow host (FR-4.5), pre-load foto galeri match (FR-5.3), auto-create share saat generate (supaya QR selalu punya shareId).
+### 2026-07-02 (revisi 4) — Deploy guard + finish-flow prompt (FR-4.5)
+
+- **Deploy guard**: `firebase.json` hosting `predeploy: ["npm run build"]` — `firebase deploy --only hosting` kini selalu build lengkap (termasuk `prepare-hosting-entrypoints`), menutup insiden `/app` 404 yang terjadi 2×.
+- **FR-4.5 finish-flow prompt**: `useRoundProgressionActions` menerima callback `onTournamentFinalized`; App meng-arm one-shot `rewindPromptTournamentId` saat match final (TANPA hijack navigasi — panel "Results are ready" di ended-match screen tetap). Saat host membuka Klasemen (via View Standings) untuk match itu, upload Rewind auto-terbuka sekali (`autoPromptRewind` prop). Shared viewer tidak kena. Analytics `entrySource` membedakan `finish_flow` vs `banner`.
+- e2e: assertion baru di `active-match-finish-flow` (setelah View Standings → "Every mabar deserves" muncul → tutup). Semua test yang tersentuh lolos; 4 kegagalan suite penuh tetap pre-existing (finished-flow "Match" selector ambigu + auth-flow flaky, bukan regresi).
+
+Phase berikutnya (belum): dot indicator foto berubah (FR-4.3), pre-load foto galeri match (FR-5.3), auto-create share saat generate (supaya QR selalu punya shareId untuk match yang belum di-share).
 
 ## Phase A — Data Layer: Stat Baru
 

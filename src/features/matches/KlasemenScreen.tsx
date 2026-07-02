@@ -99,7 +99,9 @@ export const KlasemenScreen = ({
   onShareFeedback,
   onOpenActive,
   isSharedViewer,
-  statsSyncState
+  statsSyncState,
+  autoPromptRewind,
+  onRewindPromptConsumed,
 }: {
   tournament: Tournament | TournamentHistory;
   currentUser?: any;
@@ -109,6 +111,8 @@ export const KlasemenScreen = ({
   onOpenActive: () => void;
   isSharedViewer?: boolean;
   statsSyncState?: TournamentStatsSyncState | null;
+  autoPromptRewind?: boolean;
+  onRewindPromptConsumed?: () => void;
 }) => {
   const [nowMs, setNowMs] = useState(Date.now());
   const [isStoryPreviewOpen, setIsStoryPreviewOpen] = useState(false);
@@ -127,7 +131,17 @@ export const KlasemenScreen = ({
   const cardPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const [isRewindOpen, setIsRewindOpen] = useState(false);
   const [rewindResult, setRewindResult] = useState<RewindResult | null>(null);
+  const [rewindEntrySource, setRewindEntrySource] = useState<'banner' | 'finish_flow'>('banner');
   const hasRemoteRewind = Boolean(tournament.rewind?.slides?.length);
+
+  // FR-4.5: after finishing a match, host lands on Klasemen and is prompted
+  // straight into the Rewind upload (skippable). One-shot, host-only.
+  useEffect(() => {
+    if (!autoPromptRewind || isSharedViewer) return;
+    setRewindEntrySource('finish_flow');
+    setIsRewindOpen(true);
+    onRewindPromptConsumed?.();
+  }, [autoPromptRewind, isSharedViewer, onRewindPromptConsumed]);
   const rewindShareId = useMemo(() => {
     const startedAt = Number(tournament.startedAt || 0);
     const uid = String(currentUser?.uid || '').trim();
@@ -1805,7 +1819,7 @@ export const KlasemenScreen = ({
           <section className="pt-3">
             <button
               type="button"
-              onClick={() => setIsRewindOpen(true)}
+              onClick={() => { setRewindEntrySource('banner'); setIsRewindOpen(true); }}
               className="tap-target relative flex w-full items-center gap-3.5 overflow-hidden rounded-[20px] bg-[#111111] px-4 py-4 text-left shadow-[0_14px_34px_rgba(15,23,42,0.18)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100"
               aria-label={rewindResult || hasRemoteRewind ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
             >
@@ -3146,6 +3160,7 @@ export const KlasemenScreen = ({
           shareId={rewindShareId}
           currentUserUid={currentUserUid || undefined}
           isReadOnly={Boolean(isSharedViewer)}
+          entrySource={rewindEntrySource}
           existingResult={rewindResult}
           onGenerated={setRewindResult}
           onClose={() => setIsRewindOpen(false)}

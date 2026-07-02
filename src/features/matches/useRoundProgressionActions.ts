@@ -54,6 +54,9 @@ type Params = {
   toTournamentDetailCollectionLabel: string;
   getActivePlayersFromTournament: (tournament: Tournament) => Player[];
   rebuildAmericanoFutureRounds: (tournament: Tournament, targetNumRounds: number) => Tournament['rounds'];
+  // Called once when the tournament is finalized (last round completed), so the
+  // host can be routed to the FOM Rewind upload prompt (FR-4.5).
+  onTournamentFinalized?: (tournamentId: string) => void;
 };
 
 type RoundCompletionOptions = {
@@ -80,6 +83,7 @@ export const useRoundProgressionActions = ({
   toTournamentDetailCollectionLabel,
   getActivePlayersFromTournament,
   rebuildAmericanoFutureRounds,
+  onTournamentFinalized,
 }: Params) => {
   const persistActiveRoundUpdate = async (nextTournament: Tournament) => {
     setTournament(nextTournament);
@@ -351,6 +355,7 @@ export const useRoundProgressionActions = ({
           userUid: user?.uid || null,
         });
       }
+      onTournamentFinalized?.(finalizedTournamentId);
       return;
     }
 

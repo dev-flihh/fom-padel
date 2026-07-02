@@ -1040,6 +1040,8 @@ export default function App() {
   const [hasResolvedInitialHistoryHydration, setHasResolvedInitialHistoryHydration] = useState(false);
   const [selectedHistory, setSelectedHistory] = useState<TournamentHistory | null>(null);
   const [selectedKlasemenTournament, setSelectedKlasemenTournament] = useState<Tournament | TournamentHistory | null>(null);
+  // One-shot: set on finish so Klasemen auto-opens the FOM Rewind upload (FR-4.5).
+  const [rewindPromptTournamentId, setRewindPromptTournamentId] = useState<string | null>(null);
   const [klasemenBackScreen, setKlasemenBackScreen] = useState<'dashboard' | 'active' | 'history-detail'>('dashboard');
   const [activeScreenTournament, setActiveScreenTournament] = useState<Tournament | null>(null);
   const [activeBackScreen, setActiveBackScreen] = useState<'dashboard' | 'history-detail' | 'klasemen' | 'history' | 'profile'>('dashboard');
@@ -1191,6 +1193,12 @@ export default function App() {
     toTournamentDetailCollectionLabel: TOURNAMENT_DETAILS_COLLECTION,
     getActivePlayersFromTournament,
     rebuildAmericanoFutureRounds,
+    // Don't hijack the ended-match screen ("Results are ready" panel stays);
+    // arm a one-shot so the Rewind upload auto-opens when the host opens
+    // Klasemen for this match (via View Standings) — FR-4.5.
+    onTournamentFinalized: (tournamentId: string) => {
+      setRewindPromptTournamentId(tournamentId);
+    },
   });
   const {
     handleGenerateTournament,
@@ -3025,6 +3033,11 @@ export default function App() {
             onOpenActive={handleOpenActiveFromStandings}
             isSharedViewer={isSharedViewer}
             statsSyncState={resolveTournamentStatsSyncState(selectedKlasemenTournament || tournament)}
+            autoPromptRewind={Boolean(
+              rewindPromptTournamentId &&
+              (selectedKlasemenTournament || tournament)?.id === rewindPromptTournamentId
+            )}
+            onRewindPromptConsumed={() => setRewindPromptTournamentId(null)}
           />
         )}
         {NOTIFICATIONS_ENABLED && screen === 'notifications' && (
