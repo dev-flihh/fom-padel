@@ -87,7 +87,18 @@ Implemented & verified:
 - **Verifikasi visual 12/12 slide** (screenshot per slide via Playwright, fixture toxic + 4 foto): copy conditional bekerja (gap 1-2 tipis, win-rate 100%, shutout, margin-1, tie, kalah telak 0-6 savage). Generate 12 slide ~5 detik (target PRD ≤10s). Build + 56 e2e pass.
 - Catatan environment: browser preview (CDP) sempat membuat `html-to-image` hang setelah resize emulation — bukan bug kode (e2e di Chromium bersih selalu lolos); verifikasi visual dipindah ke Playwright.
 
-Phase 2 (belum): upload PNG hasil ke Storage + shared viewer/History melihat Rewind, dot indicator foto berubah (FR-4.3), QR asli (sekarang grid dekoratif) + shareId nyata, copy bank via Remote Config, analytics events (Section 10), entrypoint finish-flow host (FR-4.5), pre-load foto galeri match (FR-5.3).
+### 2026-07-02 (sore) — Rewind Phase 2 (deployed to production hosting)
+
+Implemented & deployed:
+- **QR asli** di slide Outro (lib `qrcode` → data URL; menunjuk `?shared={shareId}` dari localStorage share key host, fallback fomplay.asia/app). Verified visual: pattern QR scannable di PNG hasil.
+- **Copy bank via Remote Config**: key `rewind_copy_v1`, override QA `fom_rewind_copy_config_v1` (localStorage) / `VITE_REWIND_COPY_CONFIG_JSON`. Format `{version, lines:[{id, slide, slot, template, conditions?, intensity?, priority?}]}` — id existing me-replace, id baru append; invalid fail-closed ke default (`parseRewindCopyBankJson`).
+- **Analytics** (PRD Section 10): `trackRewindEvent` di `src/analytics.ts` + wiring lengkap (entrypoint_viewed, upload_opened, photo_added, generate_started/completed, slide_failed, viewed, slide_viewed, completed, slide_shared/downloaded, regenerated).
+- **Persist PNG (hybrid)**: `rewindPersistence.ts` upload slide PNG ke Storage `rewind/{tournamentId}/{order}-{type}.png` (best-effort), tulis `tournament.rewind {generatedAt, generatedBy, slides[{type,order,imageUrl}]}` ke shared snapshot (merge, host-only per rules) + history doc (`tournaments/{id}`, aman krn `isValidTournament` pakai hasAll). Shared viewer/History: banner `View FOM Rewind →` + viewer replay dari imageUrl (read-only, tanpa Regenerate; Share/Download fetch blob dari URL). Foto sumber tetap lokal-only.
+- Regression: tsc + build + 56 e2e pass. Deploy hosting sukses (dengan insiden singkat: deploy pertama memakai dist tanpa `prepare-hosting-entrypoints` → `/app` 404 beberapa menit; diperbaiki dengan `npm run build` penuh + redeploy).
+
+**MENUNGGU KEPUTUSAN USER — storage rules belum dideploy**: temuan penting, rules Storage production saat ini **deny-all** (upload avatar ke Storage selama ini diam-diam gagal → fallback data-URL Firestore). File `storage.rules` baru dibuat di repo (default deny-all identik + path `rewind/**`: read publik, write user login PNG ≤2MB) + `firebase.json` storage section. Deploy `npx firebase-tools deploy --only storage` diblokir auto-mode (perubahan postur keamanan). Sampai dideploy, persist PNG silently no-op (fitur tetap jalan in-session).
+
+Phase berikutnya (belum): dot indicator foto berubah (FR-4.3), entrypoint finish-flow host (FR-4.5), pre-load foto galeri match (FR-5.3), auto-create share saat generate (supaya QR selalu punya shareId).
 
 ## Phase A — Data Layer: Stat Baru
 

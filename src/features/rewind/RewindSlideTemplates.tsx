@@ -459,7 +459,7 @@ const StandingsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'standi
   </div>
 );
 
-const OutroSlide = ({ slide, shortLink }: { slide: Extract<RewindSlide, { type: 'outro' }>; shortLink: string }) => (
+const OutroSlide = ({ slide, shortLink, qrDataUrl }: { slide: Extract<RewindSlide, { type: 'outro' }>; shortLink: string; qrDataUrl?: string }) => (
   <div className="relative h-full w-full overflow-hidden bg-[#111111]">
     {slide.photoUrl ? (
       <img src={slide.photoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
@@ -475,11 +475,15 @@ const OutroSlide = ({ slide, shortLink }: { slide: Extract<RewindSlide, { type: 
       <h2 className="text-[19px] font-extrabold leading-[1.2] tracking-[-0.02em] text-white" style={{ textWrap: 'balance' }}>{slide.headline}</h2>
       <p className="text-[12.5px] text-white/70">Hosted with FOM Play — skor live, klasemen otomatis, gratis.</p>
       <div className="mt-1.5 flex items-center gap-3.5 rounded-[18px] border border-white/18 bg-white/10 px-4 py-3">
-        <div className="grid h-[52px] w-[52px] shrink-0 grid-cols-4 grid-rows-4 gap-[2px] rounded-[9px] bg-white p-[6px]">
-          {[1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1].map((filled, index) => (
-            <div key={index} className={filled ? 'bg-[#101010]' : undefined} />
-          ))}
-        </div>
+        {qrDataUrl ? (
+          <img src={qrDataUrl} alt="QR link match" className="h-[52px] w-[52px] shrink-0 rounded-[9px] bg-white" />
+        ) : (
+          <div className="grid h-[52px] w-[52px] shrink-0 grid-cols-4 grid-rows-4 gap-[2px] rounded-[9px] bg-white p-[6px]">
+            {[1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1].map((filled, index) => (
+              <div key={index} className={filled ? 'bg-[#101010]' : undefined} />
+            ))}
+          </div>
+        )}
         <div className="text-left">
           <p className="text-[10px] font-black uppercase leading-none tracking-[0.12em] text-white/60">Tonton match-nya</p>
           <p className="mt-1 text-[13.5px] font-bold text-white">{shortLink}</p>
@@ -494,7 +498,7 @@ const OutroSlide = ({ slide, shortLink }: { slide: Extract<RewindSlide, { type: 
 
 // ---------------------------------------------------------------------------
 
-export const RewindSlideView = ({ slide, shortLink }: { slide: RewindSlide; shortLink: string }) => {
+export const RewindSlideView = ({ slide, shortLink, qrDataUrl }: { slide: RewindSlide; shortLink: string; qrDataUrl?: string }) => {
   const body = (() => {
     switch (slide.type) {
       case 'cover': return <CoverSlide slide={slide} />;
@@ -508,7 +512,7 @@ export const RewindSlideView = ({ slide, shortLink }: { slide: RewindSlide; shor
       case 'cupu': return <CupuSlide slide={slide} />;
       case 'awards': return <AwardsSlide slide={slide} />;
       case 'standings': return <StandingsSlide slide={slide} />;
-      case 'outro': return <OutroSlide slide={slide} shortLink={shortLink} />;
+      case 'outro': return <OutroSlide slide={slide} shortLink={shortLink} qrDataUrl={qrDataUrl} />;
       default: return null;
     }
   })();

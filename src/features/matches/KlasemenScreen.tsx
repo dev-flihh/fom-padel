@@ -22,6 +22,8 @@ import {
   getAdaptiveScrimOpacity,
   type ProcessedCardPhoto,
 } from './localPhotoProcessing';
+import { trackRewindEvent } from '../../analytics';
+import { getTournamentShareStorageKey } from '../history/historyPersistence';
 import { RewindFlow, type RewindResult } from '../rewind/RewindFlow';
 import { useMatchSettingsFriends } from './useMatchSettingsFriends';
 
@@ -125,6 +127,17 @@ export const KlasemenScreen = ({
   const cardPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const [isRewindOpen, setIsRewindOpen] = useState(false);
   const [rewindResult, setRewindResult] = useState<RewindResult | null>(null);
+  const hasRemoteRewind = Boolean(tournament.rewind?.slides?.length);
+  const rewindShareId = useMemo(() => {
+    const startedAt = Number(tournament.startedAt || 0);
+    const uid = String(currentUser?.uid || '').trim();
+    if (!uid || !startedAt) return undefined;
+    try {
+      return localStorage.getItem(getTournamentShareStorageKey(uid, startedAt)) || undefined;
+    } catch {
+      return undefined;
+    }
+  }, [currentUser?.uid, tournament.startedAt]);
   const [toxicCopyConfig, setToxicCopyConfig] = useState<ToxicCopyConfig | null>(null);
   const [standingsTab, setStandingsTab] = useState<'standings' | 'toxic'>(() => (
     tournament.toxicModeEnabled ? 'toxic' : 'standings'
@@ -531,6 +544,16 @@ export const KlasemenScreen = ({
     if (!toxicModeEnabled || !isToxicTabActive || toxicStandings.isEmpty || toxicStandings.isPeacefulTie) return;
     setToxicConfettiRunId((prev) => prev + 1);
   }, [isToxicTabActive, toxicModeEnabled, toxicStandings.isEmpty, toxicStandings.isPeacefulTie]);
+
+  useEffect(() => {
+    if (!isTournamentEnded || isSharedViewer) return;
+    trackRewindEvent('rewind_entrypoint_viewed', {
+      tab: isToxicTabActive ? 'shame' : 'official',
+      state: rewindResult ? 'generated' : 'new',
+    });
+    // Fire on mount/end-state only — tab switches shouldn't re-count impressions.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTournamentEnded, isSharedViewer]);
 
   const hasCoKingHero = toxicStandings.heroPlayers.length > 1;
   const isToxicStoryMode = shareCardVariant === 'shame-card' && toxicModeEnabled;
@@ -1778,13 +1801,13 @@ export const KlasemenScreen = ({
           </div>
         </section>
 
-        {isTournamentEnded && !isSharedViewer && (
+        {isTournamentEnded && (!isSharedViewer || hasRemoteRewind) && (
           <section className="pt-3">
             <button
               type="button"
               onClick={() => setIsRewindOpen(true)}
               className="tap-target relative flex w-full items-center gap-3.5 overflow-hidden rounded-[20px] bg-[#111111] px-4 py-4 text-left shadow-[0_14px_34px_rgba(15,23,42,0.18)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100"
-              aria-label={rewindResult ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
+              aria-label={rewindResult || hasRemoteRewind ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
             >
               <span className="pointer-events-none absolute -right-8 -top-8 h-[110px] w-[110px] rounded-full bg-[rgba(230,94,20,0.25)]" style={{ filter: 'blur(24px)' }} />
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-primary text-white">
@@ -1793,7 +1816,7 @@ export const KlasemenScreen = ({
               <span className="relative min-w-0 flex-1">
                 <span className="block text-[9px] font-black uppercase leading-none tracking-[0.16em] text-primary">FOM Rewind</span>
                 <span className="mt-1 block truncate text-[14px] font-bold leading-tight text-white">
-                  {rewindResult ? 'View FOM Rewind →' : 'Match selesai. Bikin Rewind-nya →'}
+                  {rewindResult || hasRemoteRewind ? 'View FOM Rewind →' : 'Match selesai. Bikin Rewind-nya →'}
                 </span>
               </span>
             </button>
@@ -3120,6 +3143,9 @@ export const KlasemenScreen = ({
           tournament={tournament}
           sortedPlayers={sortedPlayers}
           toxicStandings={toxicStandings}
+          shareId={rewindShareId}
+          currentUserUid={currentUserUid || undefined}
+          isReadOnly={Boolean(isSharedViewer)}
           existingResult={rewindResult}
           onGenerated={setRewindResult}
           onClose={() => setIsRewindOpen(false)}

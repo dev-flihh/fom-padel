@@ -1,0 +1,22 @@
+rules_version = '2';
+
+// Storage rules. Sebelum file ini ada, console memakai deny-all penuh —
+// default di bawah mempertahankan perilaku itu; path spesifik bersifat aditif.
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default: terkunci (identik dengan rules console sebelumnya).
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // FOM Rewind slide exports (PNG hasil generate).
+    // - read publik: shared viewer membuka Rewind dari link tanpa login
+    // - write: user login, PNG saja, maks 2MB per slide
+    match /rewind/{tournamentId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 2 * 1024 * 1024
+        && request.resource.contentType == 'image/png';
+    }
+  }
+}

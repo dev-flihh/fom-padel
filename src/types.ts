@@ -53,6 +53,20 @@ export interface CourtChange {
   changedAt: number;
 }
 
+export interface TournamentRewindSlideRef {
+  type: string;
+  order: number;
+  imageUrl: string;
+}
+
+// FOM Rewind hasil generate (PRD_FOM_REWIND.md Section 9) — ikut shared
+// snapshot & history sebagai data read-only.
+export interface TournamentRewind {
+  generatedAt: number;
+  generatedBy: string;
+  slides: TournamentRewindSlideRef[];
+}
+
 export interface Tournament {
   id?: string;
   name: string;
@@ -75,6 +89,7 @@ export interface Tournament {
   durationMinutes?: number;
   venueName?: string;
   location?: string;
+  rewind?: TournamentRewind;
 }
 
 export interface TournamentHistory {
@@ -111,6 +126,7 @@ export interface TournamentHistory {
   playedAt?: any;
   statsVersion?: number;
   statsAppliedAt?: any;
+  rewind?: TournamentRewind;
 }
 
 export type RankTier = 'Rookie' | 'Amateur' | 'Challenger' | 'Elite' | 'Master' | 'Grandmaster' | 'Legend' | 'Hall of Fame';

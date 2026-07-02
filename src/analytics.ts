@@ -233,6 +233,30 @@ const readButtonDescriptor = (element: HTMLElement) => {
   return text || null;
 };
 
+// FOM Rewind events (PRD_FOM_REWIND.md Section 10). Event names arrive
+// pre-namespaced (rewind_*); params are cleaned by logAnalyticsEvent.
+export const trackRewindEvent = (
+  eventName:
+    | 'rewind_entrypoint_viewed'
+    | 'rewind_upload_opened'
+    | 'rewind_photo_added'
+    | 'rewind_generate_started'
+    | 'rewind_generate_completed'
+    | 'rewind_slide_failed'
+    | 'rewind_viewed'
+    | 'rewind_slide_viewed'
+    | 'rewind_completed'
+    | 'rewind_slide_shared'
+    | 'rewind_slide_downloaded'
+    | 'rewind_regenerated',
+  params: Record<string, unknown> = {},
+) => {
+  void logAnalyticsEvent(eventName, {
+    ...params,
+    app_surface: getAppSurface(),
+  });
+};
+
 export const resolveTrackableButton = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) return null;
 

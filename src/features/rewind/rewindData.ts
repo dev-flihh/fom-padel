@@ -11,6 +11,7 @@ import {
 import {
   createRewindCopyPicker,
   renderRewindAwardNote,
+  type RewindCopyLine,
   type RewindSlideType,
 } from './rewindCopyBank';
 
@@ -214,12 +215,14 @@ export const buildRewindData = ({
   toxicStandings,
   photos,
   shareId,
+  copyBank,
 }: {
   tournament: Tournament | TournamentHistory;
   sortedPlayers: StandingsPlayer[];
   toxicStandings: ToxicStandingsData;
   photos: RewindPhoto[];
   shareId?: string;
+  copyBank?: RewindCopyLine[] | null;
 }): RewindData => {
   const seed = String(tournament.id || tournament.startedAt || tournament.name || 'fom-rewind');
   const intensity = normalizeToxicIntensity(tournament.toxicIntensity);
@@ -309,7 +312,12 @@ export const buildRewindData = ({
   push('gap_top_bottom_gte_30', gapTopBottom >= 30);
   push('tie_exists', tieExists);
 
-  const copy = createRewindCopyPicker({ seed, conditions, intensity });
+  const copy = createRewindCopyPicker({
+    seed,
+    conditions,
+    intensity,
+    ...(copyBank ? { bank: copyBank } : {}),
+  });
 
   // -------------------------------------------------------------------------
   // Slides (mockup v2 order). Conditional slides skipped without gaps.

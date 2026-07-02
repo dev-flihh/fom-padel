@@ -1,23 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent, type TouchEvent } from 'react';
 import { toBlob as htmlToImageBlob } from 'html-to-image';
+import QRCode from 'qrcode';
 import { Download, MoreHorizontal, RefreshCw, Share2, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Tournament, TournamentHistory } from '../../types';
 import type { StandingsPlayer } from '../matches/standingsUtils';
 import type { ToxicStandingsData } from '../matches/toxicStandings';
+import { trackRewindEvent } from '../../analytics';
+import { persistRewindResult } from './rewindPersistence';
 import { processLocalCardPhoto } from '../matches/localPhotoProcessing';
+import { fetchRewindCopyBank } from '../../services/rewindCopyRemoteConfig';
+import type { RewindCopyLine } from './rewindCopyBank';
 import { buildRewindData, REWIND_SLIDE_LABELS, type RewindPhoto, type RewindSlide } from './rewindData';
 import { RewindSlideView } from './RewindSlideTemplates';
 
 // FOM Rewind flow (PRD_FOM_REWIND.md): upload → generating → viewer.
-// Phase 1: photos are LOCAL-ONLY (processed in-browser, never uploaded);
-// generated PNGs live in memory for this session. PNG persistence for shared
-// viewers is Phase 2.
+// Hybrid storage: source photos are LOCAL-ONLY (processed in-browser, never
+// uploaded); the rendered PNG slides are uploaded best-effort so shared
+// viewers & History can replay (rewindPersistence).
 
 export type GeneratedRewindSlide = {
   type: RewindSlide['type'];
   order: number;
-  blob: Blob;
+  // In-session generates carry the blob; slides replayed from a persisted
+  // Rewind (shared viewer / History) only carry the remote URL.
+  blob?: Blob;
   url: string;
 };
 
@@ -43,6 +50,8 @@ export const RewindFlow = ({
   sortedPlayers,
   toxicStandings,
   shareId,
+  currentUserUid,
+  isReadOnly,
   existingResult,
   onGenerated,
   onClose,
@@ -51,15 +60,35 @@ export const RewindFlow = ({
   sortedPlayers: StandingsPlayer[];
   toxicStandings: ToxicStandingsData;
   shareId?: string;
+  currentUserUid?: string;
+  // Shared viewer: replay persisted slides only — no upload/generate/regenerate.
+  isReadOnly?: boolean;
   existingResult: RewindResult | null;
   onGenerated: (result: RewindResult) => void;
   onClose: () => void;
 }) => {
-  const [step, setStep] = useState<'upload' | 'generating' | 'viewer' | 'error'>(existingResult ? 'viewer' : 'upload');
+  // A persisted Rewind (shared snapshot / history doc) replays from imageUrls.
+  const remoteResult = useMemo<RewindResult | null>(() => {
+    const remote = tournament.rewind;
+    if (!remote || !Array.isArray(remote.slides) || remote.slides.length === 0) return null;
+    return {
+      generatedAt: Number(remote.generatedAt || 0),
+      slides: [...remote.slides]
+        .sort((a, b) => a.order - b.order)
+        .map((slide) => ({
+          type: slide.type as RewindSlide['type'],
+          order: slide.order,
+          url: slide.imageUrl,
+        })),
+    };
+  }, [tournament.rewind]);
+
+  const initialResult = existingResult || remoteResult;
+  const [step, setStep] = useState<'upload' | 'generating' | 'viewer' | 'error'>(initialResult ? 'viewer' : 'upload');
   const [photos, setPhotos] = useState<RewindPhoto[]>([]);
   const [isProcessingPhotos, setIsProcessingPhotos] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [result, setResult] = useState<RewindResult | null>(existingResult);
+  const [result, setResult] = useState<RewindResult | null>(initialResult);
   const [renderSlide, setRenderSlide] = useState<RewindSlide | null>(null);
   const [slideIndex, setSlideIndex] = useState(() => {
     const stored = Number(localStorage.getItem(`fom_rewind_pos_${tournament.id || ''}`) || 0);
@@ -72,13 +101,40 @@ export const RewindFlow = ({
   const touchStartXRef = useRef<number | null>(null);
   const generationRef = useRef(0);
 
+  const [copyBank, setCopyBank] = useState<RewindCopyLine[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchRewindCopyBank().then((bank) => { if (!cancelled && bank) setCopyBank(bank); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (step === 'upload') trackRewindEvent('rewind_upload_opened', { source: 'banner' });
+  }, [step]);
+
   const rewindData = useMemo(() => buildRewindData({
     tournament,
     sortedPlayers,
     toxicStandings,
     photos,
     shareId,
-  }), [tournament, sortedPlayers, toxicStandings, photos, shareId]);
+    copyBank,
+  }), [tournament, sortedPlayers, toxicStandings, photos, shareId, copyBank]);
+
+  // Real scannable QR for the outro slide, rendered as a data URL so the
+  // html-to-image exporter can inline it like any other image.
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    QRCode.toDataURL(rewindData.slides.find((slide) => slide.type === 'outro')?.shareUrl || 'https://fomplay.asia/app', {
+      margin: 1,
+      width: 160,
+      color: { dark: '#101010', light: '#FFFFFF' },
+    })
+      .then((url) => { if (!cancelled) setQrDataUrl(url); })
+      .catch((err) => console.warn('Rewind QR generation failed:', err));
+    return () => { cancelled = true; };
+  }, [rewindData]);
 
   useEffect(() => () => {
     // Object URLs for generated slides are owned by the parent via onGenerated;
@@ -93,6 +149,18 @@ export const RewindFlow = ({
     if (step !== 'viewer' || !tournament.id) return;
     localStorage.setItem(`fom_rewind_pos_${tournament.id}`, String(safeIndex));
   }, [safeIndex, step, tournament.id]);
+
+  useEffect(() => {
+    if (step !== 'viewer' || slides.length === 0) return;
+    trackRewindEvent('rewind_viewed', { entry_source: 'banner', slide_count: slides.length });
+    // slides identity changes on regenerate, so this refires per result set.
+  }, [step, slides.length]);
+
+  useEffect(() => {
+    if (step !== 'viewer' || !currentSlide) return;
+    trackRewindEvent('rewind_slide_viewed', { slide_type: currentSlide.type, index: safeIndex });
+    if (safeIndex === slides.length - 1) trackRewindEvent('rewind_completed');
+  }, [step, safeIndex, currentSlide, slides.length]);
 
   // -------------------------------------------------------------------------
   // Upload step
@@ -116,6 +184,7 @@ export const RewindFlow = ({
       setPhotos((prev) => {
         const next = [...prev, ...processed];
         if (next.length > 0 && !next.some((photo) => photo.isCover)) next[0] = { ...next[0], isCover: true };
+        trackRewindEvent('rewind_photo_added', { count: processed.length, total_photos: next.length });
         return next;
       });
     } finally {
@@ -142,6 +211,11 @@ export const RewindFlow = ({
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     const slidePayloads = rewindData.slides;
+    const generateStartedAt = performance.now();
+    trackRewindEvent('rewind_generate_started', {
+      photo_count: photos.length,
+      toxic_on: Boolean(tournament.toxicModeEnabled),
+    });
     setProgress({ current: 0, total: slidePayloads.length });
     setStep('generating');
 
@@ -186,6 +260,10 @@ export const RewindFlow = ({
       } catch (err) {
         // FR-6.4: one failed slide is skipped, the rest continue.
         console.error(`Rewind slide failed (${slidePayloads[index].type}):`, err);
+        trackRewindEvent('rewind_slide_failed', {
+          slide_type: slidePayloads[index].type,
+          reason: String((err as Error)?.message || err).slice(0, 100),
+        });
       }
     }
     setRenderSlide(null);
@@ -194,11 +272,27 @@ export const RewindFlow = ({
       setStep('error');
       return;
     }
+    trackRewindEvent('rewind_generate_completed', {
+      slide_count: generated.length,
+      duration_ms: Math.round(performance.now() - generateStartedAt),
+    });
     const nextResult: RewindResult = { generatedAt: Date.now(), slides: generated };
     setResult(nextResult);
     onGenerated(nextResult);
     setSlideIndex(0);
     setStep('viewer');
+
+    // Phase 2 hybrid: upload rendered PNGs (bukan foto asli) supaya shared
+    // viewer & History bisa replay. Best-effort — tidak memblok viewer.
+    if (currentUserUid && !isReadOnly && tournament.id) {
+      void persistRewindResult({
+        tournamentId: String(tournament.id),
+        currentUid: currentUserUid,
+        shareId,
+        slides: generated,
+        isHistoryDoc: 'userId' in tournament,
+      });
+    }
   };
 
   // -------------------------------------------------------------------------
@@ -236,40 +330,73 @@ export const RewindFlow = ({
     `${fileSafe(tournament.name || 'fom-play')}-rewind-${index + 1}-${slide.type}.png`
   );
 
-  const downloadSlide = (slide: GeneratedRewindSlide, index: number) => {
+  const getSlideBlob = async (slide: GeneratedRewindSlide): Promise<Blob> => {
+    if (slide.blob) return slide.blob;
+    const response = await fetch(slide.url);
+    if (!response.ok) throw new Error(`Slide fetch failed (${response.status})`);
+    return response.blob();
+  };
+
+  const downloadSlide = async (slide: GeneratedRewindSlide, index: number, tracked = true) => {
+    let href = slide.url;
+    let revoke: string | null = null;
+    if (!slide.blob) {
+      // Remote URLs open in-tab instead of downloading; pull the blob first.
+      try {
+        const blob = await getSlideBlob(slide);
+        href = URL.createObjectURL(blob);
+        revoke = href;
+      } catch (err) {
+        console.warn('Rewind slide download fetch failed:', err);
+      }
+    }
     const link = document.createElement('a');
-    link.href = slide.url;
+    link.href = href;
     link.download = buildFileName(slide, index);
     document.body.appendChild(link);
     link.click();
     link.remove();
+    if (revoke) window.setTimeout(() => URL.revokeObjectURL(revoke), 1500);
+    if (tracked) trackRewindEvent('rewind_slide_downloaded', { slide_type: slide.type, method: 'download' });
   };
 
   const shareSlide = async (slide: GeneratedRewindSlide, index: number) => {
-    const file = new File([slide.blob], buildFileName(slide, index), { type: 'image/png' });
+    let blob: Blob;
+    try {
+      blob = await getSlideBlob(slide);
+    } catch (err) {
+      console.warn('Rewind slide share fetch failed:', err);
+      setShareFeedback('Gagal memuat slide. Coba lagi.');
+      window.setTimeout(() => setShareFeedback(''), 2600);
+      return;
+    }
+    const file = new File([blob], buildFileName(slide, index), { type: 'image/png' });
     const payload = { files: [file], title: `FOM Rewind — ${tournament.name || 'FOM Play'}` };
     try {
       if (navigator.share && (!navigator.canShare || navigator.canShare(payload))) {
         await navigator.share(payload);
+        trackRewindEvent('rewind_slide_shared', { slide_type: slide.type, method: 'share' });
         return;
       }
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return;
     }
-    downloadSlide(slide, index);
+    await downloadSlide(slide, index, false);
+    trackRewindEvent('rewind_slide_shared', { slide_type: slide.type, method: 'download' });
     setShareFeedback('Slide diunduh — share manual dari galeri.');
     window.setTimeout(() => setShareFeedback(''), 2600);
   };
 
   const downloadAll = () => {
     slides.forEach((slide, index) => {
-      window.setTimeout(() => downloadSlide(slide, index), index * 140);
+      window.setTimeout(() => { void downloadSlide(slide, index); }, index * 140);
     });
     setIsMenuOpen(false);
   };
 
   const handleRegenerate = () => {
     setIsMenuOpen(false);
+    trackRewindEvent('rewind_regenerated');
     setStep('upload');
   };
 
@@ -286,7 +413,7 @@ export const RewindFlow = ({
         style={{ width: EXPORT_VIEW.width, height: EXPORT_VIEW.height }}
       >
         <div ref={exportRef} className="relative overflow-hidden" style={{ width: EXPORT_VIEW.width, height: EXPORT_VIEW.height }}>
-          {renderSlide && <RewindSlideView slide={renderSlide} shortLink={rewindData.shortLink} />}
+          {renderSlide && <RewindSlideView slide={renderSlide} shortLink={rewindData.shortLink} qrDataUrl={qrDataUrl} />}
         </div>
       </div>
 
@@ -442,9 +569,11 @@ export const RewindFlow = ({
                   <button type="button" onClick={downloadAll} className="tap-target flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-semibold text-white active:bg-white/[0.06]">
                     <Download size={15} /> Download semua
                   </button>
-                  <button type="button" onClick={handleRegenerate} className="tap-target flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-semibold text-white active:bg-white/[0.06]">
-                    <RefreshCw size={15} /> Regenerate
-                  </button>
+                  {!isReadOnly && (
+                    <button type="button" onClick={handleRegenerate} className="tap-target flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-semibold text-white active:bg-white/[0.06]">
+                      <RefreshCw size={15} /> Regenerate
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -488,7 +617,7 @@ export const RewindFlow = ({
             </button>
             <button
               type="button"
-              onClick={() => currentSlide && downloadSlide(currentSlide, safeIndex)}
+              onClick={() => currentSlide && void downloadSlide(currentSlide, safeIndex)}
               className="tap-target flex flex-1 items-center justify-center gap-2 rounded-full border border-white/25 px-4 py-3.5 text-[13.5px] font-bold text-white"
             >
               <Download size={15} /> Download

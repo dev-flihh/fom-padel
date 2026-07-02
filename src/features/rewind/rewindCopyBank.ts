@@ -258,6 +258,64 @@ export const createRewindCopyPicker = ({
   return { pick };
 };
 
+// ---------------------------------------------------------------------------
+// Remote-config parsing (COPY_BANK Section 15 point 6: bank ships as JSON so
+// content team can add variants without an engine deploy). Invalid entries are
+// dropped; an invalid document fails closed to the default bank.
+// ---------------------------------------------------------------------------
+
+const REWIND_SLIDE_TYPES: RewindSlideType[] = [
+  'cover', 'numbers', 'podium', 'champion', 'dream-team', 'match-of-the-night',
+  'photos', 'podium-cupu', 'cupu', 'awards', 'standings', 'outro',
+];
+const INTENSITIES: ToxicIntensity[] = ['mild', 'medium', 'savage'];
+
+const sanitizeLine = (raw: unknown): RewindCopyLine | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const input = raw as Record<string, unknown>;
+  const id = typeof input.id === 'string' ? input.id.trim() : '';
+  const slide = input.slide as RewindSlideType;
+  const slot = typeof input.slot === 'string' ? input.slot.trim() : '';
+  const template = typeof input.template === 'string' ? input.template.trim() : '';
+  if (!id || !slot || !template || !REWIND_SLIDE_TYPES.includes(slide)) return null;
+  const intensity = INTENSITIES.includes(input.intensity as ToxicIntensity)
+    ? (input.intensity as ToxicIntensity)
+    : null;
+  const conditions = Array.isArray(input.conditions)
+    ? input.conditions.filter((condition): condition is string => typeof condition === 'string' && condition.trim().length > 0)
+    : [];
+  const priority = Number.isFinite(Number(input.priority)) ? Number(input.priority) : 1;
+  return line(id, slide, slot, conditions, template, priority, intensity);
+};
+
+/**
+ * Parse a remote copy-bank JSON document. Shape:
+ * `{ "version": 1, "lines": [{id, slide, slot, template, conditions?, intensity?, priority?}] }`
+ * Lines with an existing id REPLACE the default line; new ids are appended.
+ * Returns null (→ default bank) when the document is invalid or empty.
+ */
+export const parseRewindCopyBankJson = (value: unknown): RewindCopyLine[] | null => {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { lines?: unknown[] };
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.lines)) return null;
+    const overrides = parsed.lines
+      .map(sanitizeLine)
+      .filter((candidate): candidate is RewindCopyLine => Boolean(candidate));
+    if (overrides.length === 0) return null;
+    const overrideById = new Map(overrides.map((candidate) => [candidate.id, candidate]));
+    const merged = DEFAULT_REWIND_COPY_BANK.map((existing) => {
+      const override = overrideById.get(existing.id);
+      if (override) overrideById.delete(existing.id);
+      return override || existing;
+    });
+    return [...merged, ...overrideById.values()];
+  } catch {
+    return null;
+  }
+};
+
 // COPY_BANK Section 12 — Toxic Award notes per intensity, keyed by award id.
 // Falls back to the award's existing data-aware note when no template applies.
 export const REWIND_AWARD_NOTES: Record<string, Partial<Record<ToxicIntensity, string>>> = {
