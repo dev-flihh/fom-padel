@@ -37,7 +37,7 @@ test.describe('FOM Rewind Flow', () => {
     const label = await page.getByText(/1 \/ \d+ · Cover/).innerText();
     const total = Number(label.match(/1 \/ (\d+)/)?.[1] || 0);
     expect(total).toBeGreaterThanOrEqual(8);
-    expect(total).toBeLessThanOrEqual(12);
+    expect(total).toBeLessThanOrEqual(13);
 
     // Close viewer → banner switches to "View FOM Rewind" (in-session state)
     await page.getByRole('button', { name: 'Tutup Rewind' }).click();

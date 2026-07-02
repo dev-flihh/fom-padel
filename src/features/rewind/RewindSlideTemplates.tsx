@@ -15,7 +15,6 @@ const LOGO_ON_LIGHT = '/assets/fom-play-logo-light-cropped.png';
 const formatDiff = (value: number) => (value > 0 ? `+${value}` : String(value));
 
 const diffColorDark = (value: number) => (value > 0 ? 'text-[#1FB65A]' : value < 0 ? 'text-[#FF6B66]' : 'text-white/60');
-const diffColorLight = (value: number) => (value > 0 ? 'text-[#1E8E3E]' : value < 0 ? 'text-[#E5484D]' : 'text-ios-gray');
 
 const Avatar = ({ player, size, className, gold }: { player: RewindPlayerRef; size: number; className?: string; gold?: boolean }) => (
   <div
@@ -415,48 +414,108 @@ const AwardsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'awards' }
   </div>
 );
 
-const StandingsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'standings' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-white p-7">
-    <p className="text-[12px] font-black uppercase leading-none tracking-[0.24em] text-[#E65E14]">Final Standings</p>
-    <h2 className="mt-2.5 text-[23px] font-extrabold leading-[1.15] tracking-[-0.02em] text-[#101010]">{slide.headline}</h2>
-    {slide.metaLabel && <p className="mt-1.5 text-[11.5px] font-semibold text-ios-gray/75">{slide.metaLabel}</p>}
-    <div className="flex min-h-0 flex-1 flex-col justify-center">
-      {slide.rows.map((row, index) => {
-        const isLastRowHighlight = slide.hasGap && index === slide.rows.length - 1;
-        return (
-          <Fragment key={row.id}>
-            {isLastRowHighlight && (
-              <p className="py-2 text-center text-[18px] font-extrabold text-[#C5C5CA]">⋯</p>
-            )}
-            <div
-              className={cn(
-                'flex items-center gap-3.5 py-4',
-                !isLastRowHighlight && index < slide.rows.length - 1 && 'border-b border-black/[0.08]',
-                isLastRowHighlight && '-mx-2 rounded-[16px] bg-[linear-gradient(90deg,rgba(232,196,90,0.12),transparent)] px-2',
-              )}
-            >
-              <span className={cn('w-[44px] text-[28px] font-extrabold tabular-nums', row.rank === 1 ? 'text-[#E65E14]' : isLastRowHighlight ? 'text-[#B7861F]' : 'text-[#C5C5CA]')}>
-                {String(row.rank).padStart(2, '0')}
-              </span>
-              <Avatar player={row} size={44} gold={isLastRowHighlight} className={cn(row.rank !== 1 && !isLastRowHighlight && 'bg-[#8E8E93]', row.rank === 1 && 'bg-[#101010]')} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[16.5px] font-extrabold text-[#101010]">{row.name}</p>
-                {row.badge && (
-                  <p className={cn('mt-0.5 text-[10px] font-black uppercase tracking-[0.1em]', row.rank === 1 ? 'text-[#E65E14]' : 'text-[#B7861F]')}>
-                    {row.badge}
-                  </p>
-                )}
-              </div>
-              <div className="text-right">
-                <p className="text-[20px] font-extrabold leading-none tabular-nums text-[#101010]">{row.pts}</p>
-                <p className={cn('mt-0.5 text-[11.5px] font-bold tabular-nums', diffColorLight(row.diff))}>{formatDiff(row.diff)}</p>
-              </div>
-            </div>
-          </Fragment>
-        );
-      })}
-    </div>
+const MetaStrip = ({ cells, gold }: { cells: Array<{ label: string; value: string }>; gold?: boolean }) => (
+  <div className={cn('relative mt-3 flex border-y py-2.5', gold ? 'border-[#E8C45A]/20' : 'border-black/10')}>
+    {cells.map((cell, index) => (
+      <div key={cell.label} className={cn('min-w-0 flex-1', index > 0 && cn('border-l pl-2.5', gold ? 'border-[#E8C45A]/20' : 'border-black/10'))}>
+        <p className={cn('text-[6.5px] font-black uppercase tracking-[0.14em]', gold ? 'text-[#E8C45A]/50' : 'text-ios-gray')}>{cell.label}</p>
+        <p className={cn('mt-0.5 truncate text-[9.5px] font-bold', gold ? 'text-[#F3E3B5]' : 'text-[#101010]')}>{cell.value}</p>
+      </div>
+    ))}
   </div>
+);
+
+// Shared full-standings row (official & toxic share the same dense layout;
+// only the palette differs). Rows distribute with justify-between so 4–14
+// players fit one 9:16 slide.
+const FullStandingsSlide = ({
+  slide,
+  gold,
+  eyebrow,
+  headerTint,
+}: {
+  slide: Extract<RewindSlide, { type: 'standings' | 'standings-toxic' }>;
+  gold?: boolean;
+  eyebrow: string;
+  headerTint: string;
+}) => {
+  const dense = slide.rows.length > 12;
+  const nameSize = dense ? 'text-[10.5px]' : 'text-[11.5px]';
+  return (
+    <div
+      className={cn(
+        'relative flex h-full w-full flex-col overflow-hidden px-6 pb-5 pt-6',
+        gold ? 'bg-[linear-gradient(180deg,#16110a_0%,#111111_45%)]' : 'bg-white',
+      )}
+    >
+      {gold && (
+        <>
+          <div className="pointer-events-none absolute -right-10 -top-8 h-[170px] w-[170px] rounded-full bg-[rgba(183,134,31,0.22)]" style={{ filter: 'blur(44px)' }} />
+          <div className="pointer-events-none absolute left-[12%] top-[9%] h-[9px] w-[5px] rotate-[24deg] rounded-[2px] bg-[#E8C45A]" />
+          <div className="pointer-events-none absolute right-[20%] top-[6%] h-[8px] w-[4px] -rotate-[30deg] rounded-[2px] bg-[#B7861F]" />
+        </>
+      )}
+      <div className="relative flex items-center justify-between">
+        <p className={cn('text-[10px] font-black uppercase leading-none tracking-[0.22em]', headerTint)}>{eyebrow}</p>
+        <span className={cn('rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-[0.1em]', gold ? 'bg-[linear-gradient(135deg,#E8C45A,#B7861F)] text-[#16110a]' : 'bg-[#101010] text-white')}>Final</span>
+      </div>
+      <h2 className={cn('relative mt-2 text-[19px] font-extrabold leading-[1.14] tracking-[-0.02em]', gold ? 'text-[#F3E3B5]' : 'text-[#101010]')} style={{ textWrap: 'balance' }}>
+        {slide.headline}
+      </h2>
+      <MetaStrip cells={slide.meta} gold={gold} />
+      <div className={cn('relative mt-2 flex items-center gap-2 pb-1 text-[7px] font-black uppercase tracking-[0.1em]', gold ? 'text-[#E8C45A]/45' : 'text-[#C5C5CA]')}>
+        <span className="w-[18px]" />
+        <span className="flex-1">Player</span>
+        <span className="w-[20px] text-center">W</span>
+        <span className="w-[20px] text-center">L</span>
+        <span className="w-[20px] text-center">D</span>
+        <span className="w-[30px] text-right">PTS</span>
+      </div>
+      <div className="relative flex min-h-0 flex-1 flex-col justify-between">
+        {slide.rows.map((row) => (
+          <div
+            key={row.id}
+            className={cn(
+              'flex items-center gap-2',
+              row.muted && 'opacity-55',
+              row.highlight
+                ? gold
+                  ? '-mx-1.5 rounded-[10px] border border-[#E8C45A]/25 bg-[linear-gradient(90deg,rgba(232,196,90,0.16),transparent)] px-1.5 py-1'
+                  : '-mx-1.5 rounded-[10px] bg-[linear-gradient(90deg,rgba(230,94,20,0.1),transparent)] px-1.5 py-1'
+                : 'py-1',
+            )}
+          >
+            <span className={cn('w-[18px] text-[12px] font-extrabold tabular-nums', row.highlight ? (gold ? 'text-[#E8C45A]' : 'text-[#E65E14]') : gold ? 'text-[#E8C45A]/40' : 'text-[#C5C5CA]')}>
+              {String(row.rank).padStart(2, '0')}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className={cn('truncate font-bold', nameSize, row.highlight ? 'font-extrabold' : '', gold ? 'text-[#F3E3B5]' : 'text-[#101010]')}>
+                {row.name}{row.isChampion && !gold ? ' 👑' : ''}
+              </p>
+              {row.subLabel && (
+                <p className={cn('truncate text-[6.5px] font-black uppercase tracking-[0.1em]', gold ? 'text-[#E8C45A]' : 'text-[#E65E14]')}>{row.subLabel}</p>
+              )}
+            </div>
+            <span className={cn('w-[20px] text-center text-[10px]', gold ? 'font-semibold text-[#F3E3B5]/50' : 'font-bold text-[#1E8E3E]')}>{row.w}</span>
+            <span className={cn('w-[20px] text-center text-[10px] font-bold', gold ? 'text-[#E5484D]' : 'text-ios-gray')}>{row.l}</span>
+            <span className={cn('w-[20px] text-center text-[10px] font-semibold', gold ? 'text-[#F3E3B5]/50' : 'text-ios-gray')}>{row.d}</span>
+            <span className={cn('w-[30px] text-right text-[12px] font-extrabold tabular-nums', row.highlight ? (gold ? 'text-[#E8C45A]' : 'text-[#E65E14]') : gold ? 'text-[#F3E3B5]' : 'text-[#101010]')}>{row.pts}</span>
+          </div>
+        ))}
+      </div>
+      {gold && (
+        <p className="relative pt-2 text-center text-[7.5px] text-white/35">All roasts are about this match only. Jangan baper, ya.</p>
+      )}
+    </div>
+  );
+};
+
+const StandingsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'standings' }> }) => (
+  <FullStandingsSlide slide={slide} eyebrow="Full Standings" headerTint="text-[#E65E14]" />
+);
+
+const ToxicStandingsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'standings-toxic' }> }) => (
+  <FullStandingsSlide slide={slide} gold eyebrow="Hall of Shame · Full List" headerTint="text-[#E8C45A]" />
 );
 
 const OutroSlide = ({ slide, shortLink, qrDataUrl }: { slide: Extract<RewindSlide, { type: 'outro' }>; shortLink: string; qrDataUrl?: string }) => (
@@ -512,6 +571,7 @@ export const RewindSlideView = ({ slide, shortLink, qrDataUrl }: { slide: Rewind
       case 'cupu': return <CupuSlide slide={slide} />;
       case 'awards': return <AwardsSlide slide={slide} />;
       case 'standings': return <StandingsSlide slide={slide} />;
+      case 'standings-toxic': return <ToxicStandingsSlide slide={slide} />;
       case 'outro': return <OutroSlide slide={slide} shortLink={shortLink} qrDataUrl={qrDataUrl} />;
       default: return null;
     }

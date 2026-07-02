@@ -33,6 +33,24 @@ export type RewindPlayerRef = {
   initials: string;
 };
 
+export type RewindMetaCell = { label: string; value: string };
+
+// Row for the full standings slides (official & toxic). No avatars — matches
+// the mockup's dense rank/name/W-L-D/PTS list.
+export type FullStandingRow = {
+  id: string;
+  name: string;
+  rank: number;
+  w: number;
+  l: number;
+  d: number;
+  pts: number;
+  isChampion: boolean;
+  subLabel?: string;
+  highlight?: boolean;
+  muted?: boolean;
+};
+
 export type RewindSlide =
   | { type: 'cover'; matchName: string; dateLabel: string; venue: string; city: string; format: string; playerCount: number; durationLabel: string; subline: string; photoUrl?: string }
   | { type: 'numbers'; headline: string; stats: Array<{ key: string; label: string; value: string; kicker?: string; accent?: boolean; wide?: boolean }> }
@@ -44,7 +62,8 @@ export type RewindSlide =
   | { type: 'podium-cupu'; headline: string; subline: string; players: Array<RewindPlayerRef & { rank: number; pts: number; diff: number }> }
   | { type: 'cupu'; players: RewindPlayerRef[]; title: string; rankLabel: string; record: string; diff: number; pts: number; quote: string }
   | { type: 'awards'; headline: string; awards: Array<{ id: string; label: string; emoji?: string; playerNames: string; players: RewindPlayerRef[]; note: string }> }
-  | { type: 'standings'; headline: string; metaLabel: string; rows: Array<RewindPlayerRef & { rank: number; pts: number; diff: number; badge?: string }>; hasGap: boolean }
+  | { type: 'standings'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[] }
+  | { type: 'standings-toxic'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[] }
   | { type: 'outro'; headline: string; photoUrl?: string; shareUrl: string };
 
 export type RewindData = {
@@ -66,6 +85,7 @@ export const REWIND_SLIDE_LABELS: Record<RewindSlideType, string> = {
   cupu: "Cupu D'Or",
   awards: 'Toxic Awards',
   standings: 'Final Standings',
+  'standings-toxic': 'Hall of Shame',
   outro: 'Outro',
 };
 
@@ -547,36 +567,72 @@ export const buildRewindData = ({
     }
   }
 
-  // 11 — Final Standings (top 3 + bottom 1; ≤4 pemain tampil semua)
-  const showAllRows = sortedPlayers.length <= 4;
-  const standingRows = (showAllRows ? sortedPlayers : [...sortedPlayers.slice(0, 3), lastPlayer])
-    .filter((player): player is StandingsPlayer => Boolean(player))
-    .map((player) => {
-      const rank = rankById.get(player.id) || 0;
-      return {
-        ...toPlayerRef(player),
-        rank,
-        pts: player.totalPoints,
-        diff: player.pointsDiff,
-        badge: rank === 1
-          ? 'CHAMPION 👑'
-          : toxicOn && kingRow && player.id === kingRow.id
-            ? 'KING OF CUPU 👑'
-            : undefined,
-      };
-    });
+  // 11 — Full Official Standings (semua pemain — mockup T1)
+  const shortDateLabel = startedAt > 0
+    ? matchDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+    : dateLabel;
   slides.push({
     type: 'standings',
     headline: copy.pick('standings', 'headline', {
+      rounds: aggregate.roundCount,
+      totalPoints: aggregate.totalPoints,
       lastRank: sortedPlayers.length,
       gap: gapTopBottom,
     }),
-    metaLabel: [tournament.name, tournament.venueName, dateLabel].filter(Boolean).join(' · '),
-    rows: standingRows,
-    hasGap: !showAllRows,
+    meta: [
+      { label: 'Venue', value: tournament.venueName || '—' },
+      { label: 'Date', value: shortDateLabel || '—' },
+      { label: 'Format', value: tournament.format || '—' },
+      { label: 'Time', value: durationLabel || '—' },
+    ],
+    rows: sortedPlayers.map((player, index) => ({
+      id: player.id,
+      name: player.name,
+      rank: index + 1,
+      w: player.w,
+      l: player.l,
+      d: player.d,
+      pts: player.totalPoints,
+      isChampion: index === 0,
+      highlight: index === 0,
+    })),
   });
 
-  // 12 — Outro
+  // 12 — Full Toxic Standings (reverse-sorted, toxic on saja — mockup T2)
+  if (toxicOn && toxicStandings.rows.length > 0) {
+    slides.push({
+      type: 'standings-toxic',
+      headline: copy.pick('standings-toxic', 'headline'),
+      meta: [
+        { label: 'Venue', value: tournament.venueName || '—' },
+        { label: 'Date', value: shortDateLabel || '—' },
+        { label: 'Sorting', value: 'L > −DIFF' },
+        { label: 'Korban', value: String(sortedPlayers.length) },
+      ],
+      rows: toxicStandings.rows.map((row, index) => {
+        const isKing = index === 0;
+        return {
+          id: row.id,
+          name: row.name,
+          rank: index + 1,
+          w: row.w,
+          l: row.l,
+          d: row.d,
+          pts: row.totalPoints,
+          isChampion: row.isChampion,
+          highlight: isKing,
+          muted: row.isChampion && !isKing,
+          subLabel: isKing
+            ? (isCoKing ? 'CO-KING OF CUPU' : 'KING OF CUPU · TANPA BANDING')
+            : row.isChampion
+              ? 'SWEATY TRYHARD 🏆 · DIABAIKAN'
+              : undefined,
+        };
+      }),
+    });
+  }
+
+  // 13 — Outro
   slides.push({
     type: 'outro',
     headline: copy.pick('outro', 'headline'),

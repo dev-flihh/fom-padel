@@ -98,6 +98,14 @@ Implemented & deployed:
 
 **RESOLVED 2026-07-02 sore**: akar masalah ternyata **Firebase Storage belum pernah di-setup** di project (tidak ada bucket default) — sekaligus menjelaskan kenapa upload avatar Storage selalu gagal → fallback data-URL. User membuat bucket via console Get Started (`gen-lang-client-0996764238.firebasestorage.app`, Blaze trial), lalu `storage.rules` dideploy dan diverifikasi perilaku: `rewind/**` read → 404 (allowed, objek belum ada), path lain → 403 (deny-all utuh). Persist PNG Rewind kini aktif end-to-end di production. Config app sudah menunjuk bucket yang sama sejak awal — tanpa perubahan kode.
 
+### 2026-07-02 (revisi 3) — Full Standings slides (mockup T1 & T2)
+
+- Slide `standings` diubah dari ringkasan (top-3 + bottom-1) menjadi **full official standings** (semua pemain, mockup T1): eyebrow FULL STANDINGS + chip FINAL, headline data-driven (`{rounds} round. {totalPoints} poin. Nol alasan.` + varian kondisional), meta strip Venue/Date/Format/Time, kolom W/L/D/PTS, champion di-highlight oranye + 👑.
+- Slide baru `standings-toxic` (mockup T2, toxic on saja): full list reverse-sorted (King of Cupu #1 highlight gold + "KING OF CUPU · TANPA BANDING", L merah, champion di-mute dengan "SWEATY TRYHARD 🏆 · DIABAIKAN"), meta Venue/Date/Sorting(L>−DIFF)/Korban, disclaimer. Ditempatkan tepat setelah `standings`, sebelum outro.
+- Komponen `FullStandingsSlide` dipakai bersama (official & toxic beda palette), rows `justify-between` + font mengecil saat >12 pemain.
+- Copy bank: slot `standings-toxic` headline (per intensity) + headline data-driven untuk `standings`. Slide type baru terdaftar di RewindSlideType + REWIND_SLIDE_TYPES (remote parser).
+- Max slide kini 13 (toxic + foto). Verifikasi visual T1 & T2 sesuai mockup; 56 e2e pass, build bersih.
+
 Phase berikutnya (belum): dot indicator foto berubah (FR-4.3), entrypoint finish-flow host (FR-4.5), pre-load foto galeri match (FR-5.3), auto-create share saat generate (supaya QR selalu punya shareId).
 
 ## Phase A — Data Layer: Stat Baru

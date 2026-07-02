@@ -18,6 +18,7 @@ export type RewindSlideType =
   | 'cupu'
   | 'awards'
   | 'standings'
+  | 'standings-toxic'
   | 'outro';
 
 export type RewindCopyLine = {
@@ -168,12 +169,18 @@ export const DEFAULT_REWIND_COPY_BANK: RewindCopyLine[] = [
   line('cupu_coking_medium', 'cupu', 'quote', ['co_king'], 'Dua raja cupu. Sah, tanpa sidang ulang.', 3, 'medium'),
   line('cupu_coking_savage', 'cupu', 'quote', ['co_king'], 'Saking cupunya harus patungan gelar.', 3, 'savage'),
 
-  // 13. Final Standings — headline
+  // 13. Final Standings (full official list) — headline
+  line('standings_head_data_01', 'standings', 'headline', [], '{rounds} round. {totalPoints} poin. Nol alasan.', 2),
   line('standings_head_01', 'standings', 'headline', [], 'Screenshot. Kirim ke grup. Tunggu ribut.'),
   line('standings_head_02', 'standings', 'headline', [], 'Hitam di atas putih. Nggak bisa ngeles.'),
-  line('standings_head_toxic_01', 'standings', 'headline', ['toxic_on'], 'Dari takhta sampai... yaudah lah.', 2),
   line('standings_head_gap_01', 'standings', 'headline', ['gap_top_bottom_gte_30'], 'Jarak 01 ke {lastRank}: {gap} poin. Jauh banget perjalanannya.', 3),
-  line('standings_head_tie_01', 'standings', 'headline', ['tie_exists'], 'Ada yang seri. Silakan ribut soal DIFF.', 2),
+  line('standings_head_tie_01', 'standings', 'headline', ['tie_exists'], 'Ada yang seri. Silakan ribut soal DIFF.', 3),
+
+  // Full toxic standings (reverse-sorted) — headline
+  line('standings_toxic_head_mild', 'standings-toxic', 'headline', [], 'Diurutkan dari yang paling butuh semangat.', 1, 'mild'),
+  line('standings_toxic_head_medium', 'standings-toxic', 'headline', [], 'Diurutkan dari yang paling butuh pelukan.', 1, 'medium'),
+  line('standings_toxic_head_savage_01', 'standings-toxic', 'headline', [], 'Diurutkan dari yang paling butuh pelukan.', 1, 'savage'),
+  line('standings_toxic_head_savage_02', 'standings-toxic', 'headline', [], 'Dari takhta cupu sampai... yaudah lah.', 1, 'savage'),
 
   // 14. Outro — headline
   line('outro_head_01', 'outro', 'headline', [], 'Yang menang jangan songong. Yang kalah, revans dibuka.'),
@@ -266,7 +273,7 @@ export const createRewindCopyPicker = ({
 
 const REWIND_SLIDE_TYPES: RewindSlideType[] = [
   'cover', 'numbers', 'podium', 'champion', 'dream-team', 'match-of-the-night',
-  'photos', 'podium-cupu', 'cupu', 'awards', 'standings', 'outro',
+  'photos', 'podium-cupu', 'cupu', 'awards', 'standings', 'standings-toxic', 'outro',
 ];
 const INTENSITIES: ToxicIntensity[] = ['mild', 'medium', 'savage'];
 
