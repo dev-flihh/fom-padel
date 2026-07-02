@@ -45,7 +45,10 @@ export type ToxicStandingRow = StandingsPlayer & {
   isChampion: boolean;
 };
 
-export type ToxicHeroPlayer = Pick<StandingsPlayer, 'id' | 'name' | 'avatar' | 'initials'>;
+export type ToxicHeroPlayer = Pick<
+  StandingsPlayer,
+  'id' | 'name' | 'avatar' | 'initials' | 'isTeamRow' | 'partnerId' | 'partnerName' | 'partnerAvatar' | 'partnerInitials'
+>;
 
 export type ToxicHeroStat = {
   label: string;
@@ -165,6 +168,12 @@ const toHeroPlayer = (player: StandingsPlayer): ToxicHeroPlayer => ({
   name: player.name,
   avatar: player.avatar,
   initials: player.initials,
+  // Bawa data partner supaya hero Cupu D'Or bisa tampil dua wajah di mode fixed.
+  isTeamRow: player.isTeamRow,
+  partnerId: player.partnerId,
+  partnerName: player.partnerName,
+  partnerAvatar: player.partnerAvatar,
+  partnerInitials: player.partnerInitials,
 });
 
 const getShortPlayerName = (name = '') => (

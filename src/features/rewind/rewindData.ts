@@ -93,10 +93,21 @@ export const REWIND_SLIDE_LABELS: Record<RewindSlideType, string> = {
   outro: 'Outro',
 };
 
-// Mode fixed: satu baris peringkat = satu tim. Untuk slide "hero" (champion)
-// pecah kembali jadi dua wajah pemain agar keduanya tampil. Nama anchor
+// Mode fixed: satu baris peringkat = satu tim. Untuk slide "hero" (champion,
+// cupu) pecah kembali jadi dua wajah pemain agar keduanya tampil. Nama anchor
 // dipulihkan dari nama gabungan "anchor & partner".
-const expandTeamMemberRefs = (row: StandingsPlayer): RewindPlayerRef[] => {
+type TeamExpandable = {
+  id: string;
+  name: string;
+  avatar?: string;
+  initials: string;
+  isTeamRow?: boolean;
+  partnerId?: string;
+  partnerName?: string;
+  partnerAvatar?: string;
+  partnerInitials?: string;
+};
+const expandTeamMemberRefs = (row: TeamExpandable): RewindPlayerRef[] => {
   if (!row.isTeamRow || !row.partnerId) {
     return [{ id: row.id, name: row.name, avatar: row.avatar, initials: row.initials }];
   }
@@ -537,9 +548,13 @@ export const buildRewindData = ({
 
   // 9 — Cupu D'Or (toxic on, King valid)
   if (toxicOn && kingRow && toxicStandings.heroPlayers.length > 0) {
+    // Fixed: king adalah satu tim → tampilkan kedua wajahnya.
+    const cupuPlayers = toxicStandings.heroPlayers[0]?.isTeamRow
+      ? expandTeamMemberRefs(toxicStandings.heroPlayers[0]).slice(0, 2)
+      : toxicStandings.heroPlayers.slice(0, 2).map(toPlayerRef);
     slides.push({
       type: 'cupu',
-      players: toxicStandings.heroPlayers.slice(0, 2).map(toPlayerRef),
+      players: cupuPlayers,
       title: isCoKing ? 'CO-KING OF CUPU · TERPILIH SECARA SAH' : 'KING OF CUPU · TERPILIH SECARA SAH',
       rankLabel: `#${rankById.get(kingRow.id) || sortedPlayers.length} OF ${sortedPlayers.length}`,
       record: `${kingRow.w}W-${kingRow.l}L`,

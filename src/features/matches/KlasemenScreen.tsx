@@ -865,7 +865,16 @@ export const KlasemenScreen = ({
                     'relative z-20',
                     hasCoKingHero ? 'mt-3.5 grid grid-cols-2 items-start gap-4' : 'mt-4 flex justify-center gap-5'
                   )}>
-                    {toxicStandings.heroPlayers.map((player, index) => (
+                    {toxicStandings.heroPlayers.map((player, index) => {
+                      // Mode fixed: hero adalah satu tim → tampilkan dua wajah +
+                      // nama ringkas (nama panjang gabungan overflow di font seremonial).
+                      const heroName = player.isTeamRow
+                        ? [player.name.split(' & ')[0], player.partnerName]
+                            .filter(Boolean)
+                            .map((part) => getShortPlayerName(part as string))
+                            .join(' & ')
+                        : player.name;
+                      return (
                       <div
                         key={player.id}
                         className={cn(
@@ -880,6 +889,8 @@ export const KlasemenScreen = ({
                         )}>👑</div>
                         <ToxicAvatar
                           player={player}
+                          partner={player.isTeamRow ? { avatar: player.partnerAvatar, initials: player.partnerInitials, name: player.partnerName } : null}
+                          partnerRingClassName="ring-[#2A2415]"
                           className={cn(
                             'toxic-avatar-reveal border-[2px] border-[#C9A14A] bg-[#2A2415] text-[#E8C45A] shadow-[0_0_0_1px_rgba(255,230,140,0.16),0_0_34px_rgba(197,145,23,0.34)]',
                             hasCoKingHero ? 'h-[60px] w-[60px] text-[21px]' : 'h-[72px] w-[72px] text-[25px]'
@@ -892,10 +903,11 @@ export const KlasemenScreen = ({
                             ? 'mt-2 min-h-[44px] w-full max-w-[132px] text-[26px] leading-[0.94] [overflow-wrap:anywhere]'
                             : 'mt-3 max-w-[220px] text-[38px] leading-none'
                         )}>
-                          {player.name}
+                          {heroName}
                         </p>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <span className="toxic-award-reveal relative z-20 mt-4 inline-flex max-w-full items-center rounded-full border border-[#b78a1c]/80 bg-black/32 px-4 py-1.5 text-[9px] font-black uppercase leading-none tracking-[0.18em] text-[#f6d36b] shadow-[0_0_20px_rgba(197,145,23,0.18)]">
                     {toxicStandings.heroTitle}
