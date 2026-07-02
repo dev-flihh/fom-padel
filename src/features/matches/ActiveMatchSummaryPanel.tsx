@@ -133,7 +133,7 @@ export const ActiveMatchSummaryPanel = ({
               event.stopPropagation();
               onShareMatch();
             }}
-            className="tap-target inline-flex h-8 w-8 items-center justify-center rounded-full border border-black/[0.06] bg-white text-primary shadow-[0_2px_7px_rgba(17,24,39,0.035)]"
+            className="tap-target inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/[0.08] text-primary"
             aria-label="Share match"
           >
             <Share2 size={15} strokeWidth={2.2} />
@@ -157,8 +157,9 @@ export const ActiveMatchSummaryPanel = ({
           {matchName || '-'}
         </h1>
         {!isReadOnly && (
-          <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/[0.035] text-ios-gray/78" aria-hidden="true">
-            <ChevronDown size={15} strokeWidth={2.3} />
+          <span className="mt-0.5 inline-flex h-6 shrink-0 items-center gap-1 rounded-full bg-black/[0.045] pl-2 pr-1.5 text-ios-gray/80" aria-hidden="true">
+            <span className="text-[9px] font-black uppercase leading-none tracking-[0.1em]">Manage</span>
+            <ChevronDown size={12} strokeWidth={2.5} />
           </span>
         )}
       </div>

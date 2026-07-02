@@ -37,8 +37,8 @@ test.describe('Share Flow', () => {
   test('standings share copies the standings link and shows toast feedback', async ({ page }) => {
     await page.goto('/app?e2e=share-flow');
 
-    await expect(page.getByRole('button', { name: /Standings/i })).toBeVisible();
-    await page.getByRole('button', { name: /Standings/i }).click();
+    await expect(page.getByRole('button', { name: 'Standings', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Standings', exact: true }).click();
     await expect(page.getByText('Standings').first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Share match link', exact: true }).click();

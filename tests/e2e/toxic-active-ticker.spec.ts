@@ -10,8 +10,7 @@ test.describe('Toxic Active Ticker', () => {
 
     await expect(page.getByText('Zona Cupu').first()).toBeVisible();
     await expect(page.getByText('Needs 1 pt')).toBeVisible();
-    await expect(page.getByText('5/6 points entered')).toBeVisible();
-    await expect(page.getByText('1 point left on Court 1.')).toBeVisible();
+    await expect(page.getByText('1 point left on Court 1')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Finish score first' })).toBeDisabled();
     await expect(page.getByText('Breaking Shame')).toBeVisible();
     await expect(page.getByText(/Kasyf & Wildan disekolahkan 0-5\./)).toBeVisible();
@@ -25,7 +24,7 @@ test.describe('Toxic Active Ticker', () => {
 
     await expect(page.getByText('Duo Watch')).toBeVisible({ timeout: 6_000 });
     await expect(page.getByText(/Duo Petaka mulai terbentuk\./)).toBeVisible();
-    await expect(page.getByText(/DIFF -9/).first()).toBeVisible();
+    await expect(page.getByText(/2x kalah/i).first()).toBeVisible();
   });
 
   test('score can be edited inline without opening the old score modal', async ({ page }) => {

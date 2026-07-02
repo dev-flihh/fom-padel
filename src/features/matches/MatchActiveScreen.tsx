@@ -21,6 +21,7 @@ import { isFomRegisteredPlayer } from '../players/playerUtils';
 import { getMatchThemeColor } from '../tournaments/matchTheme';
 import { sanitizeInactivePlayerIds } from '../tournaments/tournamentDraft';
 import { useMatchSettingsFriends } from './useMatchSettingsFriends';
+import { buildOfficialStandings } from './standingsUtils';
 import { getToxicIntensityLabel, normalizeToxicIntensity } from './toxicSettings';
 
 type MatchActiveScreenProps = {
@@ -51,14 +52,15 @@ type MatchActiveScreenProps = {
 
 const getLiveShameTickerToneClasses = (event: LiveShameTickerEvent) => {
   if (event.tone === 'danger') {
+    // Keluarga gold seperti tab Shame; dot tetap oranye sebagai penanda "panas".
     return {
-      container: 'border-[#F15A16]/24 bg-[#FFF7F3] shadow-[0_6px_16px_rgba(241,90,22,0.055)]',
-      eyebrow: 'text-primary',
+      container: 'border-[#D4A017]/30 bg-[#FFFBEF] shadow-[0_4px_12px_rgba(120,78,0,0.05)]',
+      eyebrow: 'text-[#8A6A1F]',
       headline: 'text-on-surface',
       detail: 'text-on-surface/68',
-      chip: 'border-primary/12 bg-white/62 text-primary',
+      chip: 'border-[#D4A017]/18 bg-white/64 text-[#8A6A1F]',
       dot: 'bg-primary',
-      arrow: 'text-primary',
+      arrow: 'text-[#B7861F]',
     };
   }
 
@@ -237,6 +239,19 @@ export const MatchActiveScreen = ({
   const currentUserUid = String(currentUser?.uid || '').trim();
   const currentUserPhotoURL = typeof currentUser?.photoURL === 'string' ? currentUser.photoURL : '';
   const { friends, loadingFriends } = useMatchSettingsFriends(currentUserUid);
+  // Live top-3 klasemen berjalan — pengisi ruang di bawah panel aksi,
+  // sekaligus shortcut ke tab Standings.
+  const liveTopThree = useMemo(() => {
+    const standings = buildOfficialStandings({
+      tournament,
+      friends,
+      currentUserUid,
+      currentUserDisplayName: currentUser?.displayName,
+      currentUserEmail: currentUser?.email,
+      currentUserPhotoURL,
+    });
+    return standings.hasCountableScore ? standings.players.slice(0, 3) : [];
+  }, [tournament, friends, currentUserUid, currentUser?.displayName, currentUser?.email, currentUserPhotoURL]);
   const isE2EUser = currentUserUid === 'e2e-user';
   const visibleFriends = isE2EUser && friends.length === 0 ? E2E_ACTIVE_MATCH_FRIENDS : friends;
   const visibleLoadingFriends = isE2EUser ? false : loadingFriends;
@@ -768,22 +783,19 @@ export const MatchActiveScreen = ({
     : isLastRound
       ? 'Final step'
       : 'Next action';
+  // Satu judul saja per state — status + sisa poin tidak diulang di subteks.
   const actionPanelTitle = isTournamentEnded
     ? 'Results are ready'
     : isActiveRoundScoreFullyFilled
       ? (isLastRound ? 'Finish and save this match' : `Move to round ${(activeRoundId || 0) + 1}`)
-      : activeRoundPointProgress.entered > 0
-        ? `${activeRoundPointProgress.entered}/${activeRoundPointProgress.target} points entered`
-      : `${activeRoundReadyScoreCount}/${activeRoundMatchCount || 0} scores ready`;
+      : activeRoundPointProgress.entered > 0 && incompleteActiveCourtSummary
+        ? `${formatPointRemainder(activeRoundPointProgress.remaining)} left on ${incompleteActiveCourtSummary}`
+      : incompleteActiveCourtSummary
+        ? `Complete ${incompleteActiveCourtSummary} to continue`
+        : 'Complete every court score to continue';
   const actionPanelHelper = isTournamentEnded
     ? 'Review standings or share the match link.'
-    : isActiveRoundScoreFullyFilled
-      ? 'All courts in this round are complete.'
-      : activeRoundPointProgress.entered > 0 && incompleteActiveCourtSummary
-        ? `${formatPointRemainder(activeRoundPointProgress.remaining)} left on ${incompleteActiveCourtSummary}.`
-      : incompleteActiveCourtSummary
-        ? `Complete ${incompleteActiveCourtSummary} to continue.`
-        : 'Complete every court score to continue.';
+    : '';
   const actionPanelPrimaryLabel = isTournamentEnded
     ? 'View Standings'
     : !isLastRound && !isActiveRoundScoreFullyFilled
@@ -919,11 +931,8 @@ export const MatchActiveScreen = ({
                   )}
                 </div>
                 <div key={activeToxicTickerEvent.id} className="toxic-live-ticker-event mt-1.5 min-w-0">
-                  <p className={cn('line-clamp-1 text-[12.5px] font-black leading-tight tracking-[-0.012em]', activeToxicTickerTone.headline)}>
+                  <p className={cn('line-clamp-2 text-[12.5px] font-black leading-tight tracking-[-0.012em]', activeToxicTickerTone.headline)}>
                     {activeToxicTickerEvent.headline}
-                  </p>
-                  <p className={cn('mt-0.5 line-clamp-1 text-[11px] font-semibold italic leading-snug', activeToxicTickerTone.detail)}>
-                    {activeToxicTickerEvent.detail}
                   </p>
                   {activeToxicTickerEvent.chips.length > 0 && (
                     <div className="mt-1.5 flex min-w-0 flex-wrap gap-1.5">
@@ -959,9 +968,11 @@ export const MatchActiveScreen = ({
                 )}>
                   {actionPanelTitle}
                 </h3>
-                <p className="mt-0.5 text-[12.5px] font-medium leading-snug text-on-surface/60">
-                  {actionPanelHelper}
-                </p>
+                {actionPanelHelper && (
+                  <p className="mt-0.5 text-[12.5px] font-medium leading-snug text-on-surface/60">
+                    {actionPanelHelper}
+                  </p>
+                )}
               </div>
               {isTournamentEnded && (
                 <button
@@ -996,6 +1007,46 @@ export const MatchActiveScreen = ({
               {!actionPanelPrimaryDisabled && <ArrowRight size={15} strokeWidth={2.4} />}
             </button>
           </section>
+        )}
+
+        {!isTournamentEnded && liveTopThree.length >= 2 && (
+          <button
+            type="button"
+            onClick={onOpenStandings}
+            className="tap-target mt-2.5 flex w-full flex-col gap-2 rounded-[18px] border border-black/[0.06] bg-white px-4 py-3.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.03)] transition-transform active:scale-[0.99] motion-reduce:transition-none motion-reduce:active:scale-100"
+            aria-label="Open live standings"
+          >
+            <div className="flex w-full items-center justify-between">
+              <p className="inline-flex items-center gap-1.5 text-[9.5px] font-extrabold uppercase leading-none tracking-[0.18em] text-ios-gray/62">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                Live standings
+              </p>
+              <span className="text-[9px] font-black uppercase leading-none tracking-[0.1em] text-primary">Lihat semua →</span>
+            </div>
+            {liveTopThree.map((player, index) => (
+              <div key={player.id} className="flex w-full items-center gap-2.5">
+                <span className={cn(
+                  'w-[20px] shrink-0 text-[13px] font-extrabold leading-none tabular-nums',
+                  index === 0 ? 'text-primary' : 'text-[#C5C5CA]'
+                )}>
+                  {String(index + 1).padStart(2, '0')}
+                </span>
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ios-gray/10 text-[8px] font-black text-ios-gray">
+                  {player.avatar ? (
+                    <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
+                  ) : player.initials.slice(0, 2)}
+                </span>
+                <p className="min-w-0 flex-1 truncate text-[12.5px] font-bold leading-tight text-on-surface">{player.name}</p>
+                <span className="shrink-0 text-[12.5px] font-extrabold leading-none tabular-nums text-on-surface">{player.totalPoints}</span>
+                <span className={cn(
+                  'w-[30px] shrink-0 text-right text-[10.5px] font-bold leading-none tabular-nums',
+                  player.pointsDiff > 0 ? 'text-[#1E8E3E]' : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray/60'
+                )}>
+                  {player.pointsDiff > 0 ? `+${player.pointsDiff}` : player.pointsDiff}
+                </span>
+              </div>
+            ))}
+          </button>
         )}
       </main>
 

@@ -38,7 +38,7 @@ test.describe('Manage Match Sheet', () => {
     await page.getByPlaceholder('Example: Falih Hermon').fill('QA Extra');
     await page.getByRole('button', { name: 'Save player' }).click();
     await expect(page.getByRole('heading', { name: 'Edit players' })).toBeVisible();
-    await expect(page.getByText('QA Extra')).toBeVisible();
+    await expect(page.getByLabel('Edit players').getByText('QA Extra')).toBeVisible();
     await page.getByRole('button', { name: /Save|Done/ }).click();
     await expect(page.getByRole('heading', { name: 'Manage match' })).toBeVisible();
 
@@ -76,14 +76,14 @@ test.describe('Manage Match Sheet', () => {
     await page.getByPlaceholder('Example: Falih Hermon').fill('QA Manual');
     await page.getByRole('button', { name: 'Save player' }).click();
     await expect(page.getByRole('heading', { name: 'Edit players' })).toBeVisible();
-    await expect(page.getByText('QA Manual')).toBeVisible();
+    await expect(page.getByLabel('Edit players').getByText('QA Manual')).toBeVisible();
 
     await page.getByRole('button', { name: 'Link FOM profile for QA Manual' }).click();
     await expect(page.getByRole('heading', { name: 'Link FOM friend' })).toBeVisible();
     await page.getByRole('button', { name: /Reza FOM/i }).click();
     await expect(page.getByRole('heading', { name: 'Edit players' })).toBeVisible();
-    await expect(page.getByText('Reza FOM')).toBeVisible();
-    await expect(page.getByText('QA Manual')).toHaveCount(0);
+    await expect(page.getByLabel('Edit players').getByText('Reza FOM')).toBeVisible();
+    await expect(page.getByLabel('Edit players').getByText('QA Manual')).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Deactivate Wildan' }).click();
     await expect(page.getByRole('button', { name: 'Activate Wildan' })).toHaveAttribute('aria-pressed', 'false');
