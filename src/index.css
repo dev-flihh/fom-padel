@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
-  --font-display: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Plus Jakarta Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
   
   --color-surface: #F7F7FA;
   --color-surface-container: #FFFFFF;
@@ -21,13 +22,13 @@
 
   html {
     color-scheme: light;
-    background-color: #F7F7FA;
+    background-color: #FFFFFF;
   }
 
   html.app-loading,
   body.app-loading,
   #root.app-loading {
-    background-color: #ff5501 !important;
+    background-color: #ff5500 !important;
   }
 
   body.app-loading::after {
@@ -37,7 +38,7 @@
     right: 0;
     bottom: calc(-1 * env(safe-area-inset-bottom, 0px) - 140px);
     height: calc(env(safe-area-inset-bottom, 0px) + 220px);
-    background: #ff5501;
+    background: #ff5500;
     pointer-events: none;
     z-index: 2147483647;
   }
@@ -46,10 +47,19 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  :where(button, a, input, select, textarea, [tabindex]):focus {
+    outline: none;
+  }
+
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid rgba(230, 94, 20, 0.38);
+    outline-offset: 3px;
+  }
+
   body {
     @apply bg-surface text-on-surface antialiased;
     color-scheme: light;
-    background-color: #F7F7FA;
+    background-color: #FFFFFF;
     font-family: var(--font-sans);
     text-rendering: optimizeLegibility;
     overscroll-behavior-y: none;
@@ -63,6 +73,17 @@
   input, select, textarea {
     @apply text-on-surface;
     color-scheme: light;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
   }
 }
 
@@ -84,6 +105,646 @@
     100% {
       left: 118%;
     }
+  }
+
+  @keyframes room-ambient-drift {
+    0% {
+      transform: translate3d(-18%, -8%, 0) rotate(-8deg) scale(1);
+      opacity: 0.68;
+    }
+    45% {
+      transform: translate3d(8%, 5%, 0) rotate(4deg) scale(1.1);
+      opacity: 0.96;
+    }
+    100% {
+      transform: translate3d(22%, -7%, 0) rotate(10deg) scale(1.16);
+      opacity: 0.76;
+    }
+  }
+
+  @keyframes fom-room-hero-sheen {
+    0% {
+      transform: translate3d(-10%, -3%, 0) rotate(-8deg) scale(1);
+      opacity: 0.38;
+    }
+    50% {
+      opacity: 0.62;
+    }
+    100% {
+      transform: translate3d(8%, 4%, 0) rotate(7deg) scale(1.08);
+      opacity: 0.44;
+    }
+  }
+
+  @keyframes fom-room-hero-wave {
+    0% {
+      transform: translate3d(-2.5%, 0, 0) rotate(-0.8deg);
+    }
+    100% {
+      transform: translate3d(2.5%, -5%, 0) rotate(0.8deg);
+    }
+  }
+
+  @keyframes fom-room-hero-pulse {
+    0% {
+      transform: translate3d(-2%, 0, 0) scale(1);
+      opacity: 0.82;
+    }
+    100% {
+      transform: translate3d(2%, -2%, 0) scale(1.06);
+      opacity: 1;
+    }
+  }
+
+  @keyframes toxic-confetti-fall {
+    0% {
+      opacity: 1;
+      transform: translateY(-18px) rotate(0deg);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(340px) rotate(480deg);
+    }
+  }
+
+  @keyframes toxic-ceremony-card-in {
+    0% {
+      opacity: 0.94;
+      filter: brightness(0.82) saturate(0.9);
+      transform: translateY(8px) scale(0.986);
+    }
+    100% {
+      opacity: 1;
+      filter: brightness(1) saturate(1);
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes toxic-gold-shimmer-sweep {
+    0% {
+      opacity: 0;
+      transform: translateX(0) skewX(-13deg);
+    }
+    18% {
+      opacity: 0.78;
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(360%) skewX(-13deg);
+    }
+  }
+
+  @keyframes toxic-spotlight-drift-a {
+    0%,
+    100% {
+      opacity: 0.34;
+      transform: translate3d(-26%, -5%, 0) skewX(-16deg) scaleX(0.86);
+    }
+    44% {
+      opacity: 0.68;
+      transform: translate3d(20%, 5%, 0) skewX(-12deg) scaleX(1.16);
+    }
+    72% {
+      opacity: 0.48;
+      transform: translate3d(62%, -4%, 0) skewX(-18deg) scaleX(0.92);
+    }
+  }
+
+  @keyframes toxic-spotlight-drift-b {
+    0%,
+    100% {
+      opacity: 0.3;
+      transform: translate3d(24%, 5%, 0) skewX(15deg) scaleX(0.84);
+    }
+    48% {
+      opacity: 0.6;
+      transform: translate3d(-26%, -5%, 0) skewX(10deg) scaleX(1.18);
+    }
+    76% {
+      opacity: 0.42;
+      transform: translate3d(-62%, 4%, 0) skewX(17deg) scaleX(0.9);
+    }
+  }
+
+  @keyframes toxic-spotlight-drift-c {
+    0%,
+    100% {
+      opacity: 0.18;
+      transform: translate3d(-18%, -3%, 0) skewX(-5deg) scaleX(0.86);
+    }
+    46% {
+      opacity: 0.4;
+      transform: translate3d(12%, 5%, 0) skewX(3deg) scaleX(1.16);
+    }
+    78% {
+      opacity: 0.26;
+      transform: translate3d(32%, -5%, 0) skewX(-8deg) scaleX(0.92);
+    }
+  }
+
+  @keyframes toxic-dust-float {
+    0% {
+      opacity: 0.08;
+      transform: translate3d(0, 0, 0) scale(0.72);
+    }
+    38% {
+      opacity: 0.56;
+      transform: translate3d(7px, -12px, 0) scale(1);
+    }
+    76% {
+      opacity: 0.22;
+      transform: translate3d(-5px, -22px, 0) scale(0.84);
+    }
+    100% {
+      opacity: 0.08;
+      transform: translate3d(0, 0, 0) scale(0.72);
+    }
+  }
+
+  @keyframes toxic-crown-glint {
+    0%,
+    68%,
+    100% {
+      opacity: 0;
+      transform: translate3d(-2px, 2px, 0) scale(0.45) rotate(0deg);
+    }
+    74% {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1.14) rotate(24deg);
+    }
+    80% {
+      opacity: 0.45;
+      transform: translate3d(2px, -1px, 0) scale(0.72) rotate(38deg);
+    }
+  }
+
+  @keyframes toxic-crown-in {
+    0% {
+      opacity: 0;
+      transform: translateY(-28px) rotate(-4deg) scale(0.86);
+    }
+    56% {
+      opacity: 1;
+      transform: translateY(5px) rotate(-24deg) scale(1.08);
+    }
+    76% {
+      opacity: 1;
+      transform: translateY(-2px) rotate(-16deg) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) rotate(-18deg) scale(1);
+    }
+  }
+
+  @keyframes toxic-title-reveal {
+    0% {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes toxic-player-stage-in {
+    0% {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes toxic-avatar-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.78);
+    }
+    58% {
+      opacity: 1;
+      transform: scale(1.06);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes toxic-name-reveal {
+    0% {
+      opacity: 0;
+      filter: blur(3px);
+      transform: translateY(12px) scale(0.97);
+    }
+    100% {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes toxic-soft-reveal {
+    0% {
+      opacity: 0;
+      transform: translateY(7px) scale(0.98);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes toxic-ticker-in {
+    0% {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes standings-detail-reveal {
+    0% {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes standings-tab-panel-in {
+    0% {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes standings-mini-header-in {
+    0% {
+      opacity: 0;
+      transform: translate3d(-50%, -8px, 0) scale(0.985);
+    }
+    100% {
+      opacity: 1;
+      transform: translate3d(-50%, 0, 0) scale(1);
+    }
+  }
+
+  @keyframes toxic-row-highlight-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(212, 160, 23, 0.22);
+    }
+    45% {
+      box-shadow: 0 0 0 8px rgba(212, 160, 23, 0.06);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(212, 160, 23, 0);
+    }
+  }
+
+  @keyframes standings-row-highlight-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgba(230, 94, 20, 0.2);
+    }
+    45% {
+      box-shadow: 0 0 0 8px rgba(230, 94, 20, 0.055);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(230, 94, 20, 0);
+    }
+  }
+
+  @keyframes toxic-live-ticker-event {
+    0% {
+      opacity: 0;
+      transform: translateY(5px);
+      filter: blur(2px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+      filter: blur(0);
+    }
+  }
+
+  @keyframes toxic-live-ticker-dot {
+    0%, 100% {
+      opacity: 0.8;
+      transform: scale(1);
+      box-shadow: 0 0 0 0 rgba(241, 90, 22, 0.22);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.22);
+      box-shadow: 0 0 0 7px rgba(241, 90, 22, 0);
+    }
+  }
+
+  @keyframes toxic-live-ticker-sheen {
+    0% {
+      transform: translateX(-130%) rotate(15deg);
+      opacity: 0;
+    }
+    14% {
+      opacity: 0.56;
+    }
+    42%, 100% {
+      transform: translateX(230%) rotate(15deg);
+      opacity: 0;
+    }
+  }
+
+  @keyframes active-score-pop {
+    0% {
+      transform: scale(0.96);
+      filter: brightness(0.96);
+    }
+    42% {
+      transform: scale(1.075);
+      filter: brightness(1.08);
+    }
+    100% {
+      transform: scale(1);
+      filter: brightness(1);
+    }
+  }
+
+  @keyframes fom-marquee {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+
+  .font-ceremony {
+    font-family: "Instrument Serif", Georgia, serif;
+  }
+
+  .fom-marquee {
+    animation: fom-marquee 16s linear infinite;
+  }
+
+  .toxic-ceremony-card {
+    animation: toxic-ceremony-card-in 0.5s ease-out both;
+    will-change: filter, transform;
+  }
+
+  .toxic-gold-shimmer {
+    animation: toxic-gold-shimmer-sweep 1.12s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both;
+    filter: blur(0.5px);
+    mix-blend-mode: screen;
+    pointer-events: none;
+    will-change: opacity, transform;
+  }
+
+  .toxic-spotlight-ambient {
+    background:
+      linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255, 244, 184, 0.04) 18%,
+        rgba(255, 232, 153, 0.26) 48%,
+        rgba(232, 196, 90, 0.08) 70%,
+        transparent 100%
+      ),
+      linear-gradient(
+        180deg,
+        rgba(255, 235, 160, 0.36) 0%,
+        rgba(232, 196, 90, 0.22) 38%,
+        rgba(232, 196, 90, 0.04) 72%,
+        rgba(232, 196, 90, 0) 92%
+      );
+    filter: blur(5px);
+    mask-image: linear-gradient(90deg, transparent 0%, black 22%, black 78%, transparent 100%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, black 22%, black 78%, transparent 100%);
+    mix-blend-mode: screen;
+    pointer-events: none;
+    transform-origin: top center;
+    will-change: opacity, transform;
+  }
+
+  .toxic-spotlight-ambient-a {
+    animation: toxic-spotlight-drift-a 8.4s ease-in-out 0.6s infinite;
+  }
+
+  .toxic-spotlight-ambient-b {
+    animation: toxic-spotlight-drift-b 9.6s ease-in-out 1.8s infinite;
+  }
+
+  .toxic-spotlight-ambient-c {
+    animation: toxic-spotlight-drift-c 10.8s ease-in-out 0.2s infinite;
+  }
+
+  .toxic-ambient-dust span {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 999px;
+    background: rgba(250, 218, 118, 0.86);
+    box-shadow: 0 0 9px rgba(250, 218, 118, 0.46);
+    animation-name: toxic-dust-float;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+    will-change: opacity, transform;
+  }
+
+  .toxic-confetti-piece {
+    position: absolute;
+    top: -16px;
+    opacity: 0;
+    animation-name: toxic-confetti-fall;
+    animation-timing-function: ease-in;
+    animation-fill-mode: forwards;
+  }
+
+  .toxic-hero-title-reveal {
+    animation: toxic-title-reveal 0.42s ease-out 0.04s both;
+  }
+
+  .toxic-hero-player-reveal {
+    animation: toxic-player-stage-in 0.48s ease-out both;
+  }
+
+  .toxic-crown-drop {
+    animation: toxic-crown-in 0.78s cubic-bezier(0.34, 1.4, 0.64, 1) 0.06s both;
+    transform-origin: 50% 100%;
+  }
+
+  .toxic-crown-glint::after {
+    content: "";
+    position: absolute;
+    left: 12px;
+    top: 2px;
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.98) 0 24%, rgba(255, 232, 153, 0.78) 36%, transparent 68%);
+    box-shadow:
+      0 0 10px rgba(255, 232, 153, 0.72),
+      0 0 18px rgba(232, 196, 90, 0.42);
+    pointer-events: none;
+    animation: toxic-crown-glint 4.8s ease-in-out 1.4s infinite;
+    opacity: 0;
+    will-change: opacity, transform;
+  }
+
+  .toxic-avatar-reveal {
+    animation: toxic-avatar-pop 0.58s cubic-bezier(0.34, 1.35, 0.64, 1) 0.16s both;
+    transform-origin: center;
+  }
+
+  .toxic-name-reveal {
+    animation: toxic-name-reveal 0.56s ease-out 0.34s both;
+  }
+
+  .toxic-award-reveal {
+    animation: toxic-soft-reveal 0.44s ease-out 0.58s both;
+  }
+
+  .toxic-stats-reveal {
+    animation: toxic-soft-reveal 0.44s ease-out 0.68s both;
+  }
+
+  .toxic-roast-reveal {
+    animation: toxic-soft-reveal 0.44s ease-out 0.8s both;
+  }
+
+  .toxic-ticker {
+    animation: toxic-ticker-in 0.45s ease-out both;
+  }
+
+  .standings-detail-reveal {
+    animation: standings-detail-reveal 0.2s ease-out both;
+  }
+
+  .standings-tab-panel-in {
+    animation: standings-tab-panel-in 0.18s ease-out both;
+  }
+
+  .standings-mini-header-in {
+    animation: standings-mini-header-in 0.24s ease-out both;
+  }
+
+  .toxic-row-highlight-pulse {
+    animation: toxic-row-highlight-pulse 0.9s ease-out 2;
+  }
+
+  .standings-row-highlight-pulse {
+    animation: standings-row-highlight-pulse 0.9s ease-out 2;
+  }
+
+  .toxic-live-ticker {
+    animation: toxic-ticker-in 0.36s ease-out both;
+  }
+
+  .toxic-live-ticker-event {
+    animation: toxic-live-ticker-event 0.34s ease-out both;
+  }
+
+  .toxic-live-ticker-dot {
+    animation: toxic-live-ticker-dot 1.8s ease-in-out infinite;
+  }
+
+  .toxic-live-ticker-sheen {
+    pointer-events: none;
+    position: absolute;
+    inset: -42% auto -42% -24%;
+    width: 38%;
+    background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.42) 50%, transparent 100%);
+    filter: blur(1px);
+    opacity: 0;
+    transform: rotate(15deg);
+    animation: toxic-live-ticker-sheen 5.8s ease-in-out infinite;
+  }
+
+  .active-score-pop {
+    animation: active-score-pop 0.2s ease-out both;
+  }
+
+  .fom-room-hero {
+    background: #ff5500;
+  }
+
+  .fom-room-hero-motion {
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 78% 4%, rgba(255, 255, 255, 0.2), transparent 28%),
+      radial-gradient(ellipse at 8% 34%, rgba(255, 186, 124, 0.25), transparent 34%),
+      linear-gradient(180deg, #ff5500 0%, #fa5000 58%, #e94800 100%);
+  }
+
+  .fom-room-hero-motion::before {
+    content: "";
+    position: absolute;
+    inset: -22% -26% 18% 34%;
+    border-radius: 999px;
+    background:
+      radial-gradient(ellipse at 38% 40%, rgba(255, 255, 255, 0.18), transparent 56%),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.025));
+    filter: blur(2px);
+    transform: rotate(13deg);
+    animation: fom-room-hero-pulse 8s ease-in-out infinite alternate;
+    will-change: transform, opacity;
+  }
+
+  .fom-room-hero-motion::after {
+    content: "";
+    position: absolute;
+    inset: -28% -34% -18% -34%;
+    background:
+      linear-gradient(118deg, transparent 20%, rgba(255, 255, 255, 0.13) 38%, transparent 55%),
+      linear-gradient(72deg, transparent 50%, rgba(255, 255, 255, 0.08) 58%, transparent 68%);
+    animation: fom-room-hero-sheen 10s ease-in-out infinite alternate;
+    will-change: transform, opacity;
+  }
+
+  .fom-room-hero-ribbons {
+    animation: fom-room-hero-wave 8s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+
+  .room-hero-ambient {
+    position: absolute;
+    inset: -40% -46%;
+    pointer-events: none;
+    background:
+      linear-gradient(
+        112deg,
+        transparent 8%,
+        rgba(255, 255, 255, 0.08) 25%,
+        rgba(230, 94, 20, 0.3) 41%,
+        rgba(255, 178, 118, 0.18) 56%,
+        transparent 73%
+      ),
+      radial-gradient(ellipse at 82% 18%, rgba(230, 94, 20, 0.24), transparent 48%);
+    filter: blur(15px);
+    mix-blend-mode: screen;
+    transform-origin: center;
+    animation: room-ambient-drift 11s ease-in-out infinite alternate;
+    will-change: transform, opacity;
+  }
+
+  .room-hero-ambient::after {
+    content: "";
+    position: absolute;
+    inset: 18% 12%;
+    background: linear-gradient(92deg, transparent, rgba(255, 255, 255, 0.11), transparent);
+    transform: rotate(-14deg);
   }
 
   .cta-shimmer {
@@ -113,8 +774,51 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .toxic-award-reveal,
+    .toxic-avatar-reveal,
+    .toxic-ceremony-card,
+    .toxic-confetti-piece,
+    .toxic-crown-drop,
+    .toxic-crown-glint::after,
+    .toxic-gold-shimmer,
+    .toxic-ambient-dust span,
+    .toxic-hero-player-reveal,
+    .toxic-hero-title-reveal,
+    .toxic-name-reveal,
+    .toxic-roast-reveal,
+    .toxic-spotlight-ambient,
+    .toxic-stats-reveal,
+    .toxic-ticker,
+    .toxic-live-ticker,
+    .toxic-live-ticker-dot,
+    .toxic-live-ticker-event,
+    .toxic-live-ticker-sheen,
+    .standings-detail-reveal,
+    .standings-tab-panel-in,
+    .standings-mini-header-in,
+    .standings-row-highlight-pulse,
+    .toxic-row-highlight-pulse,
+    .active-score-pop,
+    .fom-marquee {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
+
     .cta-shimmer::after {
       animation: none;
+    }
+
+    .room-hero-ambient {
+      animation: none;
+      transform: none;
+    }
+
+    .fom-room-hero-motion::after,
+    .fom-room-hero-motion::before,
+    .fom-room-hero-ribbons {
+      animation: none;
+      transform: none;
     }
   }
 
@@ -178,6 +882,148 @@
 
   .tap-target {
     @apply active:opacity-80 active:scale-[0.985] transition-all;
+  }
+
+  .standings-format-short {
+    display: none;
+  }
+
+  .standings-compact-grid {
+    grid-template-columns: minmax(0, 1fr) 70px 40px 40px;
+  }
+
+  .standings-medal-badge {
+    position: relative;
+    overflow: visible;
+    isolation: isolate;
+  }
+
+  .standings-medal-badge::before,
+  .standings-medal-badge::after {
+    content: "";
+    position: absolute;
+    bottom: -0.18rem;
+    width: 0.24rem;
+    height: 0.34rem;
+    border-radius: 0 0 0.12rem 0.12rem;
+    opacity: 0.62;
+    z-index: -1;
+  }
+
+  .standings-medal-badge::before {
+    left: 0.43rem;
+    transform: rotate(14deg);
+  }
+
+  .standings-medal-badge::after {
+    right: 0.43rem;
+    transform: rotate(-14deg);
+  }
+
+  .standings-medal-gold::before,
+  .standings-medal-gold::after {
+    background: #d9a900;
+  }
+
+  .standings-medal-silver::before,
+  .standings-medal-silver::after {
+    background: #9aa6b4;
+  }
+
+  .standings-medal-bronze::before,
+  .standings-medal-bronze::after {
+    background: #b97145;
+  }
+
+  @media (max-width: 360px) {
+    .standings-header-inner,
+    .standings-main {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    .standings-header-logo {
+      height: 1.65rem;
+    }
+
+    .standings-header-actions {
+      gap: 0.5rem;
+    }
+
+    .standings-header-install,
+    .standings-header-share {
+      width: 2rem;
+      gap: 0;
+    }
+
+    .standings-header-install span,
+    .standings-header-share-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .standings-format-full {
+      display: none;
+    }
+
+    .standings-format-short {
+      display: inline;
+    }
+
+    .standings-compact-grid {
+      grid-template-columns: minmax(0, 1fr) 48px 32px 32px !important;
+      column-gap: 0.25rem !important;
+    }
+
+    .standings-compact-row {
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .standings-compact-player {
+      gap: 0.25rem;
+    }
+
+    .standings-compact-rank {
+      width: 1.25rem;
+      height: 1.25rem;
+      font-size: 9px;
+    }
+
+    .standings-medal-badge::before,
+    .standings-medal-badge::after {
+      bottom: -0.16rem;
+      width: 0.2rem;
+      height: 0.3rem;
+    }
+
+    .standings-medal-badge::before {
+      left: 0.36rem;
+    }
+
+    .standings-medal-badge::after {
+      right: 0.36rem;
+    }
+
+    .standings-compact-avatar {
+      width: 1.5rem;
+      height: 1.5rem;
+    }
+
+    .standings-compact-player-name {
+      font-size: 12px;
+    }
+
+    .standings-compact-meta {
+      font-size: 9.5px;
+    }
   }
   
   .no-scrollbar::-webkit-scrollbar {

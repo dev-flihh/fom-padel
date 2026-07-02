@@ -1,21 +1,19 @@
 import { ChevronLeft } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { rankingDetailBackButtonClassName, rankingDetailHeaderClassName, rankingDetailTitleClassName } from './rankingDetailLayout';
-import { getRankInfo, RANK_TIERS } from './rankUtils';
+import { formatDisplayMmr, formatRankMmrFloor, formatRankMmrRange, getRankInfo, RANK_TIERS, toRawMmr } from './rankUtils';
 
 export const RankDiscoveryScreen = ({ currentUser, onBack, onOpenMmrHistory }: { currentUser: any; onBack: () => void; onOpenMmrHistory: () => void }) => {
-  const currentMmr = Number.isFinite(Number(currentUser?.mmr)) ? Number(currentUser.mmr) : 0;
+  const currentMmr = toRawMmr(currentUser?.mmr);
   const currentMatches = Number.isFinite(Number(currentUser?.totalMatches)) ? Number(currentUser.totalMatches) : 0;
   const currentRank = getRankInfo(currentMmr);
   const pointsToNext = currentRank.nextRank ? Math.max(0, currentRank.nextRank.min - currentMmr) : 0;
   const progressPercent = currentRank.nextRank
     ? Math.max(0, Math.min(100, ((currentMmr - currentRank.min) / Math.max(1, currentRank.nextRank.min - currentRank.min)) * 100))
     : 100;
-  const currentTierFloor = currentRank.min.toLocaleString();
-  const nextTierFloor = currentRank.nextRank ? currentRank.nextRank.min.toLocaleString() : currentTierFloor;
-  const currentTierRange = currentRank.max === Infinity
-    ? `${currentRank.min.toLocaleString()}+ MMR`
-    : `${currentRank.min.toLocaleString()} - ${currentRank.max.toLocaleString()} MMR`;
+  const currentTierFloor = formatRankMmrFloor(currentRank);
+  const nextTierFloor = currentRank.nextRank ? formatDisplayMmr(currentRank.nextRank.min) : currentTierFloor;
+  const currentTierRange = formatRankMmrRange(currentRank);
 
   const ruleCards = [
     {
@@ -41,8 +39,8 @@ export const RankDiscoveryScreen = ({ currentUser, onBack, onOpenMmrHistory }: {
       ),
     },
     {
-      title: 'Score gap shapes your gain',
-      detail: 'A 10+ point gap is a dominant result. It earns more on a win and costs more on a loss.',
+      title: 'Score share defines dominance',
+      detail: 'A team taking 70%+ of the total score is a dominant result, no matter the scoring format.',
       icon: (
         <>
           <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
@@ -53,15 +51,16 @@ export const RankDiscoveryScreen = ({ currentUser, onBack, onOpenMmrHistory }: {
   ] as const;
 
   const baseResults: { label: string; detail: string; value: string; valueClass: string }[] = [
-    { label: 'Draw', detail: 'Match ends level', value: '0', valueClass: 'text-[#b0b5c2]' },
-    { label: 'Standard win', detail: 'Gap of 1-9 points', value: '+25', valueClass: 'text-[#18a486]' },
-    { label: 'Dominant win', detail: 'Gap of 10+ points', value: '+40', valueClass: 'text-[#18a486]' },
-    { label: 'Standard loss', detail: 'Gap of 1-9 points', value: '-20', valueClass: 'text-[#f03030]' },
-    { label: 'Heavy loss', detail: 'Gap of 10+ points', value: '-35', valueClass: 'text-[#f03030]' },
+    { label: 'Draw reward', detail: 'Match ends level', value: '+8', valueClass: 'text-[#18a486]' },
+    { label: 'Standard win', detail: 'Winner takes under 70% of total score', value: '+25', valueClass: 'text-[#18a486]' },
+    { label: 'Dominant win', detail: 'Winner takes 70%+ of total score', value: '+40', valueClass: 'text-[#18a486]' },
+    { label: 'Standard loss', detail: 'Opponent takes under 70% of total score', value: '-20', valueClass: 'text-[#f03030]' },
+    { label: 'Heavy loss', detail: 'Opponent takes 70%+ of total score', value: '-35', valueClass: 'text-[#f03030]' },
   ];
 
   const modifiers: { label: string; detail: string; value: string; valueClass: string }[] = [
-    { label: 'Underdog bonus', detail: 'Win with lower team avg MMR', value: '+15', valueClass: 'text-primary' },
+    { label: 'Underdog bonus', detail: 'Win with lower team avg MMR', value: '+15', valueClass: 'text-[#18a486]' },
+    { label: 'Underdog draw bonus', detail: 'Draw with lower team avg MMR', value: '+0 to +20', valueClass: 'text-[#18a486]' },
     { label: 'Favorite penalty', detail: 'Lose with higher team avg MMR', value: '-15', valueClass: 'text-[#f03030]' },
   ];
 
@@ -83,7 +82,7 @@ export const RankDiscoveryScreen = ({ currentUser, onBack, onOpenMmrHistory }: {
           <div className="mb-[10px] flex items-end justify-between gap-4">
             <div className="min-w-0">
               <div className="flex items-end gap-1">
-                <span className="text-[72px] font-black leading-none tracking-[-0.06em] text-[#0f1117]">{currentMmr.toLocaleString()}</span>
+                <span className="text-[72px] font-black leading-none tracking-[-0.06em] text-[#0f1117]">{formatDisplayMmr(currentMmr)}</span>
                 <span className="mb-2 text-[16px] font-bold uppercase tracking-[0.04em] text-[#7a7f8e]">MMR</span>
               </div>
               <div className="mt-[10px] inline-flex items-center gap-[6px] rounded-full bg-[#f6f6f8] px-[10px] py-[5px] pl-[7px]">
@@ -161,7 +160,7 @@ export const RankDiscoveryScreen = ({ currentUser, onBack, onOpenMmrHistory }: {
               </svg>
             </div>
             <p className="text-[12px] leading-[1.55] text-[#3a3f4b]">
-              <span className="font-extrabold text-primary">Snapshot, not live.</span> Underdog bonus and favorite penalty use the team MMR averages captured <em>before</em> the match starts, not the leaderboard after it ends.
+              <span className="font-extrabold text-primary">Snapshot, not live.</span> Underdog, draw bonus, and favorite penalty use the team MMR averages captured <em>before</em> the match starts, not the leaderboard after it ends.
             </p>
           </div>
         </section>
@@ -224,9 +223,7 @@ export const RankDiscoveryScreen = ({ currentUser, onBack, onOpenMmrHistory }: {
             <div className="relative z-[1] space-y-[10px]">
               {RANK_TIERS.map((rank) => {
                 const isCurrent = rank.name === currentRank.name;
-                const rangeLabel = rank.max === Infinity
-                  ? `${rank.min.toLocaleString()}+ MMR`
-                  : `${rank.min.toLocaleString()} - ${rank.max.toLocaleString()} MMR`;
+                const rangeLabel = formatRankMmrRange(rank);
 
                 return (
                   <div key={rank.name} className="flex items-center gap-[14px]">

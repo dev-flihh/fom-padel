@@ -1,6 +1,7 @@
 export type MatchFormat = 'Match Play' | 'Americano' | 'Mexicano';
 export type RankingCriteria = 'Matches Won' | 'Points Won';
 export type ScoringType = 'Golden Point' | 'Advantage';
+export type ToxicIntensity = 'mild' | 'medium' | 'savage';
 
 export interface Player {
   id: string;
@@ -58,6 +59,8 @@ export interface Tournament {
   format: MatchFormat;
   backgroundId?: string;
   themeColorId?: string;
+  toxicModeEnabled?: boolean;
+  toxicIntensity?: ToxicIntensity;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
   startedAt?: number;
@@ -69,6 +72,7 @@ export interface Tournament {
   courtChanges?: CourtChange[];
   rounds: Round[];
   numRounds: number;
+  durationMinutes?: number;
   venueName?: string;
   location?: string;
 }
@@ -80,6 +84,8 @@ export interface TournamentHistory {
   format: MatchFormat;
   backgroundId?: string;
   themeColorId?: string;
+  toxicModeEnabled?: boolean;
+  toxicIntensity?: ToxicIntensity;
   criteria?: RankingCriteria;
   scoringType?: ScoringType;
   date: Date;
@@ -88,6 +94,7 @@ export interface TournamentHistory {
   courts?: number;
   totalPoints?: number;
   numRounds: number;
+  durationMinutes?: number;
   numPlayers: number;
   rounds?: Round[];
   players?: Player[];
@@ -152,7 +159,7 @@ export interface FriendRequest {
   resolvedAt?: any;
 }
 
-export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends';
+export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends' | 'rooms' | 'room-editor' | 'room-detail' | 'room-setup';
 
 export type TournamentStatsSyncState = 'syncing' | 'synced' | 'error';
 

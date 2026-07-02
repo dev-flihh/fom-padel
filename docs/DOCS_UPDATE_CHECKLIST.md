@@ -153,6 +153,22 @@ Wajib cek:
 - Firestore collection section
 - rules / permission summary bila security model berubah
 
+### Rooms
+Update jika ada perubahan pada:
+- room list / discoverability
+- room creation fields
+- join / leave participant lifecycle
+- start room / launch-to-match flow
+- room visibility model
+- room Firestore rules atau indexes
+
+Wajib cek:
+- `7.15 Rooms`
+- domain model `Room` dan `RoomParticipant`
+- persistence section bagian room sync
+- Firestore collection section `rooms`
+- engineering appendix bagian rooms model dan collection-to-database map
+
 ### Routes / Marketing / Hosting
 Update jika ada perubahan pada:
 - `/app`

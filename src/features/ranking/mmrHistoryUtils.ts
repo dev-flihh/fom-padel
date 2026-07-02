@@ -7,6 +7,7 @@ export type MMRSessionHistoryGroup = {
   net: number;
   wins: number;
   losses: number;
+  draws: number;
   items: PlayerMatchLedgerEntry[];
 };
 

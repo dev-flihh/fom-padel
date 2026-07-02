@@ -29,6 +29,7 @@ type RecordDbError = (input: {
 type UseShareActionsParams = {
   userUid: string | null | undefined;
   tournament: Tournament;
+  skipSharePersistence?: boolean;
   isSharedViewer: boolean;
   sharedMatchId: string | null;
   setSharedMatchId: Dispatch<SetStateAction<string | null>>;
@@ -60,7 +61,6 @@ const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> =>
     ta.style.position = 'fixed';
     ta.style.top = '-9999px';
     ta.style.left = '-9999px';
-    ta.setAttribute('readonly', '');
     ta.style.pointerEvents = 'none';
     document.body.appendChild(ta);
     ta.focus();
@@ -69,7 +69,6 @@ const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> =>
     const copied = document.execCommand('copy');
     document.body.removeChild(ta);
     if (copied) return 'copied';
-    return 'copied';
   } catch {
     // fallback below
   }
@@ -92,9 +91,25 @@ const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> =>
   return 'failed';
 };
 
+const getShareSyncFailureMessage = (err: unknown, target: 'match' | 'standings') => {
+  const errorText = err instanceof Error
+    ? `${err.name} ${err.message}`
+    : String(err || '');
+  const normalized = errorText.toLowerCase();
+
+  if (normalized.includes('permission') || normalized.includes('unauthorized')) {
+    return `Sesi host belum aktif. Login ulang dulu untuk share ${target}.`;
+  }
+  if (normalized.includes('timed out') || normalized.includes('timeout')) {
+    return `Koneksi lagi lambat. Coba share ${target} sekali lagi.`;
+  }
+  return `Belum bisa menyiapkan link ${target}. Coba lagi sebentar lagi.`;
+};
+
 export const useShareActions = ({
   userUid,
   tournament,
+  skipSharePersistence = false,
   isSharedViewer,
   sharedMatchId,
   setSharedMatchId,
@@ -109,11 +124,39 @@ export const useShareActions = ({
   recordDbError,
   serverTimestamp,
 }: UseShareActionsParams) => {
+  const buildViewerShareUrl = (view: 'active' | 'klasemen') => {
+    if (sharedMatchId) return buildShareUrl(sharedMatchId, view);
+
+    try {
+      const currentUrl = new URL(window.location.href);
+      currentUrl.pathname = '/app';
+      if (view === 'klasemen') currentUrl.searchParams.set('view', 'klasemen');
+      else currentUrl.searchParams.delete('view');
+      return currentUrl.toString();
+    } catch {
+      return window.location.href;
+    }
+  };
+
+  const shareViewerUrl = async (view: 'active' | 'klasemen') => {
+    const shareResult = await tryCopyToClipboard(buildViewerShareUrl(view));
+    if (shareResult === 'copied') showShareCopiedToast('copied');
+    else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('ready');
+    else showShareFeedbackToast('failed', 'Browser menolak akses clipboard. Coba share lagi.');
+  };
+
   const handleShareCurrentMatch = async () => {
     try {
+      if (isSharedViewer) {
+        await shareViewerUrl('active');
+        return;
+      }
+
       const currentUid = auth.currentUser?.uid || userUid;
       if (!currentUid) {
-        addNotification('Login Required', 'Please log in first to share matches.', 'system');
+        const message = 'Login dulu untuk share match.';
+        addNotification('Login Required', message, 'system', 'error');
+        showShareFeedbackToast('failed', message);
         return;
       }
 
@@ -129,38 +172,40 @@ export const useShareActions = ({
 
       await persistActiveTournamentSnapshot(tournament);
 
-      try {
-        await withTimeout(
-          saveSharedMatch(shareId, writePayload, { merge: true }),
-          SHARE_WRITE_TIMEOUT_MS,
-          'Share link sync'
-        );
-        recordDbMetric({
-          flow: 'share_host',
-          operation: 'write',
-          count: 1,
-          label: 'share_current_match',
-          dbRole: 'ephemeral',
-          collection: SHARED_MATCHES_COLLECTION,
-        });
-      } catch (firstErr) {
-        if (firstErr instanceof Error && firstErr.message.includes('timed out')) {
-          throw firstErr;
+      if (!skipSharePersistence) {
+        try {
+          await withTimeout(
+            saveSharedMatch(shareId, writePayload, { merge: true }),
+            SHARE_WRITE_TIMEOUT_MS,
+            'Share link sync'
+          );
+          recordDbMetric({
+            flow: 'share_host',
+            operation: 'write',
+            count: 1,
+            label: 'share_current_match',
+            dbRole: 'ephemeral',
+            collection: SHARED_MATCHES_COLLECTION,
+          });
+        } catch (firstErr) {
+          if (firstErr instanceof Error && firstErr.message.includes('timed out')) {
+            throw firstErr;
+          }
+          shareId = Math.random().toString(36).slice(2, 10);
+          await withTimeout(
+            saveSharedMatch(shareId, writePayload, { merge: false }),
+            SHARE_WRITE_TIMEOUT_MS,
+            'Share link sync'
+          );
+          recordDbMetric({
+            flow: 'share_host',
+            operation: 'write',
+            count: 1,
+            label: 'share_current_match_fresh',
+            dbRole: 'ephemeral',
+            collection: SHARED_MATCHES_COLLECTION,
+          });
         }
-        shareId = Math.random().toString(36).slice(2, 10);
-        await withTimeout(
-          saveSharedMatch(shareId, writePayload, { merge: false }),
-          SHARE_WRITE_TIMEOUT_MS,
-          'Share link sync'
-        );
-        recordDbMetric({
-          flow: 'share_host',
-          operation: 'write',
-          count: 1,
-          label: 'share_current_match_fresh',
-          dbRole: 'ephemeral',
-          collection: SHARED_MATCHES_COLLECTION,
-        });
       }
 
       setSharedMatchId(shareId);
@@ -190,24 +235,22 @@ export const useShareActions = ({
         authUid: auth.currentUser?.uid || null,
         userUid: userUid || null,
       });
-      showShareCopiedToast('failed');
+      showShareFeedbackToast('failed', getShareSyncFailureMessage(err, 'match'));
     }
   };
 
   const handleShareStandings = async (targetTournament: Tournament | TournamentHistory) => {
     try {
-      if (isSharedViewer && sharedMatchId) {
-        const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
-        const shareResult = await tryCopyToClipboard(currentSharedUrl);
-        if (shareResult === 'copied') showShareCopiedToast('copied');
-        else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('ready');
-        else showShareFeedbackToast('failed', 'Browser menolak akses clipboard. Coba share lagi.');
+      if (isSharedViewer) {
+        await shareViewerUrl('klasemen');
         return;
       }
 
       const currentUid = auth.currentUser?.uid || userUid;
       if (!currentUid) {
-        addNotification('Login Required', 'Please log in first to share standings.', 'system');
+        const message = 'Login dulu untuk share standings.';
+        addNotification('Login Required', message, 'system', 'error');
+        showShareFeedbackToast('failed', message);
         return;
       }
 
@@ -223,27 +266,29 @@ export const useShareActions = ({
         ? (sharedMatchId || Math.random().toString(36).slice(2, 10))
         : Math.random().toString(36).slice(2, 10);
       const safeTournament = toShareableTournamentSnapshot(targetTournament);
-      await withTimeout(
-        saveSharedMatch(shareId, {
-          tournament: safeTournament,
-          hostUid: currentUid,
-          activeStartedAt: isActiveTournamentShare
-            ? Number((targetTournament as Tournament).startedAt || 0)
-            : null,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }, { merge: isActiveTournamentShare }),
-        SHARE_WRITE_TIMEOUT_MS,
-        'Share standings sync'
-      );
-      recordDbMetric({
-        flow: 'share_host',
-        operation: 'write',
-        count: 1,
-        label: 'share_standings',
-        dbRole: 'ephemeral',
-        collection: SHARED_MATCHES_COLLECTION,
-      });
+      if (!skipSharePersistence) {
+        await withTimeout(
+          saveSharedMatch(shareId, {
+            tournament: safeTournament,
+            hostUid: currentUid,
+            activeStartedAt: isActiveTournamentShare
+              ? Number((targetTournament as Tournament).startedAt || 0)
+              : null,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }, { merge: isActiveTournamentShare }),
+          SHARE_WRITE_TIMEOUT_MS,
+          'Share standings sync'
+        );
+        recordDbMetric({
+          flow: 'share_host',
+          operation: 'write',
+          count: 1,
+          label: 'share_standings',
+          dbRole: 'ephemeral',
+          collection: SHARED_MATCHES_COLLECTION,
+        });
+      }
       if (isActiveTournamentShare) {
         setSharedMatchId(shareId);
         setLinkedShareIds((prev) => Array.from(new Set([...prev, shareId])));
@@ -272,7 +317,7 @@ export const useShareActions = ({
         authUid: auth.currentUser?.uid || null,
         userUid: userUid || null,
       });
-      showShareCopiedToast('failed');
+      showShareFeedbackToast('failed', getShareSyncFailureMessage(err, 'standings'));
     }
   };
 

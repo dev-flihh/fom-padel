@@ -1,7 +1,8 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { formatDurationFromMs } from './matchTimeUtils';
 import { sanitizeInactivePlayerIds } from '../tournaments/tournamentDraft';
-import type { Player, Tournament } from '../../types';
+import type { Player, ToxicIntensity, Tournament } from '../../types';
+import { getToxicIntensityLabel, normalizeToxicIntensity } from './toxicSettings';
 
 type AddNotification = (
   title: string,
@@ -16,8 +17,19 @@ type Params = {
   setTournament: Dispatch<SetStateAction<Tournament>>;
   setNeedsRegenerateFromRound: Dispatch<SetStateAction<number | null>>;
   persistActiveTournamentSnapshot: (nextTournament: Tournament) => Promise<void>;
+  syncSharedMatchesSnapshot: (nextTournament: Tournament) => Promise<void>;
   addNotification: AddNotification;
   rebuildAmericanoFutureRounds: (baseTournament: Tournament, totalRounds: number) => Tournament['rounds'];
+};
+
+type ManualPlayerReplacement = {
+  manualPlayerId: string;
+  newPlayer: Player;
+};
+
+type ToxicSettingsUpdate = {
+  toxicModeEnabled: boolean;
+  toxicIntensity?: ToxicIntensity;
 };
 
 export const useMatchMutationActions = ({
@@ -26,9 +38,60 @@ export const useMatchMutationActions = ({
   setTournament,
   setNeedsRegenerateFromRound,
   persistActiveTournamentSnapshot,
+  syncSharedMatchesSnapshot,
   addNotification,
   rebuildAmericanoFutureRounds,
 }: Params) => {
+  const applyManualPlayerReplacement = (
+    baseTournament: Tournament,
+    replacement: ManualPlayerReplacement
+  ): Tournament => {
+    const safeManualPlayerId = String(replacement.manualPlayerId || '').trim();
+    if (!safeManualPlayerId) return baseTournament;
+
+    const manualPlayer = (baseTournament.players || []).find((player) => player.id === safeManualPlayerId);
+    if (!manualPlayer) return baseTournament;
+    if (manualPlayer.id === replacement.newPlayer.id) return baseTournament;
+
+    const hasExistingRegisteredPlayer = (baseTournament.players || []).some((player) => (
+      player.id === replacement.newPlayer.id && player.id !== safeManualPlayerId
+    ));
+    if (hasExistingRegisteredPlayer) return baseTournament;
+
+    const replacePlayerRef = (player: Player) => (
+      player.id === safeManualPlayerId
+        ? { ...replacement.newPlayer }
+        : player
+    );
+
+    const nextPlayers = baseTournament.players.map(replacePlayerRef);
+    return {
+      ...baseTournament,
+      players: nextPlayers,
+      inactivePlayerIds: sanitizeInactivePlayerIds(
+        nextPlayers,
+        (baseTournament.inactivePlayerIds || []).map((playerId) => (
+          playerId === safeManualPlayerId ? replacement.newPlayer.id : playerId
+        ))
+      ),
+      rounds: baseTournament.rounds.map((round) => ({
+        ...round,
+        playersBye: (round.playersBye || []).map(replacePlayerRef),
+        matches: round.matches.map((match) => ({
+          ...match,
+          teamA: {
+            ...match.teamA,
+            players: match.teamA.players.map(replacePlayerRef),
+          },
+          teamB: {
+            ...match.teamB,
+            players: match.teamB.players.map(replacePlayerRef),
+          },
+        })),
+      })),
+    };
+  };
+
   const handleDeleteRoundsFrom = (roundId: number) => {
     const safeRoundId = Math.max(2, Math.floor(roundId || 0));
     const now = Date.now();
@@ -96,6 +159,36 @@ export const useMatchMutationActions = ({
     addNotification(
       'Round Dihapus',
       `Round ${safeRoundId} onward has been deleted. Please regenerate from the latest scores.`,
+      'system'
+    );
+  };
+
+  const handleUpdateToxicSettings = ({
+    toxicModeEnabled,
+    toxicIntensity,
+  }: ToxicSettingsUpdate) => {
+    const nextIntensity = normalizeToxicIntensity(toxicIntensity || tournament.toxicIntensity);
+    if (
+      Boolean(tournament.toxicModeEnabled) === toxicModeEnabled &&
+      normalizeToxicIntensity(tournament.toxicIntensity) === nextIntensity
+    ) {
+      return;
+    }
+
+    const nextTournament: Tournament = {
+      ...tournament,
+      toxicModeEnabled,
+      toxicIntensity: nextIntensity,
+    };
+
+    setTournament(nextTournament);
+    void persistActiveTournamentSnapshot(nextTournament);
+    void syncSharedMatchesSnapshot(nextTournament);
+    addNotification(
+      'Hall of Shame Updated',
+      toxicModeEnabled
+        ? `Hall of Shame is on with ${getToxicIntensityLabel(nextIntensity)} intensity.`
+        : 'Hall of Shame is hidden for this active match.',
       'system'
     );
   };
@@ -292,106 +385,6 @@ export const useMatchMutationActions = ({
     return true;
   };
 
-  const handleUpdateMatchPlayScore = (matchId: string, team: 'A' | 'B') => {
-    let setWinMessage: string | null = null;
-
-    setTournament((prev) => {
-      const newRounds = prev.rounds.map((round) => {
-        const isMatchInRound = round.matches.some((match) => match.id === matchId);
-        if (!isMatchInRound) return round;
-
-        const newMatches = round.matches.map((match) => {
-          if (match.id === matchId) {
-            const scoringType = prev.scoringType || 'Golden Point';
-            let pA = match.pointsA || '0';
-            let pB = match.pointsB || '0';
-            const gamesA = [...(match.teamA.sets || [0])];
-            const gamesB = [...(match.teamB.sets || [0])];
-            const currentSet = Number.isFinite(match.currentSet) ? (match.currentSet as number) : 0;
-            if (gamesA[currentSet] === undefined || Number.isNaN(gamesA[currentSet])) gamesA[currentSet] = 0;
-            if (gamesB[currentSet] === undefined || Number.isNaN(gamesB[currentSet])) gamesB[currentSet] = 0;
-
-            const isSetAlreadyFinished =
-              (gamesA[currentSet] >= 6 || gamesB[currentSet] >= 6) &&
-              Math.abs(gamesA[currentSet] - gamesB[currentSet]) >= 2;
-            if (isSetAlreadyFinished) {
-              return {
-                ...match,
-                teamA: { ...match.teamA, sets: gamesA, score: gamesA.reduce((a, b) => a + b, 0) },
-                teamB: { ...match.teamB, sets: gamesB, score: gamesB.reduce((a, b) => a + b, 0) },
-              };
-            }
-
-            if (team === 'A') {
-              if (pA === '0') pA = '15';
-              else if (pA === '15') pA = '30';
-              else if (pA === '30') pA = '40';
-              else if (pA === '40') {
-                if (pB === '40') {
-                  if (scoringType === 'Golden Point') pA = 'Game';
-                  else pA = 'Ad';
-                } else if (pB === 'Ad') {
-                  pB = '40';
-                } else {
-                  pA = 'Game';
-                }
-              } else if (pA === 'Ad') {
-                pA = 'Game';
-              }
-            } else {
-              if (pB === '0') pB = '15';
-              else if (pB === '15') pB = '30';
-              else if (pB === '30') pB = '40';
-              else if (pB === '40') {
-                if (pA === '40') {
-                  if (scoringType === 'Golden Point') pB = 'Game';
-                  else pB = 'Ad';
-                } else if (pA === 'Ad') {
-                  pA = '40';
-                } else {
-                  pB = 'Game';
-                }
-              } else if (pB === 'Ad') {
-                pB = 'Game';
-              }
-            }
-
-            if (pA === 'Game') {
-              gamesA[currentSet]++;
-              pA = '0';
-              pB = '0';
-            } else if (pB === 'Game') {
-              gamesB[currentSet]++;
-              pA = '0';
-              pB = '0';
-            }
-
-            if (gamesA[currentSet] >= 6 && gamesA[currentSet] - gamesB[currentSet] >= 2) {
-              setWinMessage = `Team A memenangkan set ${currentSet + 1} with score ${gamesA[currentSet]} - ${gamesB[currentSet]}`;
-            } else if (gamesB[currentSet] >= 6 && gamesB[currentSet] - gamesA[currentSet] >= 2) {
-              setWinMessage = `Team B memenangkan set ${currentSet + 1} with score ${gamesB[currentSet]} - ${gamesA[currentSet]}`;
-            }
-
-            return {
-              ...match,
-              pointsA: pA,
-              pointsB: pB,
-              teamA: { ...match.teamA, sets: gamesA, score: gamesA.reduce((a, b) => a + b, 0) },
-              teamB: { ...match.teamB, sets: gamesB, score: gamesB.reduce((a, b) => a + b, 0) },
-            };
-          }
-          return match;
-        });
-        return { ...round, matches: newMatches };
-      });
-      return { ...prev, rounds: newRounds };
-    });
-
-    if (setWinMessage) {
-      addNotification('Set Done!', setWinMessage, 'achievement');
-    }
-  };
-
   const handleSwapPlayer = (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => {
     const newRounds = tournament.rounds.map((round) => {
       const isMatchInRound = round.matches.some((match) => match.id === matchId);
@@ -420,13 +413,101 @@ export const useMatchMutationActions = ({
     addNotification('Player Replaced', 'The player has been replaced on the active court.', 'system');
   };
 
+  const handleReplaceManualPlayer = (manualPlayerId: string, newPlayer: Player) => {
+    const manualPlayer = (tournament.players || []).find((player) => player.id === String(manualPlayerId || '').trim());
+    if (!manualPlayer) return;
+    const nextTournament = applyManualPlayerReplacement(tournament, { manualPlayerId, newPlayer });
+    if (nextTournament === tournament) {
+      addNotification(
+        'Player Sudah Ada',
+        `${newPlayer.name} is already part of this match.`,
+        'system'
+      );
+      return;
+    }
+
+    setTournament(nextTournament);
+    void persistActiveTournamentSnapshot(nextTournament);
+    addNotification(
+      'Manual Player Replaced',
+      `${manualPlayer.name} is now linked to ${newPlayer.name} for this active match.`,
+      'system'
+    );
+  };
+
+  const handleSaveRosterChanges = (
+    activePlayerIds: string[],
+    replacements: ManualPlayerReplacement[]
+  ) => {
+    const normalizedReplacements = Array.isArray(replacements)
+      ? replacements.filter((replacement) => (
+          replacement &&
+          typeof replacement.manualPlayerId === 'string' &&
+          replacement.manualPlayerId.trim() &&
+          replacement.newPlayer &&
+          typeof replacement.newPlayer.id === 'string' &&
+          replacement.newPlayer.id.trim()
+        ))
+      : [];
+
+    let nextTournament = tournament;
+    normalizedReplacements.forEach((replacement) => {
+      nextTournament = applyManualPlayerReplacement(nextTournament, replacement);
+    });
+
+    const knownIds = new Set((nextTournament.players || []).map((player) => player.id));
+    const requestedActiveIds = Array.from(new Set(activePlayerIds.filter((id) => knownIds.has(id))));
+    const requestedActiveSet = new Set(requestedActiveIds);
+    const nextInactivePlayerIds = (nextTournament.players || [])
+      .map((player) => player.id)
+      .filter((playerId) => !requestedActiveSet.has(playerId));
+    const sanitizedInactive = sanitizeInactivePlayerIds(nextTournament.players || [], nextInactivePlayerIds);
+
+    const persistedTournament: Tournament = (
+      nextTournament.format === 'Americano' && nextTournament.rounds.length > 0
+        ? {
+            ...nextTournament,
+            inactivePlayerIds: sanitizedInactive,
+            rounds: rebuildAmericanoFutureRounds(
+              { ...nextTournament, inactivePlayerIds: sanitizedInactive },
+              nextTournament.numRounds
+            ),
+          }
+        : {
+            ...nextTournament,
+            inactivePlayerIds: sanitizedInactive,
+          }
+    );
+
+    const currentInactivePlayerIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
+    const hasReplacementChanges = normalizedReplacements.length > 0;
+    const hasActivePlayerChanges = (
+      sanitizedInactive.length !== currentInactivePlayerIds.length ||
+      sanitizedInactive.some((playerId, idx) => playerId !== currentInactivePlayerIds[idx])
+    );
+
+    if (!hasReplacementChanges && !hasActivePlayerChanges) return;
+
+    setTournament(persistedTournament);
+    void persistActiveTournamentSnapshot(persistedTournament);
+    addNotification(
+      'Roster Updated',
+      hasReplacementChanges
+        ? 'Manual player replacements and active player changes have been saved.'
+        : 'Changes are saved and will apply starting from the next round.',
+      'system'
+    );
+  };
+
   return {
     handleDeleteRoundsFrom,
+    handleUpdateToxicSettings,
     handleUpdateScore,
     handleUpdateActivePlayers,
     handleUpdateRounds,
     handleUpdateCourts,
-    handleUpdateMatchPlayScore,
     handleSwapPlayer,
+    handleReplaceManualPlayer,
+    handleSaveRosterChanges,
   };
 };

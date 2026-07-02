@@ -8,7 +8,7 @@ test.describe('Auth Flow', () => {
     const email = uniqueEmail();
 
     await page.goto('/app');
-    await expect(page.getByRole('heading', { name: 'Welcome to FOM Play' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Make every match count/i })).toBeVisible();
 
     await page.getByRole('button', { name: 'Sign up' }).first().click();
     await page.getByPlaceholder('Full name').fill('QA FOM Play');
@@ -20,7 +20,7 @@ test.describe('Auth Flow', () => {
 
     await page.getByRole('button', { name: 'Profile' }).click();
     await page.getByRole('button', { name: 'Keluar dari Akun' }).click();
-    await expect(page.getByRole('heading', { name: 'Welcome to FOM Play' })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: /Make every match count/i })).toBeVisible({ timeout: 10_000 });
 
     await page.getByPlaceholder('Email').fill(email);
     await page.getByPlaceholder('Password').fill(password);

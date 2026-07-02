@@ -36,7 +36,8 @@ export const hydrateTournamentHistoryDetail = async ({
   recordDbMetric: RecordDbMetric;
   recordDbError: RecordDbError;
 }): Promise<TournamentHistory> => {
-  if (hasTournamentDetailPayload(history)) return history;
+  const hasToxicModeMetadata = typeof history.toxicModeEnabled === 'boolean';
+  if (hasTournamentDetailPayload(history) && hasToxicModeMetadata) return history;
   if (isFirestoreSaverModeEnabled()) {
     recordDbMetric({ flow: 'history_detail', operation: 'skip', count: 1, label: 'saver_mode_detail_hydration' });
     return history;

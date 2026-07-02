@@ -1,6 +1,6 @@
-import { type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronRight } from 'lucide-react';
+import { Check, Minus, Play, Plus, Zap } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { type Match, type MatchFormat, type Player, type Round } from '../../types';
 
@@ -17,12 +17,13 @@ export const ActiveMatchRoundCard = ({
   isActive,
   isCollapsed,
   isReadOnly,
-  roundDuration,
+  totalPoints,
   accentTheme,
   scoreToneClass,
-  renderPlayerAvatar,
-  onToggleRound,
-  onOpenScoreEditor,
+  onStartRound,
+  onCompleteRound,
+  onAdjustScore,
+  onSetScore,
   onOpenSwapPlayer
 }: {
   round: Round;
@@ -30,229 +31,331 @@ export const ActiveMatchRoundCard = ({
   isActive: boolean;
   isCollapsed: boolean;
   isReadOnly: boolean;
-  roundDuration: string;
+  totalPoints: number;
   accentTheme: {
     headingStrong: string;
+    text: string;
+    bgSoft: string;
+    borderSoft: string;
+    solid: string;
+    solidShadow: string;
     bgSoftHover: string;
   };
   scoreToneClass: string;
-  renderPlayerAvatar: (player: Player, className: string, fallbackClassName?: string) => ReactNode;
-  onToggleRound: (roundId: number) => void;
-  onOpenScoreEditor: (matchId: string) => void;
+  onStartRound: (roundId: number) => void;
+  onCompleteRound: (roundId: number) => void;
+  onAdjustScore: (match: Match, team: 'A' | 'B', delta: number) => void;
+  onSetScore: (match: Match, team: 'A' | 'B', score: number) => void;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
-}) => (
-  <div className="mb-4">
-    <section className="bg-white/78 backdrop-blur-sm p-4 rounded-[20px] shadow-sm border border-white/45">
-      <div className="flex items-center gap-2 mb-1.5">
-        <button
-          type="button"
-          onClick={() => onToggleRound(round.id)}
-          className="flex-1 flex items-center justify-between gap-3 tap-target text-left"
-          aria-label={isCollapsed ? `Buka round ${round.id}` : `Tutup round ${round.id}`}
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className={cn("text-[14px] leading-none font-black uppercase tracking-[0.08em]", accentTheme.headingStrong)}>
-              Round {round.id}
-            </span>
-            <span className="w-1 h-1 rounded-full bg-ios-gray/40" />
-            <span className="text-[11px] leading-none font-semibold uppercase tracking-[0.06em] tabular-nums text-ios-gray/60">
-              {roundDuration}
-            </span>
-          </div>
-          <span className="p-1 text-ios-gray/65">
-            <ChevronRight size={22} className={cn("transition-transform", !isCollapsed && "rotate-90")} />
-          </span>
-        </button>
-      </div>
+}) => {
+  const isAmericano = format === 'Americano';
+  const hasActiveMatch = round.matches.some((match) => match.status === 'active');
+  const isRoundCompleted = round.matches.length > 0 && round.matches.every((match) => match.status === 'completed');
+  const hasRoundScoreProgress = round.matches.some((match) => {
+    const scoreA = match.teamA.score || 0;
+    const scoreB = match.teamB.score || 0;
+    return match.status === 'completed' || scoreA > 0 || scoreB > 0;
+  });
+  const readyScoreCount = getReadyScoreCount(round, totalPoints);
+  const roundPointProgress = getRoundPointProgress(round, format, totalPoints);
+  const roundActionLabel = isRoundCompleted
+    ? 'Round Completed'
+    : hasActiveMatch || hasRoundScoreProgress
+      ? `Complete Round ${round.id}`
+      : `Start Round ${round.id}`;
+  const roundActionIcon = isRoundCompleted ? Check : hasActiveMatch || hasRoundScoreProgress ? Zap : Play;
+  const RoundActionIcon = roundActionIcon;
+  const roundProgressText = roundPointProgress.entered > 0 && readyScoreCount < round.matches.length
+    ? `${roundPointProgress.entered}/${roundPointProgress.target} points entered`
+    : `${readyScoreCount}/${round.matches.length} scores ready`;
+  const roundProgressStatus = roundPointProgress.entered > 0 && roundPointProgress.remaining > 0
+    ? `${roundPointProgress.remaining} pt${roundPointProgress.remaining === 1 ? '' : 's'} left`
+    : 'Incomplete scores';
+  const roundProgressPercent = roundPointProgress.target > 0
+    ? Math.min(100, Math.max(0, (roundPointProgress.entered / roundPointProgress.target) * 100))
+    : Math.min(100, Math.max(0, (readyScoreCount / Math.max(1, round.matches.length)) * 100));
+  const sittingPlayers = getSittingPlayersSummary(round.playersBye);
 
+  if (isCollapsed) return null;
+
+  return (
+    <div className="mb-0">
       <AnimatePresence>
-        {!isCollapsed && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="h-px bg-ios-gray/10 mb-2.5" />
-            <div className="space-y-3.5">
-              {round.matches.map((match, index) => (
-                <div key={match.id}>
-                  <RoundMatchRow
-                    match={match}
-                    format={format}
-                    isActiveRound={isActive}
-                    isReadOnly={isReadOnly}
-                    accentTheme={accentTheme}
-                    scoreToneClass={scoreToneClass}
-                    renderPlayerAvatar={renderPlayerAvatar}
-                    onOpenScoreEditor={onOpenScoreEditor}
-                    onOpenSwapPlayer={onOpenSwapPlayer}
-                  />
-
-                  {index < round.matches.length - 1 && <div className="my-3.5 h-px bg-ios-gray/10" />}
-                </div>
-              ))}
-            </div>
-
-            {round.playersBye.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-ios-gray/10">
-                <div className="flex items-center justify-between mb-1.5">
-                  <h3 className="text-[9px] font-bold text-ios-gray/65 uppercase tracking-[0.18em]">Player Bye</h3>
-                  <span className="text-[10px] font-medium text-ios-gray/45">{round.playersBye.length} Player</span>
-                </div>
-                <p className="text-[12px] leading-relaxed text-ios-gray/72 font-medium">
-                  {round.playersBye.map((player) => player.name).join(', ')}
-                </p>
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          className="overflow-hidden"
+        >
+          <div className="space-y-2.5">
+            {round.matches.map((match) => (
+              <div key={match.id}>
+                <RoundMatchRow
+                  match={match}
+                  format={format}
+                  isActiveRound={isActive}
+                  isReadOnly={isReadOnly}
+                  totalPoints={totalPoints}
+                  scoreToneClass={scoreToneClass}
+                  onAdjustScore={onAdjustScore}
+                  onSetScore={onSetScore}
+                  onOpenSwapPlayer={onOpenSwapPlayer}
+                />
               </div>
-            )}
-          </motion.div>
-        )}
+            ))}
+          </div>
+
+          {round.playersBye.length > 0 && (
+            <div
+              className="mt-2.5 rounded-[14px] border border-black/[0.055] bg-black/[0.012] px-3.5 py-2.5"
+              aria-label={`Sitting this round: ${sittingPlayers.fullLabel}`}
+              title={sittingPlayers.fullLabel}
+            >
+              <p className="flex min-w-0 items-center gap-2 text-[12.5px] font-semibold leading-none text-on-surface/62">
+                <span className="shrink-0 rounded-full bg-white px-2 py-1 text-[9px] font-black uppercase tracking-[0.16em] text-ios-gray/72">
+                  Sitting
+                </span>
+                <span className="min-w-0 truncate">{sittingPlayers.displayLabel}</span>
+              </p>
+            </div>
+          )}
+
+          {isAmericano && !isReadOnly && (
+            <div className="mt-4 border-t border-black/[0.09] pt-4">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-extrabold uppercase leading-none tracking-[0.18em] text-ios-gray/72">
+                  {roundProgressText}
+                </span>
+                {!isRoundCompleted && hasRoundScoreProgress && readyScoreCount < round.matches.length && (
+                  <span className="text-[10px] font-extrabold uppercase leading-none tracking-[0.12em] text-amber-700">{roundProgressStatus}</span>
+                )}
+              </div>
+              <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-black/[0.055]" aria-hidden="true">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-[width] duration-300',
+                    isRoundCompleted ? 'bg-emerald-500' : 'bg-primary'
+                  )}
+                  style={{ width: `${roundProgressPercent}%` }}
+                />
+              </div>
+              <button
+                type="button"
+                disabled={isRoundCompleted}
+                data-americano-round-action={round.id}
+                onClick={() => {
+                  if (isRoundCompleted) return;
+                  if (hasActiveMatch || hasRoundScoreProgress) {
+                    onCompleteRound(round.id);
+                    return;
+                  }
+                  onStartRound(round.id);
+                }}
+                className={cn(
+                  "h-[44px] w-full rounded-[18px] text-[15px] font-display font-bold tracking-[-0.012em] tap-target inline-flex items-center justify-center gap-2 transition-all",
+                  isRoundCompleted
+                    ? "bg-emerald-50 text-emerald-700 cursor-default"
+                    : cn("text-white shadow-[0_10px_20px_rgba(230,94,20,0.16)] active:scale-[0.985]", accentTheme.solid, accentTheme.solidShadow)
+                )}
+              >
+                <span>{roundActionLabel}</span>
+                <RoundActionIcon size={16} />
+              </button>
+            </div>
+          )}
+        </motion.div>
       </AnimatePresence>
-    </section>
-  </div>
-);
+    </div>
+  );
+};
+
+const getReadyScoreCount = (round: Round, totalPoints: number) => {
+  const hasPointTarget = (totalPoints || 0) > 0;
+  return round.matches.filter((match) => {
+    if (match.status === 'completed') return true;
+    const scoreA = match.teamA.score || 0;
+    const scoreB = match.teamB.score || 0;
+    if (hasPointTarget) {
+      return scoreA + scoreB === totalPoints && (scoreA > 0 || scoreB > 0);
+    }
+    return scoreA > 0 || scoreB > 0;
+  }).length;
+};
+
+const getRoundPointProgress = (round: Round, format: MatchFormat, totalPoints: number) => {
+  if (format === 'Match Play' || totalPoints <= 0) {
+    return { entered: 0, target: 0, remaining: 0 };
+  }
+
+  const target = Math.max(0, round.matches.length * totalPoints);
+  const entered = round.matches.reduce((sum, match) => {
+    const scoreA = Math.max(0, Number(match.teamA.score || 0));
+    const scoreB = Math.max(0, Number(match.teamB.score || 0));
+    return sum + Math.min(totalPoints, scoreA + scoreB);
+  }, 0);
+
+  return {
+    entered,
+    target,
+    remaining: Math.max(0, target - entered),
+  };
+};
 
 const RoundMatchRow = ({
   match,
   format,
   isActiveRound,
   isReadOnly,
-  accentTheme,
+  totalPoints,
   scoreToneClass,
-  renderPlayerAvatar,
-  onOpenScoreEditor,
+  onAdjustScore,
+  onSetScore,
   onOpenSwapPlayer
 }: {
   match: Match;
   format: MatchFormat;
   isActiveRound: boolean;
   isReadOnly: boolean;
-  accentTheme: {
-    bgSoftHover: string;
-  };
+  totalPoints: number;
   scoreToneClass: string;
-  renderPlayerAvatar: (player: Player, className: string, fallbackClassName?: string) => ReactNode;
-  onOpenScoreEditor: (matchId: string) => void;
+  onAdjustScore: (match: Match, team: 'A' | 'B', delta: number) => void;
+  onSetScore: (match: Match, team: 'A' | 'B', score: number) => void;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
 }) => {
   const canEditCompletedScore = !isReadOnly && match.status === 'completed' && format !== 'Match Play';
   const canEditAnyAmericanoScore = !isReadOnly && format === 'Americano';
   const canEditScore = !isReadOnly && (canEditAnyAmericanoScore || isActiveRound || canEditCompletedScore);
   const statusLabel = match.status === 'completed'
-    ? 'Selesai'
+    ? 'Completed'
     : match.status === 'active'
-      ? 'Aktif'
-      : 'Belum main';
+      ? 'In Progress'
+      : 'Not Started';
+  const isReviewMode = match.status === 'completed';
+
+  const canDecrementA = canEditScore && match.teamA.score > 0;
+  const canDecrementB = canEditScore && match.teamB.score > 0;
+  const isScoreReady = isMatchScoreReady(match, format, totalPoints);
+  const isEditableActive = canEditScore && !isReviewMode;
+  const isNeedsScore = isEditableActive && !isScoreReady;
+  const activePointProgress = getMatchPointProgress(match, format, totalPoints);
+  const activeStatusLabel = match.status === 'active'
+    ? isScoreReady
+      ? 'Score Ready'
+      : activePointProgress.entered > 0 && activePointProgress.remaining > 0
+        ? `Needs ${activePointProgress.remaining} pt${activePointProgress.remaining === 1 ? '' : 's'}`
+        : statusLabel
+    : statusLabel;
 
   return (
-    <>
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <span className="text-[10px] font-bold uppercase tracking-[0.1em] text-ios-gray/65 leading-none">
+    <div className={cn(
+      'rounded-[18px] border px-4.5 py-4 transition-colors',
+      isReviewMode
+        ? 'border-black/[0.055] bg-white/96 shadow-[0_4px_12px_rgba(17,24,39,0.022)]'
+        : isNeedsScore
+          ? 'border-primary/24 bg-white shadow-[0_8px_22px_rgba(230,94,20,0.055)]'
+          : isActiveRound
+            ? 'border-emerald-500/18 bg-white shadow-[0_8px_20px_rgba(30,142,62,0.045)]'
+            : 'border-black/10 bg-white shadow-[0_6px_18px_rgba(17,24,39,0.03)]'
+    )}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-extrabold uppercase leading-none tracking-[0.18em] text-ios-gray/72">
           Court {match.court}
         </span>
         <span className={cn(
-          "shrink-0 rounded-full px-2 py-1 text-[9px] font-black uppercase tracking-[0.09em] leading-none",
+          "shrink-0 rounded-full px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.10em] leading-none",
           match.status === 'completed'
-            ? "bg-emerald-50 text-emerald-700"
+            ? "bg-[#E7F4EA] text-[#1E7A38]"
             : match.status === 'active'
-              ? "bg-sky-50 text-sky-700"
-              : "bg-ios-gray/8 text-ios-gray/60"
+              ? isScoreReady
+                ? "bg-[#E7F4EA] text-[#1E7A38]"
+                : "bg-[#FDEFE6] text-[#C44D0B]"
+              : "bg-[#F2F2F4] text-[#9A9AA0]"
         )}>
-          {statusLabel}
+          {activeStatusLabel}
         </span>
       </div>
 
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
-        <TeamColumn
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_30px_minmax(0,1fr)] items-center gap-3">
+        <TeamName
           team="A"
           match={match}
           isActiveRound={isActiveRound}
           isReadOnly={isReadOnly}
-          renderPlayerAvatar={renderPlayerAvatar}
           onOpenSwapPlayer={onOpenSwapPlayer}
         />
-
-        <button
-          type="button"
-          onClick={() => canEditScore && onOpenScoreEditor(match.id)}
-          disabled={!canEditScore}
-          className={cn(
-            "flex flex-col items-center min-w-[86px] rounded-xl px-2 py-1 transition-colors",
-            canEditScore
-              ? cn("cursor-pointer tap-target", accentTheme.bgSoftHover)
-              : "cursor-default"
-          )}
-        >
-          <div className="text-[31px] leading-none font-display font-black tracking-tight tabular-nums">
-            <span className={scoreToneClass}>{match.teamA.score}</span>
-            <span className="text-ios-gray/30 mx-1">-</span>
-            <span className={scoreToneClass}>{match.teamB.score}</span>
-          </div>
-          <span className="text-[9px] font-bold text-ios-gray/80 tracking-[0.11em]">
-            SKOR
-            {format === 'Match Play' && (
-              <span className="ml-1 normal-case tracking-normal text-[10px]">
-                ({match.pointsA || '0'}-{match.pointsB || '0'})
-              </span>
-            )}
-          </span>
-        </button>
-
-        <TeamColumn
+        <div className="text-center text-[12px] font-extrabold uppercase tracking-[0.08em] text-ios-gray/24">
+          VS
+        </div>
+        <TeamName
           team="B"
           match={match}
           isActiveRound={isActiveRound}
           isReadOnly={isReadOnly}
-          renderPlayerAvatar={renderPlayerAvatar}
           onOpenSwapPlayer={onOpenSwapPlayer}
         />
       </div>
-    </>
+
+      <div className="mt-3 grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] items-center gap-2">
+        <ScoreControls
+          score={match.teamA.score}
+          scoreLabel={`${getTeamScoreLabel(match.teamA.players)} on court ${match.court}`}
+          canEditScore={canEditScore}
+          canDecrement={canDecrementA}
+          isReviewMode={isReviewMode}
+          scoreToneClass={scoreToneClass}
+          onAdjust={(delta) => onAdjustScore(match, 'A', delta)}
+          onSetScore={(score) => onSetScore(match, 'A', score)}
+        />
+        <div className="text-center text-[23px] font-semibold leading-none text-ios-gray/24">-</div>
+        <ScoreControls
+          score={match.teamB.score}
+          scoreLabel={`${getTeamScoreLabel(match.teamB.players)} on court ${match.court}`}
+          canEditScore={canEditScore}
+          canDecrement={canDecrementB}
+          isReviewMode={isReviewMode}
+          scoreToneClass={scoreToneClass}
+          onAdjust={(delta) => onAdjustScore(match, 'B', delta)}
+          onSetScore={(score) => onSetScore(match, 'B', score)}
+        />
+      </div>
+
+      {format === 'Match Play' && (
+        <button
+          type="button"
+          disabled={!canEditScore}
+          className="mx-auto mt-3 block rounded-full border border-black/[0.06] bg-[#FAFAFB] px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-ios-gray/72"
+        >
+          Points {match.pointsA || '0'}-{match.pointsB || '0'}
+        </button>
+      )}
+    </div>
   );
 };
 
-const TeamColumn = ({
+const TeamName = ({
   team,
   match,
   isActiveRound,
   isReadOnly,
-  renderPlayerAvatar,
   onOpenSwapPlayer
 }: {
   team: 'A' | 'B';
   match: Match;
   isActiveRound: boolean;
   isReadOnly: boolean;
-  renderPlayerAvatar: (player: Player, className: string, fallbackClassName?: string) => ReactNode;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
 }) => {
   const teamData = team === 'A' ? match.teamA : match.teamB;
   const canSwap = isActiveRound && !isReadOnly;
 
   return (
-    <div className="flex flex-col items-center gap-1 min-w-0">
-      <div className="flex -space-x-3">
-        {teamData.players.map((player, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={() => canSwap && onOpenSwapPlayer({ matchId: match.id, team, playerIndex: idx, currentPlayer: player })}
-            className={cn(
-              "w-9 h-9 rounded-full border-2 border-white/95 bg-ios-gray/15 flex items-center justify-center text-[10px] font-bold",
-              canSwap ? "cursor-pointer tap-target" : "cursor-default"
-            )}
-            disabled={!canSwap}
-            aria-label={`Ganti ${player.name}`}
-          >
-            {renderPlayerAvatar(player, 'h-full w-full rounded-full flex items-center justify-center bg-ios-gray/15', 'text-ios-gray')}
-          </button>
-        ))}
-      </div>
+    <div className={cn('flex min-w-0 flex-col gap-2', team === 'A' ? 'items-start text-left' : 'items-end text-right')}>
       <button
         type="button"
         onClick={() => canSwap && onOpenSwapPlayer({ matchId: match.id, team, playerIndex: 0, currentPlayer: teamData.players[0] })}
         className={cn(
-          "bg-transparent border-0 p-0 text-[12px] font-semibold text-on-surface/62 text-center truncate w-full leading-none tracking-[0.005em]",
+          "line-clamp-2 max-w-full bg-transparent border-0 p-0 font-display text-[15px] font-bold leading-[1.16] tracking-[-0.018em] text-on-surface",
+          team === 'B' && 'text-right',
           canSwap ? "cursor-pointer tap-target" : "cursor-default"
         )}
         disabled={!canSwap || !teamData.players[0]}
@@ -261,4 +364,172 @@ const TeamColumn = ({
       </button>
     </div>
   );
+};
+
+const ScoreControls = ({
+  score,
+  scoreLabel,
+  canEditScore,
+  canDecrement,
+  isReviewMode,
+  scoreToneClass,
+  onAdjust,
+  onSetScore
+}: {
+  score: number;
+  scoreLabel: string;
+  canEditScore: boolean;
+  canDecrement: boolean;
+  isReviewMode: boolean;
+  scoreToneClass: string;
+  onAdjust: (delta: number) => void;
+  onSetScore: (score: number) => void;
+}) => {
+  const [draftScore, setDraftScore] = useState(String(score));
+  const [isEditing, setIsEditing] = useState(false);
+  const [isPulseActive, setIsPulseActive] = useState(false);
+  const previousScoreRef = useRef(score);
+  const hasScore = score > 0;
+
+  useEffect(() => {
+    if (!isEditing) setDraftScore(String(score));
+  }, [isEditing, score]);
+
+  useEffect(() => {
+    if (previousScoreRef.current !== score) {
+      previousScoreRef.current = score;
+      setIsPulseActive(false);
+      const frameId = window.requestAnimationFrame(() => setIsPulseActive(true));
+      const timeoutId = window.setTimeout(() => setIsPulseActive(false), 220);
+      return () => {
+        window.cancelAnimationFrame(frameId);
+        window.clearTimeout(timeoutId);
+      };
+    }
+  }, [score]);
+
+  const commitScore = (value: string) => {
+    const trimmedValue = value.trim();
+    const nextScore = trimmedValue === '' ? 0 : Number.parseInt(trimmedValue, 10);
+    if (!Number.isFinite(nextScore)) {
+      setDraftScore(String(score));
+      return;
+    }
+    onSetScore(Math.max(0, nextScore));
+  };
+
+  return (
+    <div className="grid grid-cols-[32px_54px_32px] items-center justify-center gap-1.5">
+      <button
+        type="button"
+        disabled={!canDecrement}
+        onClick={() => onAdjust(-1)}
+        className={cn(
+          'tap-target flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-[0.97]',
+          canDecrement
+            ? 'border-black/[0.08] bg-white text-ios-gray/58'
+            : 'pointer-events-none border-transparent bg-transparent text-ios-gray/0 opacity-0 active:scale-100',
+          isReviewMode && canDecrement && 'border-black/[0.08] bg-black/[0.02] text-ios-gray/62'
+        )}
+        aria-label={`Decrease score for ${scoreLabel}`}
+      >
+        <Minus size={15} strokeWidth={2.4} />
+      </button>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        disabled={!canEditScore}
+        value={isEditing ? draftScore : String(score)}
+        onFocus={(event) => {
+          setIsEditing(true);
+          setDraftScore(String(score));
+          window.requestAnimationFrame(() => event.currentTarget.select());
+        }}
+        onChange={(event) => {
+          const nextValue = event.target.value.replace(/\D/g, '').slice(0, 2);
+          setDraftScore(nextValue);
+          if (nextValue !== '') commitScore(nextValue);
+        }}
+        onBlur={() => {
+          commitScore(draftScore);
+          setIsEditing(false);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur();
+          }
+        }}
+        className={cn(
+          'tap-target h-14 min-w-0 appearance-none border-0 bg-transparent p-0 text-center font-display text-[44px] font-bold leading-none tracking-[-0.035em] tabular-nums outline-none transition-colors focus:text-primary focus:drop-shadow-[0_5px_12px_rgba(230,94,20,0.14)] disabled:opacity-100',
+          isPulseActive && 'active-score-pop',
+          canEditScore || isReviewMode ? scoreToneClass : 'text-[#101010]'
+        )}
+        aria-label={`Score for ${scoreLabel}`}
+      />
+      <button
+        type="button"
+        disabled={!canEditScore}
+        onClick={() => onAdjust(1)}
+        className={cn(
+          'tap-target flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-[0.97] disabled:opacity-40 disabled:shadow-none disabled:active:scale-100',
+          isReviewMode
+            ? 'border-primary/12 bg-primary/[0.035] text-primary'
+            : hasScore
+              ? 'border-black/[0.08] bg-white text-primary hover:border-primary/18 hover:bg-primary/[0.04]'
+              : 'border-primary/14 bg-primary/[0.055] text-primary hover:bg-primary/[0.08]'
+        )}
+        aria-label={`Increase score for ${scoreLabel}`}
+      >
+        <Plus size={16} strokeWidth={2.5} />
+      </button>
+    </div>
+  );
+};
+
+const getTeamScoreLabel = (players: Player[]) => {
+  const names = players.map((player) => player.name).filter(Boolean);
+  if (names.length === 0) return 'team';
+  if (names.length === 1) return names[0];
+  return names.join(' and ');
+};
+
+const getSittingPlayersSummary = (players: Player[]) => {
+  const names = players.map((player) => player.name).filter(Boolean);
+  const fullLabel = names.join(', ');
+  if (names.length <= 3) {
+    return {
+      displayLabel: fullLabel,
+      fullLabel,
+    };
+  }
+
+  return {
+    displayLabel: `${names.slice(0, 3).join(', ')} +${names.length - 3} more`,
+    fullLabel,
+  };
+};
+
+const isMatchScoreReady = (match: Match, format: MatchFormat, totalPoints: number) => {
+  if (match.status === 'completed') return true;
+  const scoreA = match.teamA.score || 0;
+  const scoreB = match.teamB.score || 0;
+  if (format !== 'Match Play' && totalPoints > 0) {
+    return scoreA + scoreB === totalPoints && (scoreA > 0 || scoreB > 0);
+  }
+  return scoreA > 0 || scoreB > 0;
+};
+
+const getMatchPointProgress = (match: Match, format: MatchFormat, totalPoints: number) => {
+  if (format === 'Match Play' || totalPoints <= 0) {
+    return { entered: 0, remaining: 0 };
+  }
+
+  const scoreA = Math.max(0, Number(match.teamA.score || 0));
+  const scoreB = Math.max(0, Number(match.teamB.score || 0));
+  const entered = Math.min(totalPoints, scoreA + scoreB);
+  return {
+    entered,
+    remaining: Math.max(0, totalPoints - entered),
+  };
 };

@@ -1,6 +1,6 @@
 # FOM Play SSOT / Product-Technical PRD
 
-Last Updated: 2026-04-24 (Asia/Jakarta)
+Last Updated: 2026-05-12 (Asia/Jakarta)
 Document Basis: current workspace codebase snapshot, including latest local source changes
 Owner: Product / Engineering (FOM Play)
 
@@ -28,12 +28,15 @@ Primary user jobs:
 - share live progress and standings through read-only links
 - track long-term MMR and match history
 - manage profile and friends
+- schedule future match rooms and collect participants before game day
 
 Primary user roles:
 - Host: creates and manages the active match
 - Player: can join the ecosystem as a registered user, appear in ranking, and become a friend
 - Shared Viewer: opens a read-only shared link without needing edit permission
 - Admin: can read admin-only feedback inbox and use admin-protected server-managed datasets
+- Room Host: creates a scheduled room, manages joined participants, and launches the room into an active match
+- Room Participant: joins or leaves eligible rooms before the host starts the match
 
 ## 2. Current Product Scope
 Supported match formats:
@@ -46,6 +49,7 @@ Supported major surfaces:
 - public marketing pages inside the React marketing shell on selected routes
 - static blog / landing artifact at the root hosting entrypoint
 - read-only shared live and standings links via query params
+- scheduled match rooms for future sessions
 
 Core promises:
 - resume active match after refresh / reopen
@@ -82,8 +86,9 @@ Implication:
 ### 4.3 Shared routes
 - Live shared match: `?shared={shareId}`
 - Shared standings: `?shared={shareId}&view=klasemen`
+- Room invite / RSVP deep link: `?room={roomId}`
 
-Shared links are read-only.
+Shared match links are read-only. Room links hydrate the room detail surface after auth state is resolved.
 
 ## 5. App Navigation Map
 Current internal `screen` model:
@@ -101,6 +106,10 @@ Current internal `screen` model:
 - `mmr-history`
 - `profile`
 - `friends`
+- `rooms`
+- `room-editor`
+- `room-detail`
+- `room-setup`
 
 Notes:
 - legacy `preview` is no longer part of the active flow
@@ -120,6 +129,8 @@ Notes:
 - `FriendRequest`: pending / accepted / declined social connection request
 - `PlayerMatchLedgerEntry`: immutable per-player match-level MMR ledger row
 - `AppNotification`: in-app notification item
+- `Room`: scheduled pre-match planning container with host, visibility, settings snapshot, and participants
+- `RoomParticipant`: player registration state inside a room before launch
 
 ### 6.2 Important Tournament fields
 - `format`: `Americano` | `Mexicano` | `Match Play`
@@ -129,6 +140,20 @@ Notes:
 - `inactivePlayerIds`: players parked for upcoming rounds
 - `courtChanges`: future-effective court count changes
 - `startedAt` / `endedAt`: lifecycle timestamps
+
+### 6.3 Important Room fields
+- `hostUid`: room owner and only user allowed to launch the room
+- `title` / `description`: room-facing copy
+- `status`: `draft` | `scheduled` | `open` | `in_progress` | `completed` | `cancelled`
+- `visibility`: `private` | `friends` | `public`
+- `scheduledFor`: planned match timestamp in milliseconds
+- `settings`: snapshot of match setup fields used to create the launched tournament
+- `participants`: joined / invited / declined / removed participant snapshots
+- `minPlayers` / `maxPlayers`: launch threshold and displayed capacity
+- `feeEnabled` / `feeAmount`: modeled optional room fee metadata
+- `matchSetupConfiguredAt`: marker that host has configured launch-ready match setup
+- `launchedTournamentId`: tournament ID created from the room
+- `launchPayload`: launch metadata plus generated tournament snapshot
 
 ## 7. Screen-By-Screen Product Spec
 
@@ -157,6 +182,7 @@ Important constraints:
 What user can do:
 - start a new match
 - continue an existing active match
+- open Rooms
 - jump to ranking from the current user card
 - open notifications
 - open full history list
@@ -197,8 +223,11 @@ Player sources:
 
 Current feature logic:
 - location autocomplete tries Google Places first when configured, then falls back to Photon / Nominatim
+- courts, rounds, and points can be changed through stepper buttons or direct numeric input with min/max clamps
 - selected players are deduped by ID
 - selected players are kept in sync with the broader local player catalog
+- selected players now live directly in the tournament draft rather than a separate picker-only state
+- FOM roster profiles are refreshed from current user / friend profile data, including name, avatar, and latest MMR
 - player integrity recovery removes duplicates and restores missing selected players
 - `Generate Match` is locked until selected player count is at least `courts * 4`
 - self player cannot be removed from the local player catalog
@@ -229,6 +258,7 @@ What user can do:
 - open standings
 - share live match link
 - swap players inside a match
+- replace a manual player with a registered FOM friend
 - edit total rounds
 - edit court count
 - edit active players for upcoming rounds
@@ -257,6 +287,8 @@ Round progression logic:
 
 Live roster logic:
 - active-player edits apply starting from the next round
+- roster save can combine active/inactive changes with manual-player replacements in one action
+- replacing a manual player rewrites player references in tournament players, byes, and match teams
 - court count changes apply starting from the next round
 - new manual players added during active play join from the next round
 - for Americano, future rounds are rebuilt whenever roster / active player / court changes require it
@@ -306,7 +338,7 @@ Share logic:
 Current product status:
 - notification feature is temporarily disabled
 - notification inbox is hidden from the app shell
-- local toast notifications are disabled
+- transient toast notifications can still be shown for immediate feedback such as share success/failure
 - app must not write to `users/{uid}/notifications`
 - notification code is retained behind a feature flag for future reuse
 
@@ -456,6 +488,72 @@ Friends logic:
 - selecting a friend also ensures the friend exists in the broader local `allPlayers` catalog
 - friend `lastPlayedAt` can be updated when a friend is brought into match flow
 
+## 7.15 Rooms (`screen = rooms`, `room-editor`, `room-detail`, `room-setup`)
+Current product status:
+- Rooms are an authenticated pre-match planning surface for scheduled future sessions
+- Dashboard exposes a Rooms entrypoint
+- Room list shows rooms hosted by the current user and upcoming public rooms not hosted by the current user
+- Room invite links use `/app?room={roomId}` style query params and open room detail after auth bootstrap
+
+What user can do on room list:
+- refresh hosted and public upcoming rooms
+- create a room
+- open room detail
+- return to dashboard
+
+What user can do in room editor:
+- set room title and description
+- choose schedule date/time
+- choose visibility: private, friends, or public
+- choose format: Match Play, Americano, or Mexicano
+- choose ranking criteria
+- choose Match Play scoring type when relevant
+- set courts, rounds, and slots
+- set venue and city/area
+
+What user can do in room detail:
+- inspect room status, visibility, format, slots, schedule, venue/location, scoring summary, and participant list
+- join a non-host room
+- leave a joined non-host room
+- share a room invite text/link
+- as host, configure match setup before launch
+- as host, start a scheduled room once joined players meet the minimum threshold
+
+What host can do in room setup:
+- configure the launch tournament settings from the room context
+- save settings back into `room.settings`
+- mark `matchSetupConfiguredAt` so the room can be launched
+
+Room creation logic:
+- host must be logged in
+- created rooms default to `status = scheduled`
+- host is inserted as the first joined participant
+- `minPlayers` currently defaults to 4
+- non-Match-Play room settings default `totalPoints` to 21
+- Match Play room settings store scoring type and use `totalPoints = 0`
+
+Room participation logic:
+- join / leave writes the full `participants` array back to the room document
+- host cannot join or leave their own room through the participant actions
+- joined participant snapshots use the current user's profile identity and MMR snapshot
+
+Room launch logic:
+- only the host can start the room
+- room must be `scheduled`
+- room must have match setup configured
+- joined participant count must be at least `max(4, minPlayers)`
+- joined participants are converted into `Player` objects
+- room settings are mapped into a tournament draft
+- the normal tournament generation path creates rounds
+- launched tournament becomes the active tournament and is persisted through the active tournament snapshot path
+- room is updated to `status = in_progress`, with `launchedTournamentId` and `launchPayload`
+
+Current constraints / gaps:
+- private / friends visibility is modeled in data, but current list fetch only reads host-owned rooms plus public upcoming rooms
+- room completion/cancellation lifecycle is modeled but not fully surfaced in UI
+- room repository currently scans the `rooms` collection and filters client-side for hosted/public lists, so index pressure is lower but broad reads need review before scale
+- room Firestore rules currently allow any authenticated read, public unauthenticated read for `visibility = public`, host-owned create/delete, and participant-array updates for authenticated users; this is MVP-level and should be tightened as room visibility semantics mature
+
 ## 8. Match Format Logic
 
 ## 8.1 Americano
@@ -513,17 +611,19 @@ When a tournament document is finalized:
 
 ## 9.2 MMR formula
 Current formula:
-- win with score diff under 10: `+25`
-- win with score diff 10 or more: `+40`
-- loss with score diff under 10: `-20`
-- loss with score diff 10 or more: `-35`
+- standard win, where winner score share is under 70% of total match score: `+25`
+- dominant win, where winner score share is 70% or more of total match score: `+40`
+- standard loss, where opponent score share is under 70% of total match score: `-20`
+- heavy loss, where opponent score share is 70% or more of total match score: `-35`
 - underdog win bonus: `+15`
 - favorite loss penalty: `-15`
-- draw: `0`
+- draw reward: `+8`
+- underdog draw bonus: `+0` to `+20`, calculated as `min(20, floor(MMR gap / 50) * 3)`
 
 Team strength logic:
 - underdog / favorite is decided from average pre-match team MMR
 - manual players and non-Firebase IDs do not participate in server MMR updates
+- public MMR display adds a 1,000-point offset to raw MMR; raw MMR remains the sorting and calculation source
 
 ## 9.3 History sourcing
 Current app attempts:
@@ -533,8 +633,8 @@ Current app attempts:
 4. fallback to owner-based tournament query if ledger path fails
 
 Important note:
-- `tournaments` documents are owner-scoped by rules
-- participant history hydration therefore depends on what the current client is allowed to read and may fall back to owner-oriented history behavior
+- `tournaments` and `tournament_details` reads allow owner, admin, or authenticated users with matching `users/{uid}/history_summary/{tournamentId}`
+- participant history hydration therefore depends on server/client creation of readable history summary docs and may still fall back to owner-oriented history behavior
 
 ## 9.4 Deleting finalized history
 Deleting a finalized tournament:
@@ -565,9 +665,11 @@ Current restore sequence:
 
 ## 10.3 Active tournament sync
 - active tournament is always cached locally for signed-in non-shared users
+- local active tournament/player cache strips oversized inline image data and tournament player avatars before writing
 - active tournament cloud sync is milestone-based, not time-based
 - app writes `users/{uid}.activeTournament` only on important host actions such as creating a match, sharing, changing courts, deleting rounds, advancing to the next round, or deleting the match
 - when a tournament is finished, app does not persist the full final tournament snapshot back into `activeTournament`; instead it clears cloud active state with a lightweight fresh draft payload to avoid stale restore and reduce write size
+- if final history save fails, the finalized active tournament is retained as a recovery snapshot and the app blocks leaving the finish flow
 - adding players during an active match, changing active-player setup, changing total rounds, and swapping players stay local first and are only persisted when the next milestone save happens
 - score edits and live point updates stay local until one of those milestone actions happens
 - UI save state badge reflects `saving`, `saved`, or `error`
@@ -584,12 +686,22 @@ Current restore sequence:
 
 ## 10.6 Shared match sync
 - active host writes `sharedMatches/{shareId}`
+- shared tournament payloads strip oversized inline image data and player avatars before Firestore writes
 - current active share ID is reused when possible
 - share ID can be restored from local storage for the same active tournament
 - shared viewers subscribe live to the shared document
 - score edits do not sync to `sharedMatches` immediately
 - active shared payload sync happens when the host advances to the next round
 - final shared payload sync also happens when the host finishes the tournament
+
+## 10.7 Room sync
+- room data is stored in Firestore `rooms`
+- current repository reads the `rooms` collection and filters hosted rooms by `hostUid` and public upcoming rooms by `visibility = public` plus `scheduledFor >= now`
+- room detail uses direct document reads after join / leave / setup save / start to refresh the selected room
+- room setup saves `settings` and `matchSetupConfiguredAt`
+- room invite sharing builds `/app?room={roomId}` text and uses native share, clipboard, or manual prompt fallback
+- room launch writes both active tournament state and room launch metadata
+- room data is not currently cached in local storage
 
 ## 11. Current Technical Data Storage
 
@@ -685,6 +797,33 @@ Purpose:
 Common fields:
 - `tournament`
 - `hostUid`
+- `createdAt`
+- `updatedAt`
+
+### `rooms/{roomId}`
+Purpose:
+- scheduled pre-match planning documents
+- participant collection before a match starts
+- launch bridge into the active tournament flow
+
+Common fields:
+- `id`
+- `hostUid`
+- `hostDisplayName`
+- `title`
+- `description`
+- `status`
+- `visibility`
+- `scheduledFor`
+- `settings`
+- `participants`
+- `minPlayers`
+- `maxPlayers`
+- `feeEnabled`
+- `feeAmount`
+- `matchSetupConfiguredAt`
+- `launchedTournamentId`
+- `launchPayload`
 - `createdAt`
 - `updatedAt`
 
@@ -787,7 +926,9 @@ Stored in browser local storage:
 - `friends`: owner reads; owner and certain self-document writes allowed
 - `friendRequests` / `sentFriendRequests`: scoped to owner or involved actor
 - `notifications`: rule remains in place for legacy compatibility, but app writes are currently disabled
-- `tournaments`: owner or admin read/write/delete
+- `tournaments`: owner/admin write/delete; read also allows authenticated participants with matching `history_summary`
+- `tournament_details`: owner/admin write/delete; read also allows authenticated participants with matching `history_summary`
+- `rooms`: authenticated read, public unauthenticated read when `visibility = public`, host create/delete, host updates, and authenticated participant-array updates
 - `sharedMatches`: public read; authenticated host-owned write/delete
 
 ### 12.2 Server-controlled collections
@@ -828,6 +969,8 @@ Tracked surface examples:
 - ranking now depends on server-managed `player_stats`, not only `users`
 - history hydration for non-owner participants depends on readable tournament documents and fallback logic
 - root hosting behavior has shifted from old React hybrid homepage assumptions to a blog-first landing artifact in current build packaging
+- rooms are implemented as an MVP flow, but broad read behavior, participant-array concurrency, and visibility semantics are product-critical before broad rollout
+- inline image/avatar stripping is now part of active cache, share payload, and final history write safety
 
 ## 17. Documentation Update Policy
 Every feature or logic change must update this SSOT in the same work batch when it affects:
@@ -841,6 +984,20 @@ Every feature or logic change must update this SSOT in the same work batch when 
 
 ## 18. Recent Codebase Milestones
 This log reflects relevant repo milestones for the current behavior described above. It is a codebase reference, not a guaranteed production deploy log.
+
+### 2026-07-02 (deployed to production hosting)
+- FOM Rewind v1 (PRD_FOM_REWIND.md + mockup v2): banner entrypoint di Klasemen (kedua tab, hanya saat ended, tersembunyi untuk shared viewer), flow upload foto lokal-only (tidak di-upload) → generate 12 slide 9:16 (1080×1920) → story viewer (tap 40/60, swipe, share/download per slide, download semua, regenerate)
+- Slide: Cover, Numbers, Podium, Champion, Dream Team, Match of the Night, Photo Dump, Podium Cupu, Cupu D'Or, Toxic Awards, Standings, Outro; toxic OFF → slide gold hilang
+- Copy bank config-driven (`src/features/rewind/rewindCopyBank.ts`) seeded deterministic per match, anti-duplikat, intensity-aware
+- Share cards: Standings Card redesign (nama penuh + PTS/DIFF, highlight ME), My Match Card foto lokal + scrim adaptif, award Glow Down baru
+- Logo baru (fom-play-logo-dark/light-cropped) dipakai di slide Rewind
+- Deploy: `npm run build` + `firebase deploy --only hosting` (hosting saja; functions/rules tidak disentuh)
+
+### 2026-05-12 (local workspace)
+- Rooms MVP updated with invite deep links, room share text, host match setup, and launch guard via `matchSetupConfiguredAt`
+- Active/share/history persistence now strips large inline images and player avatars before local or Firestore payload writes
+- Participant history rules now allow authenticated reads when `users/{uid}/history_summary/{tournamentId}` exists
+- Active roster editing now supports manual-player replacement with a FOM friend
 
 ### 2026-04-23 (`efb354f`)
 - Route packaging and blog cutover checkpoint

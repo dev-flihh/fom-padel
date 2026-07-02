@@ -1,0 +1,575 @@
+import type { Dispatch, SetStateAction } from 'react';
+import { formatDurationFromMs } from './matchTimeUtils';
+import { sanitizeInactivePlayerIds } from '../tournaments/tournamentDraft';
+import type { Player, Tournament } from '../../types';
+
+type AddNotification = (
+  title: string,
+  message: string,
+  type: 'match' | 'tournament' | 'system' | 'achievement',
+  tone?: 'info' | 'success' | 'error' | 'achievement'
+) => void;
+
+type Params = {
+  tournament: Tournament;
+  needsRegenerateFromRound: number | null;
+  setTournament: Dispatch<SetStateAction<Tournament>>;
+  setNeedsRegenerateFromRound: Dispatch<SetStateAction<number | null>>;
+  persistActiveTournamentSnapshot: (nextTournament: Tournament) => Promise<void>;
+  addNotification: AddNotification;
+  rebuildAmericanoFutureRounds: (baseTournament: Tournament, totalRounds: number) => Tournament['rounds'];
+};
+
+type ManualPlayerReplacement = {
+  manualPlayerId: string;
+  newPlayer: Player;
+};
+
+export const useMatchMutationActions = ({
+  tournament,
+  needsRegenerateFromRound,
+  setTournament,
+  setNeedsRegenerateFromRound,
+  persistActiveTournamentSnapshot,
+  addNotification,
+  rebuildAmericanoFutureRounds,
+}: Params) => {
+  const applyManualPlayerReplacement = (
+    baseTournament: Tournament,
+    replacement: ManualPlayerReplacement
+  ): Tournament => {
+    const safeManualPlayerId = String(replacement.manualPlayerId || '').trim();
+    if (!safeManualPlayerId) return baseTournament;
+
+    const manualPlayer = (baseTournament.players || []).find((player) => player.id === safeManualPlayerId);
+    if (!manualPlayer) return baseTournament;
+    if (manualPlayer.id === replacement.newPlayer.id) return baseTournament;
+
+    const hasExistingRegisteredPlayer = (baseTournament.players || []).some((player) => (
+      player.id === replacement.newPlayer.id && player.id !== safeManualPlayerId
+    ));
+    if (hasExistingRegisteredPlayer) return baseTournament;
+
+    const replacePlayerRef = (player: Player) => (
+      player.id === safeManualPlayerId
+        ? { ...replacement.newPlayer }
+        : player
+    );
+
+    const nextPlayers = baseTournament.players.map(replacePlayerRef);
+    return {
+      ...baseTournament,
+      players: nextPlayers,
+      inactivePlayerIds: sanitizeInactivePlayerIds(
+        nextPlayers,
+        (baseTournament.inactivePlayerIds || []).map((playerId) => (
+          playerId === safeManualPlayerId ? replacement.newPlayer.id : playerId
+        ))
+      ),
+      rounds: baseTournament.rounds.map((round) => ({
+        ...round,
+        playersBye: (round.playersBye || []).map(replacePlayerRef),
+        matches: round.matches.map((match) => ({
+          ...match,
+          teamA: {
+            ...match.teamA,
+            players: match.teamA.players.map(replacePlayerRef),
+          },
+          teamB: {
+            ...match.teamB,
+            players: match.teamB.players.map(replacePlayerRef),
+          },
+        })),
+      })),
+    };
+  };
+
+  const handleDeleteRoundsFrom = (roundId: number) => {
+    const safeRoundId = Math.max(2, Math.floor(roundId || 0));
+    const now = Date.now();
+    const hasAnyDeletion = (tournament.rounds || []).some((round) => round.id >= safeRoundId);
+    if (!hasAnyDeletion) return;
+
+    if (!tournament.rounds || tournament.rounds.length === 0) return;
+
+    const keptRounds = tournament.rounds
+      .filter((round) => round.id < safeRoundId)
+      .map((round) => ({
+        ...round,
+        playersBye: [...(round.playersBye || [])],
+        matches: round.matches.map((match) => ({
+          ...match,
+          teamA: { ...match.teamA, players: [...match.teamA.players] },
+          teamB: { ...match.teamB, players: [...match.teamB.players] },
+        })),
+      }));
+
+    if (keptRounds.length === tournament.rounds.length) return;
+
+    let normalizedRounds = keptRounds;
+    const activeIdx = normalizedRounds.findIndex((round) => round.matches.some((match) => match.status === 'active'));
+    if (activeIdx === -1 && normalizedRounds.length > 0) {
+      const lastIdx = normalizedRounds.length - 1;
+      normalizedRounds = normalizedRounds.map((round, idx) => ({
+        ...round,
+        matches: round.matches.map((match) => {
+          if (idx === lastIdx) {
+            return {
+              ...match,
+              status: 'active' as const,
+              startedAt: match.startedAt || now,
+            };
+          }
+          return {
+            ...match,
+            status: 'completed' as const,
+            duration: match.duration || (match.startedAt ? formatDurationFromMs(now - match.startedAt) : '00:00'),
+          };
+        }),
+      }));
+    }
+
+    const nextTournament: Tournament = {
+      ...tournament,
+      rounds: normalizedRounds,
+      endedAt: undefined,
+    };
+
+    const persistedTournament = (
+      nextTournament.format === 'Americano'
+        ? {
+            ...nextTournament,
+            rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds),
+          }
+        : nextTournament
+    );
+
+    setTournament(persistedTournament);
+    void persistActiveTournamentSnapshot(persistedTournament);
+
+    setNeedsRegenerateFromRound(null);
+    addNotification(
+      'Round Dihapus',
+      `Round ${safeRoundId} onward has been deleted. Please regenerate from the latest scores.`,
+      'system'
+    );
+  };
+
+  const handleUpdateScore = (matchId: string, team: 'A' | 'B', score: number) => {
+    let shouldInvalidateFutureRounds = false;
+    let invalidateFromRoundId: number | null = null;
+    setTournament((prev) => {
+      const editedRoundIndex = prev.rounds.findIndex((round) => round.matches.some((match) => match.id === matchId));
+      const activeRoundIndex = prev.rounds.findIndex((round) => round.matches.some((match) => match.status === 'active'));
+      const canInvalidateFutureRounds = (
+        editedRoundIndex !== -1 &&
+        activeRoundIndex !== -1 &&
+        editedRoundIndex < activeRoundIndex &&
+        prev.format !== 'Match Play'
+      );
+      let updatedMatchIsValidForStanding = false;
+
+      const newRounds = prev.rounds.map((round) => ({
+        ...round,
+        matches: round.matches.map((match) => {
+          if (match.id === matchId) {
+            const nextScoreA = team === 'A' ? score : match.teamA.score;
+            const nextScoreB = team === 'B' ? score : match.teamB.score;
+            updatedMatchIsValidForStanding = (
+              nextScoreA + nextScoreB === prev.totalPoints &&
+              (nextScoreA > 0 || nextScoreB > 0)
+            );
+            return {
+              ...match,
+              teamA: { ...match.teamA, score: nextScoreA },
+              teamB: { ...match.teamB, score: nextScoreB },
+            };
+          }
+          return match;
+        }),
+      }));
+
+      if (canInvalidateFutureRounds && updatedMatchIsValidForStanding) {
+        shouldInvalidateFutureRounds = true;
+        invalidateFromRoundId = editedRoundIndex + 2;
+      }
+
+      return { ...prev, rounds: newRounds };
+    });
+
+    if (shouldInvalidateFutureRounds && invalidateFromRoundId !== null) {
+      const nextFlag = needsRegenerateFromRound === null
+        ? invalidateFromRoundId
+        : Math.min(needsRegenerateFromRound, invalidateFromRoundId);
+
+      if (nextFlag !== needsRegenerateFromRound) {
+        setNeedsRegenerateFromRound(nextFlag);
+        addNotification(
+          'Schedule Needs Regeneration',
+          `Older round scores were updated. Delete round ${nextFlag}+ and regenerate.`,
+          'system'
+        );
+      }
+    }
+  };
+
+  const handleUpdateActivePlayers = (activePlayerIds: string[]) => {
+    const knownIds = new Set((tournament.players || []).map((player) => player.id));
+    const requestedActiveIds = Array.from(new Set(activePlayerIds.filter((id) => knownIds.has(id))));
+    const requestedActiveSet = new Set(requestedActiveIds);
+    const nextInactivePlayerIds = (tournament.players || [])
+      .map((player) => player.id)
+      .filter((playerId) => !requestedActiveSet.has(playerId));
+    const currentInactivePlayerIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
+    const hasChanges = (
+      nextInactivePlayerIds.length !== currentInactivePlayerIds.length ||
+      nextInactivePlayerIds.some((playerId, idx) => playerId !== currentInactivePlayerIds[idx])
+    );
+
+    if (!hasChanges) return;
+
+    const sanitizedInactive = sanitizeInactivePlayerIds(tournament.players || [], nextInactivePlayerIds);
+    const nextTournament: Tournament = {
+      ...tournament,
+      inactivePlayerIds: sanitizedInactive,
+    };
+    const persistedTournament = (
+      tournament.format === 'Americano' && tournament.rounds.length > 0
+        ? {
+            ...nextTournament,
+            rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds),
+          }
+        : nextTournament
+    );
+
+    setTournament(persistedTournament);
+
+    addNotification(
+      'Active Players Updated',
+      'Changes are saved and will apply starting from the next round.',
+      'system'
+    );
+  };
+
+  const handleUpdateRounds = (requestedRounds: number) => {
+    const safeRequested = Number.isFinite(requestedRounds) ? Math.floor(requestedRounds) : NaN;
+    if (!Number.isFinite(safeRequested) || safeRequested < 1) return false;
+
+    const latestLockedRoundIndex = tournament.rounds.reduce((latestIdx, round, idx) => {
+      const hasPlayedMatch = (round.matches || []).some((match) => match.status !== 'pending');
+      return hasPlayedMatch ? idx : latestIdx;
+    }, -1);
+    const minAllowedRounds = Math.max(1, latestLockedRoundIndex + 1);
+    const nextNumRounds = Math.max(minAllowedRounds, Math.min(50, safeRequested));
+
+    let nextRounds = [...tournament.rounds];
+
+    if (nextNumRounds < nextRounds.length) {
+      nextRounds = nextRounds.slice(0, nextNumRounds);
+    }
+
+    if (tournament.format === 'Americano') {
+      const nextTournamentBase = {
+        ...tournament,
+        inactivePlayerIds: sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds),
+      };
+      nextRounds = rebuildAmericanoFutureRounds(nextTournamentBase, nextNumRounds);
+    }
+
+    const completedRoundCount = nextRounds.filter((round) => (
+      (round.matches || []).length > 0 &&
+      round.matches.every((match) => match.status === 'completed')
+    )).length;
+    const effectiveTotalRounds = Math.max(nextNumRounds, nextRounds.length);
+    const shouldRemainEnded = effectiveTotalRounds > 0 && completedRoundCount >= effectiveTotalRounds;
+    const nextTournament: Tournament = {
+      ...tournament,
+      numRounds: nextNumRounds,
+      rounds: nextRounds,
+      endedAt: shouldRemainEnded ? tournament.endedAt : undefined,
+    };
+
+    setTournament(nextTournament);
+
+    if (nextNumRounds === safeRequested) {
+      addNotification('Round Updated', `Total rounds updated to ${nextNumRounds}.`, 'system');
+    } else {
+      addNotification('Round Adjusted', `Total rounds were adjusted to ${nextNumRounds} to keep the setup valid.`, 'system');
+    }
+    return true;
+  };
+
+  const handleUpdateCourts = (requestedCourts: number) => {
+    const safeRequested = Number.isFinite(requestedCourts) ? Math.floor(requestedCourts) : NaN;
+    if (!Number.isFinite(safeRequested) || safeRequested < 1) return false;
+    const nextCourts = Math.max(1, Math.min(12, safeRequested));
+
+    if (nextCourts === tournament.courts) return true;
+
+    const activeRoundIndex = tournament.rounds.findIndex((round) => round.matches.some((match) => match.status === 'active'));
+    const latestLockedRoundIndex = tournament.rounds.reduce((latestIdx, round, idx) => {
+      const hasPlayedMatch = (round.matches || []).some((match) => match.status !== 'pending');
+      return hasPlayedMatch ? idx : latestIdx;
+    }, -1);
+    const currentRoundIndex = activeRoundIndex !== -1 ? activeRoundIndex : latestLockedRoundIndex;
+    const effectiveFromRoundId = currentRoundIndex === -1 ? 1 : currentRoundIndex + 2;
+    const nextCourtChanges = [
+      ...(tournament.courtChanges || []),
+      {
+        effectiveFromRoundId,
+        fromCourts: tournament.courts,
+        toCourts: nextCourts,
+        changedAt: Date.now(),
+      },
+    ];
+    const nextTournament: Tournament = {
+      ...tournament,
+      courts: nextCourts,
+      courtChanges: nextCourtChanges,
+    };
+    const persistedTournament = (
+      tournament.format === 'Americano' && tournament.rounds.length > 0
+        ? {
+            ...nextTournament,
+            rounds: rebuildAmericanoFutureRounds(nextTournament, nextTournament.numRounds),
+          }
+        : nextTournament
+    );
+
+    setTournament(persistedTournament);
+    void persistActiveTournamentSnapshot(persistedTournament);
+
+    addNotification(
+      'Court Updated',
+      `Court count updated to ${nextCourts}. Changes apply starting from the next round.`,
+      'system'
+    );
+    return true;
+  };
+
+  const handleUpdateMatchPlayScore = (matchId: string, team: 'A' | 'B') => {
+    let setWinMessage: string | null = null;
+
+    setTournament((prev) => {
+      const newRounds = prev.rounds.map((round) => {
+        const isMatchInRound = round.matches.some((match) => match.id === matchId);
+        if (!isMatchInRound) return round;
+
+        const newMatches = round.matches.map((match) => {
+          if (match.id === matchId) {
+            const scoringType = prev.scoringType || 'Golden Point';
+            let pA = match.pointsA || '0';
+            let pB = match.pointsB || '0';
+            const gamesA = [...(match.teamA.sets || [0])];
+            const gamesB = [...(match.teamB.sets || [0])];
+            const currentSet = Number.isFinite(match.currentSet) ? (match.currentSet as number) : 0;
+            if (gamesA[currentSet] === undefined || Number.isNaN(gamesA[currentSet])) gamesA[currentSet] = 0;
+            if (gamesB[currentSet] === undefined || Number.isNaN(gamesB[currentSet])) gamesB[currentSet] = 0;
+
+            const isSetAlreadyFinished =
+              (gamesA[currentSet] >= 6 || gamesB[currentSet] >= 6) &&
+              Math.abs(gamesA[currentSet] - gamesB[currentSet]) >= 2;
+            if (isSetAlreadyFinished) {
+              return {
+                ...match,
+                teamA: { ...match.teamA, sets: gamesA, score: gamesA.reduce((a, b) => a + b, 0) },
+                teamB: { ...match.teamB, sets: gamesB, score: gamesB.reduce((a, b) => a + b, 0) },
+              };
+            }
+
+            if (team === 'A') {
+              if (pA === '0') pA = '15';
+              else if (pA === '15') pA = '30';
+              else if (pA === '30') pA = '40';
+              else if (pA === '40') {
+                if (pB === '40') {
+                  if (scoringType === 'Golden Point') pA = 'Game';
+                  else pA = 'Ad';
+                } else if (pB === 'Ad') {
+                  pB = '40';
+                } else {
+                  pA = 'Game';
+                }
+              } else if (pA === 'Ad') {
+                pA = 'Game';
+              }
+            } else {
+              if (pB === '0') pB = '15';
+              else if (pB === '15') pB = '30';
+              else if (pB === '30') pB = '40';
+              else if (pB === '40') {
+                if (pA === '40') {
+                  if (scoringType === 'Golden Point') pB = 'Game';
+                  else pB = 'Ad';
+                } else if (pA === 'Ad') {
+                  pA = '40';
+                } else {
+                  pB = 'Game';
+                }
+              } else if (pB === 'Ad') {
+                pB = 'Game';
+              }
+            }
+
+            if (pA === 'Game') {
+              gamesA[currentSet]++;
+              pA = '0';
+              pB = '0';
+            } else if (pB === 'Game') {
+              gamesB[currentSet]++;
+              pA = '0';
+              pB = '0';
+            }
+
+            if (gamesA[currentSet] >= 6 && gamesA[currentSet] - gamesB[currentSet] >= 2) {
+              setWinMessage = `Team A memenangkan set ${currentSet + 1} with score ${gamesA[currentSet]} - ${gamesB[currentSet]}`;
+            } else if (gamesB[currentSet] >= 6 && gamesB[currentSet] - gamesA[currentSet] >= 2) {
+              setWinMessage = `Team B memenangkan set ${currentSet + 1} with score ${gamesB[currentSet]} - ${gamesA[currentSet]}`;
+            }
+
+            return {
+              ...match,
+              pointsA: pA,
+              pointsB: pB,
+              teamA: { ...match.teamA, sets: gamesA, score: gamesA.reduce((a, b) => a + b, 0) },
+              teamB: { ...match.teamB, sets: gamesB, score: gamesB.reduce((a, b) => a + b, 0) },
+            };
+          }
+          return match;
+        });
+        return { ...round, matches: newMatches };
+      });
+      return { ...prev, rounds: newRounds };
+    });
+
+    if (setWinMessage) {
+      addNotification('Set Done!', setWinMessage, 'achievement');
+    }
+  };
+
+  const handleSwapPlayer = (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => {
+    const newRounds = tournament.rounds.map((round) => {
+      const isMatchInRound = round.matches.some((match) => match.id === matchId);
+      if (!isMatchInRound) return round;
+
+      let oldPlayer: Player | null = null;
+      const newMatches = round.matches.map((match) => {
+        if (match.id === matchId) {
+          const players = team === 'A' ? [...match.teamA.players] : [...match.teamB.players];
+          oldPlayer = players[playerIndex];
+          players[playerIndex] = newPlayer;
+          return {
+            ...match,
+            teamA: team === 'A' ? { ...match.teamA, players } : match.teamA,
+            teamB: team === 'B' ? { ...match.teamB, players } : match.teamB,
+          };
+        }
+        return match;
+      });
+
+      const newPlayersBye = round.playersBye.map((player) => player.id === newPlayer.id ? oldPlayer! : player);
+      return { ...round, matches: newMatches, playersBye: newPlayersBye };
+    });
+    const nextTournament: Tournament = { ...tournament, rounds: newRounds };
+    setTournament(nextTournament);
+    addNotification('Player Replaced', 'The player has been replaced on the active court.', 'system');
+  };
+
+  const handleReplaceManualPlayer = (manualPlayerId: string, newPlayer: Player) => {
+    const manualPlayer = (tournament.players || []).find((player) => player.id === String(manualPlayerId || '').trim());
+    if (!manualPlayer) return;
+    const nextTournament = applyManualPlayerReplacement(tournament, { manualPlayerId, newPlayer });
+    if (nextTournament === tournament) {
+      addNotification(
+        'Player Sudah Ada',
+        `${newPlayer.name} is already part of this match.`,
+        'system'
+      );
+      return;
+    }
+
+    setTournament(nextTournament);
+    void persistActiveTournamentSnapshot(nextTournament);
+    addNotification(
+      'Manual Player Replaced',
+      `${manualPlayer.name} is now linked to ${newPlayer.name} for this active match.`,
+      'system'
+    );
+  };
+
+  const handleSaveRosterChanges = (
+    activePlayerIds: string[],
+    replacements: ManualPlayerReplacement[]
+  ) => {
+    const normalizedReplacements = Array.isArray(replacements)
+      ? replacements.filter((replacement) => (
+          replacement &&
+          typeof replacement.manualPlayerId === 'string' &&
+          replacement.manualPlayerId.trim() &&
+          replacement.newPlayer &&
+          typeof replacement.newPlayer.id === 'string' &&
+          replacement.newPlayer.id.trim()
+        ))
+      : [];
+
+    let nextTournament = tournament;
+    normalizedReplacements.forEach((replacement) => {
+      nextTournament = applyManualPlayerReplacement(nextTournament, replacement);
+    });
+
+    const knownIds = new Set((nextTournament.players || []).map((player) => player.id));
+    const requestedActiveIds = Array.from(new Set(activePlayerIds.filter((id) => knownIds.has(id))));
+    const requestedActiveSet = new Set(requestedActiveIds);
+    const nextInactivePlayerIds = (nextTournament.players || [])
+      .map((player) => player.id)
+      .filter((playerId) => !requestedActiveSet.has(playerId));
+    const sanitizedInactive = sanitizeInactivePlayerIds(nextTournament.players || [], nextInactivePlayerIds);
+
+    const persistedTournament: Tournament = (
+      nextTournament.format === 'Americano' && nextTournament.rounds.length > 0
+        ? {
+            ...nextTournament,
+            inactivePlayerIds: sanitizedInactive,
+            rounds: rebuildAmericanoFutureRounds(
+              { ...nextTournament, inactivePlayerIds: sanitizedInactive },
+              nextTournament.numRounds
+            ),
+          }
+        : {
+            ...nextTournament,
+            inactivePlayerIds: sanitizedInactive,
+          }
+    );
+
+    const currentInactivePlayerIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
+    const hasReplacementChanges = normalizedReplacements.length > 0;
+    const hasActivePlayerChanges = (
+      sanitizedInactive.length !== currentInactivePlayerIds.length ||
+      sanitizedInactive.some((playerId, idx) => playerId !== currentInactivePlayerIds[idx])
+    );
+
+    if (!hasReplacementChanges && !hasActivePlayerChanges) return;
+
+    setTournament(persistedTournament);
+    void persistActiveTournamentSnapshot(persistedTournament);
+    addNotification(
+      'Roster Updated',
+      hasReplacementChanges
+        ? 'Manual player replacements and active player changes have been saved.'
+        : 'Changes are saved and will apply starting from the next round.',
+      'system'
+    );
+  };
+
+  return {
+    handleDeleteRoundsFrom,
+    handleUpdateScore,
+    handleUpdateActivePlayers,
+    handleUpdateRounds,
+    handleUpdateCourts,
+    handleUpdateMatchPlayScore,
+    handleSwapPlayer,
+    handleReplaceManualPlayer,
+    handleSaveRosterChanges,
+  };
+};

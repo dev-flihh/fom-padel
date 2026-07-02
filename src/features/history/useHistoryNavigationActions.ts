@@ -25,6 +25,13 @@ type KlasemenBackScreen = 'dashboard' | 'active' | 'history-detail';
 type ActiveBackScreen = 'dashboard' | 'history-detail' | 'klasemen' | 'history' | 'profile';
 type HistoryBackScreen = 'dashboard' | 'history' | 'profile';
 
+const replaceCurrentAppHistoryScreen = (screen: Screen) => {
+  if (typeof window === 'undefined') return;
+  const currentState = window.history.state;
+  if (!currentState?.__fomPlay) return;
+  window.history.replaceState({ ...currentState, __fomPlay: true, screen }, '');
+};
+
 type Params = {
   tournament: Tournament;
   selectedHistory: TournamentHistory | null;
@@ -71,8 +78,12 @@ export const useHistoryNavigationActions = ({
   recordDbError,
 }: Params) => {
   const handleOpenLiveStandings = () => {
+    const isReadOnlyHistoryMatch = Boolean(activeScreenTournament);
     setSelectedKlasemenTournament(activeScreenTournament || tournament);
-    setKlasemenBackScreen('active');
+    setKlasemenBackScreen(isReadOnlyHistoryMatch ? 'history-detail' : 'active');
+    if (isReadOnlyHistoryMatch) {
+      replaceCurrentAppHistoryScreen('klasemen');
+    }
     setScreen('klasemen');
   };
 
@@ -124,6 +135,18 @@ export const useHistoryNavigationActions = ({
     if (klasemenBackScreen === 'active') {
       setActiveScreenTournament(null);
       setActiveBackScreen('klasemen');
+      setScreen('active');
+      return;
+    }
+
+    if (klasemenBackScreen === 'history-detail') {
+      if ('numPlayers' in standingsTournament) {
+        setActiveScreenTournament(buildReadOnlyTournamentFromHistory(standingsTournament as TournamentHistory));
+      } else {
+        setActiveScreenTournament(standingsTournament as Tournament);
+      }
+      setActiveBackScreen('history-detail');
+      replaceCurrentAppHistoryScreen('active');
       setScreen('active');
       return;
     }

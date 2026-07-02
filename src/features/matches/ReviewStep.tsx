@@ -1,7 +1,8 @@
 import { type ElementType } from 'react';
-import { Camera, Circle, MapPin, Trophy, Users, Zap } from 'lucide-react';
+import { Camera, Check, Circle, Flame, MapPin, Trophy, Users, Zap } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { type MatchFormat, type RankingCriteria } from '../../types';
+import { type MatchFormat, type RankingCriteria, type ToxicIntensity } from '../../types';
+import { TOXIC_INTENSITY_OPTIONS, getToxicIntensityLabel } from './toxicSettings';
 
 type ReviewThemeColor = {
   label: string;
@@ -13,6 +14,8 @@ export const ReviewStep = ({
   format,
   formatIcon,
   criteria,
+  toxicModeEnabled,
+  toxicIntensity,
   structureLabel,
   playerCount,
   selectedThemeColor,
@@ -23,12 +26,16 @@ export const ReviewStep = ({
   wizardTitleClass,
   wizardSubtitleClass,
   wizardSoftPanelClass,
+  onToxicModeChange,
+  onToxicIntensityChange,
   onGoToStep
 }: {
   venueDisplayLabel: string;
   format: MatchFormat;
   formatIcon: ElementType;
   criteria: RankingCriteria;
+  toxicModeEnabled: boolean;
+  toxicIntensity: ToxicIntensity;
   structureLabel: string;
   playerCount: number;
   selectedThemeColor: ReviewThemeColor;
@@ -39,6 +46,8 @@ export const ReviewStep = ({
   wizardTitleClass: string;
   wizardSubtitleClass: string;
   wizardSoftPanelClass: string;
+  onToxicModeChange: (enabled: boolean) => void;
+  onToxicIntensityChange: (value: ToxicIntensity) => void;
   onGoToStep: (step: number) => void;
 }) => {
   const summaryItems = [
@@ -86,6 +95,73 @@ export const ReviewStep = ({
         })}
       </div>
 
+      <div className={cn(wizardSoftPanelClass, "p-4")}>
+        <button
+          type="button"
+          onClick={() => onToxicModeChange(!toxicModeEnabled)}
+          className={cn(
+            "tap-target flex w-full items-start gap-3 rounded-[22px] border p-3.5 text-left transition-all active:scale-[0.99]",
+            toxicModeEnabled
+              ? "border-orange-200 bg-[#fff4e8] shadow-[0_12px_24px_rgba(230,94,20,0.08)]"
+              : "border-black/5 bg-white"
+          )}
+          aria-pressed={toxicModeEnabled}
+        >
+          <span className={cn(
+            "mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-[18px]",
+            toxicModeEnabled ? "bg-primary text-white" : "bg-ios-gray/10 text-on-surface/72"
+          )}>
+            <Flame size={17} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center justify-between gap-3">
+              <span>
+                <span className="block text-[14px] font-black tracking-[-0.015em] text-on-surface">Hall of Shame</span>
+                <span className="mt-0.5 block text-[11px] font-bold uppercase tracking-[0.1em] text-primary">
+                  {toxicModeEnabled ? `Enabled | ${getToxicIntensityLabel(toxicIntensity)}` : 'Off by default'}
+                </span>
+              </span>
+              <span className={cn(
+                "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border",
+                toxicModeEnabled ? "border-primary bg-primary text-white" : "border-ios-gray/20 bg-white text-transparent"
+              )}>
+                <Check size={14} strokeWidth={3} />
+              </span>
+            </span>
+            <span className="mt-2 block text-[12px] font-medium leading-[1.55] text-ios-gray">
+              Adds a match-only roast tab in Klasemen. All banter stays about scores, losses, byes, and diff.
+            </span>
+          </span>
+        </button>
+
+        {toxicModeEnabled && (
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {TOXIC_INTENSITY_OPTIONS.map((option) => {
+              const isSelected = toxicIntensity === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onToxicIntensityChange(option.value)}
+                  className={cn(
+                    "tap-target min-h-[50px] rounded-[16px] border px-2 py-2 text-center transition-all active:scale-[0.98]",
+                    isSelected
+                      ? "border-primary bg-primary text-white"
+                      : "border-black/5 bg-white text-on-surface"
+                  )}
+                  aria-pressed={isSelected}
+                >
+                  <span className="block text-[11.5px] font-black leading-tight">{option.label}</span>
+                  <span className={cn("mt-0.5 block text-[9px] font-semibold leading-tight", isSelected ? "text-white/80" : "text-ios-gray")}>
+                    {option.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {selectedBackgroundId && (
         <div className={cn(wizardSoftPanelClass, "p-3.5")}>
           <div className="flex items-center gap-3">
@@ -100,7 +176,7 @@ export const ReviewStep = ({
             </div>
             <div className="min-w-0">
               <p className="text-[13px] font-bold text-on-surface">Selected background</p>
-              <p className="mt-0.5 text-[12px] font-medium leading-relaxed text-ios-gray">This image will appear behind your live match layout.</p>
+              <p className="mt-0.5 text-[12px] font-medium leading-relaxed text-ios-gray">Saved with this match for share assets and future visual options.</p>
             </div>
           </div>
         </div>

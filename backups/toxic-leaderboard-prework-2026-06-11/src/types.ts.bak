@@ -1,0 +1,206 @@
+export type MatchFormat = 'Match Play' | 'Americano' | 'Mexicano';
+export type RankingCriteria = 'Matches Won' | 'Points Won';
+export type ScoringType = 'Golden Point' | 'Advantage';
+
+export interface Player {
+  id: string;
+  name: string;
+  rating: number;
+  source?: 'fom' | 'manual';
+  avatar?: string;
+  initials: string;
+  team?: string;
+  stats: {
+    matches: number;
+    won: number;
+    lost: number;
+    draw: number;
+    diff: number;
+  };
+}
+
+export interface Team {
+  players: Player[];
+  score: number;
+  sets?: number[]; // Array of games won in each set
+}
+
+export interface Match {
+  id: string;
+  court: number;
+  teamA: Team;
+  teamB: Team;
+  duration?: string;
+  startedAt?: number;
+  status: 'active' | 'completed' | 'pending';
+  roundId: number;
+  currentSet?: number;
+  pointsA?: string; // e.g. "0", "15", "30", "40", "Ad"
+  pointsB?: string;
+}
+
+export interface Round {
+  id: number;
+  matches: Match[];
+  playersBye: Player[];
+}
+
+export interface CourtChange {
+  effectiveFromRoundId: number;
+  fromCourts: number;
+  toCourts: number;
+  changedAt: number;
+}
+
+export interface Tournament {
+  id?: string;
+  name: string;
+  format: MatchFormat;
+  backgroundId?: string;
+  themeColorId?: string;
+  criteria: RankingCriteria;
+  scoringType?: ScoringType;
+  startedAt?: number;
+  endedAt?: number;
+  courts: number;
+  totalPoints: number;
+  players: Player[];
+  inactivePlayerIds?: string[];
+  courtChanges?: CourtChange[];
+  rounds: Round[];
+  numRounds: number;
+  durationMinutes?: number;
+  venueName?: string;
+  location?: string;
+}
+
+export interface TournamentHistory {
+  id: string;
+  userId: string;
+  name: string;
+  format: MatchFormat;
+  backgroundId?: string;
+  themeColorId?: string;
+  criteria?: RankingCriteria;
+  scoringType?: ScoringType;
+  date: Date;
+  startedAt?: number;
+  endedAt?: number;
+  courts?: number;
+  totalPoints?: number;
+  numRounds: number;
+  durationMinutes?: number;
+  numPlayers: number;
+  rounds?: Round[];
+  players?: Player[];
+  courtChanges?: CourtChange[];
+  venueName?: string;
+  location?: string;
+  completedMatchesCount?: number;
+  userMatches?: number;
+  userWins?: number;
+  userLosses?: number;
+  userDraws?: number;
+  userPoints?: number;
+  userMmrDelta?: number;
+  playedAt?: any;
+  statsVersion?: number;
+  statsAppliedAt?: any;
+}
+
+export type RankTier = 'Rookie' | 'Amateur' | 'Challenger' | 'Elite' | 'Master' | 'Grandmaster' | 'Legend' | 'Hall of Fame';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  username?: string;
+  phoneNumber?: string;
+  photoURL?: string;
+  mmr: number;
+  totalMatches?: number;
+  region?: string; // This will be the "Active Zone" (most played location)
+  homeBase?: string; // This is the manual input (domicile)
+  locationActivity?: Record<string, number>; // Track frequency of play in each location
+  createdAt: any;
+}
+
+export interface Friend {
+  uid: string;
+  displayName: string;
+  photoURL?: string;
+  username?: string;
+  mmr: number;
+  addedAt?: any;
+  lastPlayedAt?: any;
+}
+
+export type FriendRequestStatus = 'pending' | 'accepted' | 'declined';
+
+export interface FriendRequest {
+  requesterUid: string;
+  targetUid: string;
+  status: FriendRequestStatus;
+  requesterDisplayName: string;
+  requesterPhotoURL?: string;
+  requesterUsername?: string;
+  requesterMmr?: number;
+  targetDisplayName?: string;
+  targetPhotoURL?: string;
+  targetUsername?: string;
+  targetMmr?: number;
+  createdAt?: any;
+  updatedAt?: any;
+  resolvedAt?: any;
+}
+
+export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends' | 'rooms' | 'room-editor' | 'room-detail' | 'room-setup';
+
+export type TournamentStatsSyncState = 'syncing' | 'synced' | 'error';
+
+export interface PlayerMatchLedgerEntry {
+  id: string;
+  uid: string;
+  playerName?: string;
+  tournamentId: string;
+  tournamentName?: string;
+  matchId: string;
+  roundId: number;
+  matchSequence?: number;
+  format?: MatchFormat;
+  team?: 'A' | 'B';
+  scoreFor?: number;
+  scoreAgainst?: number;
+  scoreDiff?: number;
+  result?: 'win' | 'loss' | 'draw';
+  teamSummary?: string;
+  opponentSummary?: string;
+  teamAverageMmr?: number;
+  opponentAverageMmr?: number;
+  isUnderdog?: boolean;
+  isFavorite?: boolean;
+  mmrBefore?: number;
+  mmrAfter?: number;
+  baseDeltaMmr?: number;
+  modifierDeltaMmr?: number;
+  deltaMmr: number;
+  reasonCode?: string;
+  reasonLabel?: string;
+  baseReasonLabel?: string;
+  modifierCode?: string;
+  modifierLabel?: string;
+  hostUid: string;
+  playedAt?: any;
+  createdAt?: any;
+  source?: string;
+}
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  timestamp: Date;
+  type: 'match' | 'tournament' | 'system' | 'achievement';
+  tone?: 'info' | 'success' | 'error' | 'achievement';
+  read: boolean;
+}

@@ -1,0 +1,1463 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { toBlob as htmlToImageBlob } from 'html-to-image';
+import { ChevronRight, Flame, Instagram, RefreshCw, Share2, X, Zap } from 'lucide-react';
+import { InstallAppButton } from '../../components/app/InstallAppButton';
+import { SharedViewerFomPlayCta } from '../../components/app/SharedViewerFomPlayCta';
+import { cn } from '../../lib/utils';
+import { type Friend, type Match, type Player, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
+import { getMatchThemeColor } from '../tournaments/matchTheme';
+import { resolveMatchBackground } from './matchBackgrounds';
+import { formatDurationFromMs, getTournamentElapsedMs } from './matchTimeUtils';
+import { buildToxicStandings, type StandingsPlayer, type ToxicStandingRow } from './toxicStandings';
+import { useMatchSettingsFriends } from './useMatchSettingsFriends';
+
+const TOXIC_THIRD_PLACE_BADGE_SRC = '/assets/toxic/manchester-united-crest.png';
+
+export const KlasemenScreen = ({
+  tournament,
+  currentUser,
+  onBack,
+  onShare,
+  onShareFeedback,
+  onOpenActive,
+  isSharedViewer,
+  statsSyncState
+}: {
+  tournament: Tournament | TournamentHistory;
+  currentUser?: any;
+  onBack: () => void;
+  onShare: (t: Tournament | TournamentHistory) => void;
+  onShareFeedback: (state: 'success' | 'ready' | 'failed', message?: string) => void;
+  onOpenActive: () => void;
+  isSharedViewer?: boolean;
+  statsSyncState?: TournamentStatsSyncState | null;
+}) => {
+  const [nowMs, setNowMs] = useState(Date.now());
+  const [isStoryPreviewOpen, setIsStoryPreviewOpen] = useState(false);
+  const [isStoryImageBusy, setIsStoryImageBusy] = useState(false);
+  const [storyImageError, setStoryImageError] = useState('');
+  const [storyImageUrl, setStoryImageUrl] = useState('');
+  const [storyExportPageIndex, setStoryExportPageIndex] = useState(0);
+  const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
+  const [standingsTab, setStandingsTab] = useState<'standings' | 'toxic'>(() => (
+    tournament.toxicModeEnabled ? 'toxic' : 'standings'
+  ));
+  const [toxicConfettiRunId, setToxicConfettiRunId] = useState(0);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
+  const storyImageUrlRef = useRef<string | null>(null);
+  const storyExportRef = useRef<HTMLDivElement | null>(null);
+  const toxicConfettiSeenRef = useRef(false);
+  const currentUserUid = String(currentUser?.uid || '').trim();
+  const currentUserPhotoURL = typeof currentUser?.photoURL === 'string' ? currentUser.photoURL : '';
+  const { friends } = useMatchSettingsFriends(currentUserUid);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (storyImageUrlRef.current) URL.revokeObjectURL(storyImageUrlRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isShareMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (shareMenuRef.current?.contains(event.target as Node)) return;
+      setIsShareMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    return () => document.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [isShareMenuOpen]);
+
+  useEffect(() => {
+    if (!isStoryPreviewOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isStoryPreviewOpen]);
+
+  useEffect(() => {
+    toxicConfettiSeenRef.current = false;
+    setToxicConfettiRunId(0);
+    setStandingsTab(tournament.toxicModeEnabled ? 'toxic' : 'standings');
+  }, [tournament.id, tournament.startedAt, tournament.toxicModeEnabled]);
+
+  const fomPlayUrl = useMemo(() => {
+    const configuredBase = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
+    const runtimeBase = `${window.location.protocol}//${window.location.host}`;
+    return (configuredBase || runtimeBase).replace(/\/+$/, '');
+  }, []);
+  const tournamentPlayers = tournament.players || [];
+  const tournamentRounds = tournament.rounds || [];
+  const configuredCourts = 'courts' in tournament ? tournament.courts : undefined;
+  const detectedCourts = Math.max(1, ...tournamentRounds.flatMap((round) => round.matches.map((match) => match.court || 1)));
+  const courtsCount = configuredCourts || detectedCourts;
+  const completedRounds = tournamentRounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
+  const totalRounds = Math.max(tournament.numRounds || 0, tournamentRounds.length);
+  const totalMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.length, 0);
+  const completedMatches = tournamentRounds.reduce((sum, round) => sum + round.matches.filter((match) => match.status === 'completed').length, 0);
+  void completedMatches;
+
+  const hasMatchScoreProgress = (match: Match) => {
+    const scoreA = match.teamA.score || 0;
+    const scoreB = match.teamB.score || 0;
+    const hasPointScore = (match.pointsA || '0') !== '0' || (match.pointsB || '0') !== '0';
+    return match.status === 'completed' || scoreA > 0 || scoreB > 0 || hasPointScore;
+  };
+  const hasCountableStandingScore = tournamentRounds.some((round) => (
+    (round.matches || []).some(hasMatchScoreProgress)
+  ));
+
+  const activeRoundIndex = tournamentRounds.findIndex((round) => (
+    round.matches.some((match) => match.status === 'active')
+  ));
+  const latestScoredRoundIndex = tournamentRounds.reduce((latestIndex, round, index) => (
+    round.matches.some(hasMatchScoreProgress) ? index : latestIndex
+  ), -1);
+  const displayedRoundCount = activeRoundIndex !== -1
+    ? activeRoundIndex + 1
+    : (latestScoredRoundIndex !== -1 ? latestScoredRoundIndex + 1 : completedRounds);
+  const progressedMatches = tournamentRounds.reduce((sum, round) => (
+    sum + round.matches.filter(hasMatchScoreProgress).length
+  ), 0);
+  const isTournamentEnded = totalRounds > 0 ? completedRounds >= totalRounds : true;
+  const statsSyncBadge = isTournamentEnded && !isSharedViewer && statsSyncState
+    ? (
+        statsSyncState === 'syncing'
+          ? {
+              tone: 'border-sky-200/70 bg-sky-50/95 text-sky-900',
+              title: 'Stats syncing',
+              message: 'Leaderboard global dan MMR history sedang diperbarui.'
+            }
+          : statsSyncState === 'synced'
+            ? {
+                tone: 'border-emerald-200/70 bg-emerald-50/95 text-emerald-900',
+                title: 'Stats updated',
+                message: 'Leaderboard global dan MMR history sudah sinkron.'
+              }
+            : {
+                tone: 'border-amber-200/70 bg-amber-50/95 text-amber-900',
+                title: 'Sync needs retry',
+                message: 'Hasil final tersimpan, tapi sinkronisasi stats belum terkonfirmasi.'
+              }
+      )
+    : null;
+  const completionPercent = totalMatches > 0 ? Math.min(100, Math.round((progressedMatches / totalMatches) * 100)) : 0;
+  const dateLabel = 'date' in tournament && tournament.date
+    ? tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ('startedAt' in tournament && tournament.startedAt
+        ? new Date(tournament.startedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+        : '');
+  const venueLabel = (tournament.venueName || '').trim();
+  const locationLabel = (tournament.location || '').trim();
+  const placeLabel = [venueLabel, locationLabel].filter(Boolean).join(' | ');
+  const locationDateLabel = placeLabel ? `${placeLabel} | ${dateLabel}` : dateLabel;
+  const showSharedTrialCta = Boolean(isSharedViewer && !currentUserUid);
+  const totalElapsed = formatDurationFromMs(
+    getTournamentElapsedMs(
+      tournamentRounds,
+      nowMs,
+      'endedAt' in tournament ? tournament.endedAt : undefined
+    )
+  );
+  const compactFormatLabel = tournament.format === 'Match Play' ? 'Match' : tournament.format;
+
+  const standingsThemeColor = getMatchThemeColor(tournament.format, tournament.themeColorId);
+  const infoTheme = standingsThemeColor;
+  const klasemenHeroPhoto = useMemo(
+    () => resolveMatchBackground(tournament.format, tournament.backgroundId),
+    [tournament.backgroundId, tournament.format]
+  );
+  const klasemenPageBgTheme = {
+    base: standingsThemeColor.pageBase,
+    photoBlend: standingsThemeColor.photoBlend
+  };
+
+  const sortedPlayers = useMemo<StandingsPlayer[]>(() => {
+    const playerRegistry = new Map<string, Player>();
+    const friendById = new Map<string, Friend>(
+      friends
+        .filter((friend) => String(friend?.uid || '').trim())
+        .map((friend) => [String(friend.uid).trim(), friend])
+    );
+    const registerPlayer = (player: Player | undefined) => {
+      if (!player) return;
+      const isCurrentUserPlayer = Boolean(currentUserUid) && player.id === currentUserUid;
+      const friendProfile = friendById.get(player.id);
+      const liveName = isCurrentUserPlayer
+        ? (currentUser?.displayName || currentUser?.email?.split('@')[0] || '')
+        : (friendProfile?.displayName || '');
+      const liveAvatar = isCurrentUserPlayer
+        ? currentUserPhotoURL
+        : (friendProfile?.photoURL || '');
+      const normalizedPlayer = isCurrentUserPlayer
+        ? { ...player, name: liveName || player.name, avatar: liveAvatar || player.avatar || '' }
+        : { ...player, name: liveName || player.name, avatar: liveAvatar || player.avatar || '' };
+      const existing = playerRegistry.get(player.id);
+      if (!existing) {
+        playerRegistry.set(player.id, normalizedPlayer);
+        return;
+      }
+      const merged = {
+        ...existing,
+        ...normalizedPlayer,
+        avatar: normalizedPlayer.avatar || existing.avatar,
+        initials: normalizedPlayer.initials || existing.initials
+      };
+      playerRegistry.set(player.id, merged);
+    };
+
+    tournamentPlayers.forEach(registerPlayer);
+    tournamentRounds.forEach((round) => {
+      round.matches.forEach((match) => {
+        match.teamA.players.forEach(registerPlayer);
+        match.teamB.players.forEach(registerPlayer);
+      });
+      (round.playersBye || []).forEach(registerPlayer);
+    });
+
+    const playerStatsMap: Record<string, {
+      id: string;
+      name: string;
+      avatar?: string;
+      initials: string;
+      matches: number;
+      w: number;
+      l: number;
+      d: number;
+      pointsDiff: number;
+      totalPoints: number;
+    }> = {};
+
+    playerRegistry.forEach((player) => {
+      playerStatsMap[player.id] = {
+        id: player.id,
+        name: player.name,
+        avatar: player.avatar,
+        initials: player.initials || player.name.split(' ').map((name) => name[0]).join('').slice(0, 2).toUpperCase(),
+        matches: 0,
+        w: 0,
+        l: 0,
+        d: 0,
+        pointsDiff: 0,
+        totalPoints: 0
+      };
+    });
+
+    tournamentRounds.forEach((round) => {
+      round.matches.forEach((match) => {
+        const scoreA = match.teamA.score || 0;
+        const scoreB = match.teamB.score || 0;
+        const hasLiveScore = scoreA > 0 || scoreB > 0;
+        const shouldCountStandingScore = match.status === 'completed' || hasLiveScore;
+        if (!shouldCountStandingScore && match.status !== 'completed') return;
+
+        match.teamA.players.forEach((player) => {
+          const stats = playerStatsMap[player.id];
+          if (!stats) return;
+          if (shouldCountStandingScore) {
+            stats.totalPoints += scoreA;
+            stats.pointsDiff += (scoreA - scoreB);
+          }
+          if (match.status === 'completed') {
+            if (scoreA > scoreB) stats.w += 1;
+            else if (scoreA < scoreB) stats.l += 1;
+            else stats.d += 1;
+          }
+        });
+
+        match.teamB.players.forEach((player) => {
+          const stats = playerStatsMap[player.id];
+          if (!stats) return;
+          if (shouldCountStandingScore) {
+            stats.totalPoints += scoreB;
+            stats.pointsDiff += (scoreB - scoreA);
+          }
+          if (match.status === 'completed') {
+            if (scoreB > scoreA) stats.w += 1;
+            else if (scoreB < scoreA) stats.l += 1;
+            else stats.d += 1;
+          }
+        });
+      });
+    });
+
+    if (!hasCountableStandingScore) {
+      playerRegistry.forEach((player) => {
+        const stats = playerStatsMap[player.id];
+        if (!stats) return;
+        stats.matches = Number(player.stats?.matches || 0);
+        stats.w = Number(player.stats?.won || 0);
+        stats.l = Number(player.stats?.lost || 0);
+        stats.d = Number(player.stats?.draw || 0);
+        stats.pointsDiff = Number(player.stats?.diff || 0);
+        stats.totalPoints = Number((player as Player & { totalPoints?: number }).totalPoints || 0);
+      });
+    } else {
+      Object.values(playerStatsMap).forEach((stats) => {
+        stats.matches = stats.w + stats.l + stats.d;
+      });
+    }
+
+    return Object.values(playerStatsMap).sort((a, b) => {
+      if (b.w !== a.w) return b.w - a.w;
+      if (b.pointsDiff !== a.pointsDiff) return b.pointsDiff - a.pointsDiff;
+      if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+      return a.name.localeCompare(b.name, 'id-ID');
+    });
+  }, [currentUser?.displayName, currentUser?.email, currentUserPhotoURL, currentUserUid, friends, hasCountableStandingScore, tournamentPlayers, tournamentRounds]);
+  const toxicModeEnabled = Boolean(tournament.toxicModeEnabled);
+  const activeStandingsTab = toxicModeEnabled ? standingsTab : 'standings';
+  const isToxicTabActive = activeStandingsTab === 'toxic';
+  const toxicStandings = useMemo(() => (
+    buildToxicStandings({
+      tournament,
+      sortedPlayers,
+      hasCountableScore: hasCountableStandingScore,
+      isEnded: isTournamentEnded,
+    })
+  ), [hasCountableStandingScore, isTournamentEnded, sortedPlayers, tournament]);
+
+  useEffect(() => {
+    if (!toxicModeEnabled || !isToxicTabActive || toxicStandings.isEmpty || toxicStandings.isPeacefulTie) return;
+    if (toxicConfettiSeenRef.current) return;
+    toxicConfettiSeenRef.current = true;
+    setToxicConfettiRunId((prev) => prev + 1);
+  }, [isToxicTabActive, toxicModeEnabled, toxicStandings.isEmpty, toxicStandings.isPeacefulTie]);
+
+  const isToxicStoryMode = isToxicTabActive && toxicModeEnabled;
+  const storyShowAvatars = true;
+  const storyPlayersPerImage = isToxicStoryMode ? 6 : 10;
+  const storyPlayerSource: StandingsPlayer[] = (
+    isToxicStoryMode && !toxicStandings.isEmpty
+      ? toxicStandings.rows
+      : sortedPlayers
+  );
+  const storyPlayerPages = useMemo(() => {
+    if (storyPlayerSource.length === 0) return [[]];
+    const pages: StandingsPlayer[][] = [];
+    for (let index = 0; index < storyPlayerSource.length; index += storyPlayersPerImage) {
+      pages.push(storyPlayerSource.slice(index, index + storyPlayersPerImage));
+    }
+    return pages;
+  }, [storyPlayerSource, storyPlayersPerImage]);
+  const storyPageCount = storyPlayerPages.length;
+  const activeStoryPageIndex = Math.min(storyExportPageIndex, storyPageCount - 1);
+  const storyPlayers = storyPlayerPages[activeStoryPageIndex] || [];
+  const toxicStoryRows = storyPlayers as ToxicStandingRow[];
+  const storyCompactRows = storyPlayers.length >= 9;
+  const storyDenseRows = storyCompactRows || storyPlayerSource.length > 12;
+  const storyRankOffset = activeStoryPageIndex * storyPlayersPerImage;
+  const storyUsesCompactRankingCard = storyPlayers.length > 0 && storyPlayers.length < 8;
+  const storyExportShellClass = cn(
+    'relative z-10 flex h-full flex-col px-4 text-white',
+    storyCompactRows ? 'pb-2 pt-3' : 'pb-3 pt-3'
+  );
+  const storyExportLogoHeaderClass = cn(
+    'flex shrink-0 items-center justify-center',
+    'mb-3 h-10'
+  );
+  const storyExportLogoClass = 'h-7 w-auto object-contain';
+  const storySummaryCardClass = cn(
+    'relative mt-0 isolate shrink-0 overflow-hidden rounded-[22px] border border-white/42 bg-white/10 shadow-[0_14px_30px_rgba(15,23,42,0.10)] backdrop-blur-md',
+    storyCompactRows ? 'px-3 py-2' : 'px-3.5 py-2.5'
+  );
+  const storySummaryCardStyle = {
+    clipPath: 'inset(0 round 22px)',
+    WebkitClipPath: 'inset(0 round 22px)'
+  };
+  const storySummaryStatClass = cn(
+    'rounded-[11px] border border-white/26 bg-white/18 px-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]',
+    storyCompactRows ? 'py-0.5' : 'py-1'
+  );
+  const storyTitleClass = cn('truncate font-black leading-[1.04] tracking-tight text-white', storyCompactRows ? 'text-[14.5px]' : 'text-[15.5px]');
+  const storySubtitleClass = cn('mt-0.5 truncate font-semibold leading-[1.15] text-white/82', storyCompactRows ? 'text-[8px]' : 'text-[8.5px]');
+  const storyTimerClass = cn('shrink-0 font-black leading-none tabular-nums text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]', storyCompactRows ? 'text-[10.5px]' : 'text-[11px]');
+  const storyStatLabelClass = 'text-[7px] font-bold uppercase leading-none tracking-wider text-white/66';
+  const storyStatValueClass = cn('truncate text-[9.5px] font-bold leading-none text-white', storyCompactRows ? 'mt-0.5' : 'mt-1');
+  const storyRankingCardClass = cn(
+    'mt-1.5 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/52 bg-white/95 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)]',
+    storyUsesCompactRankingCard ? 'shrink-0' : 'flex-1'
+  );
+  const storyRankingHeaderClass = 'grid shrink-0 grid-cols-[minmax(0,1fr)_42px_42px_42px] gap-1.5 border-b border-black/[0.06] px-1.5 pb-1.5 text-[7.5px] font-black uppercase leading-none text-on-surface/48';
+  const storyBaseRowClass = 'grid grid-cols-[minmax(0,1fr)_42px_42px_42px] items-center gap-1.5 border-b border-black/[0.055] bg-transparent last:border-b-0';
+  const storyPlayerHeaderGridClass = cn(
+    'grid items-center gap-2',
+    storyShowAvatars ? 'grid-cols-[28px_32px_minmax(0,1fr)]' : 'grid-cols-[28px_minmax(0,1fr)]'
+  );
+  const storyPlayerHeaderNameClass = cn(storyShowAvatars ? 'col-start-3' : 'col-start-2');
+  const storyWldmHeaderClass = 'grid grid-cols-4 items-center text-center';
+  const storyPlayerNameClass = cn('truncate leading-tight text-on-surface', storyDenseRows ? 'text-[10px] font-semibold' : 'text-[10.5px] font-semibold');
+  const storyPlayerMetaValueClass = storyDenseRows
+    ? 'text-[10px] font-medium leading-none tabular-nums text-ios-gray/55'
+    : 'text-[10.5px] font-medium leading-none tabular-nums text-ios-gray/55';
+  const storyWldmValueClass = cn(
+    'grid grid-cols-4 items-center text-center tabular-nums',
+    storyPlayerMetaValueClass
+  );
+  const storyDiffClass = 'text-[10.5px] font-semibold';
+  const storyPtsClass = 'text-[10.5px] font-semibold';
+  const storyFooterSpacerClass = storyUsesCompactRankingCard ? 'flex-1' : '';
+  const storyFooterClass = cn('flex shrink-0 justify-center text-white/78', storyCompactRows ? 'mt-1 pt-1' : 'mt-1.5 pt-2');
+  const storyFooterTextClass = cn('font-medium leading-none', storyCompactRows ? 'text-[8px]' : 'text-[8.5px]');
+  const storyFooterRowClass = 'inline-flex items-center justify-center gap-2.5';
+  const storyRankingRowsClass = cn(
+    'min-h-0 flex flex-col overflow-hidden',
+    storyUsesCompactRankingCard ? 'gap-1' : storyCompactRows ? 'flex-1 justify-between gap-0.5' : storyDenseRows ? 'flex-1 justify-between gap-px' : 'flex-1 justify-between gap-1'
+  );
+  const storyRowClass = cn(
+    storyBaseRowClass,
+    storyPlayers.length === 9
+      ? 'min-h-[38px] px-1.5 py-0.5'
+      : storyCompactRows
+        ? 'min-h-[34px] px-1.5 py-0.5'
+        : storyShowAvatars
+          ? 'min-h-[48px] px-1.5 py-1.5'
+          : storyDenseRows
+            ? 'min-h-[39px] px-1.5 py-1.5'
+            : 'min-h-[43px] px-1.5 py-1.5'
+  );
+  const storyRankBadgeClass = cn(
+    'flex shrink-0 items-center justify-center rounded-full border font-black leading-none tabular-nums',
+    storyCompactRows ? 'h-5 w-5 text-[8px]' : storyDenseRows ? 'h-6 w-6 text-[9px]' : 'h-7 w-7 text-[10px]'
+  );
+  const storyAvatarClass = cn(
+    'shrink-0 overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10 flex items-center justify-center',
+    storyCompactRows ? 'h-6 w-6' : 'h-8 w-8'
+  );
+  const getStoryRankBadgeClass = (rankIndex: number) => {
+    if (rankIndex === 0) return 'bg-[#fff8dc] text-[#9a6a00] border-[#e8c84f]/80 ring-1 ring-[#f8e6a2]/70 shadow-[0_3px_10px_rgba(232,200,79,0.22)]';
+    if (rankIndex === 1) return 'bg-[#f7f9fc] text-[#687382] border-[#cdd5df]/90 ring-1 ring-[#e5e9ef]/80 shadow-[0_3px_10px_rgba(148,163,184,0.18)]';
+    if (rankIndex === 2) return 'bg-[#fff1e8] text-[#9a5a35] border-[#daa17d]/80 ring-1 ring-[#f0c8af]/70 shadow-[0_3px_10px_rgba(200,131,90,0.18)]';
+    return 'bg-ios-gray/10 text-ios-gray border-transparent';
+  };
+  const getStandingsRankBadgeClass = (rankIndex: number) => {
+    if (rankIndex === 0) return 'bg-[#fff8dc] text-[#9a6a00] border-[#e8c84f]/80 ring-1 ring-[#f8e6a2]/70 shadow-[0_3px_10px_rgba(232,200,79,0.22)]';
+    if (rankIndex === 1) return 'bg-[#f7f9fc] text-[#687382] border-[#cdd5df]/90 ring-1 ring-[#e5e9ef]/80 shadow-[0_3px_10px_rgba(148,163,184,0.18)]';
+    if (rankIndex === 2) return 'bg-[#fff1e8] text-[#9a5a35] border-[#daa17d]/80 ring-1 ring-[#f0c8af]/70 shadow-[0_3px_10px_rgba(200,131,90,0.18)]';
+    return 'bg-ios-gray/10 text-ios-gray border-transparent';
+  };
+  const getStandingsRowClass = (rankIndex: number) => {
+    if (rankIndex <= 2) return 'border-b border-black/[0.055] px-0';
+    return 'border-b border-black/[0.055] px-0 last:border-b-0';
+  };
+  const getToxicRankBadgeClass = (rankIndex: number, isChampion: boolean) => {
+    if (isChampion) return 'bg-transparent text-ios-gray/55 border-transparent';
+    if (rankIndex === 0) return 'bg-[#fde8a8] text-[#8a6200] border-[#d4a017]/80 ring-1 ring-[#f8dea8]/80 shadow-[0_3px_12px_rgba(212,160,23,0.28)]';
+    if (rankIndex === 1) return 'bg-[#f5f7f9] text-[#5b6470] border-[#aeb6bf]/80 ring-1 ring-[#d3dae1]/80';
+    if (rankIndex === 2) return 'bg-white text-[#d40000] border-[#f7d117]/90 ring-1 ring-[#d40000]/35 shadow-[0_3px_12px_rgba(212,0,0,0.14)]';
+    return 'bg-ios-gray/10 text-ios-gray border-transparent';
+  };
+  const renderToxicRankBadgeContent = (rankIndex: number, isChampion: boolean) => (
+    rankIndex === 2 && !isChampion
+      ? (
+          <img
+            src={TOXIC_THIRD_PLACE_BADGE_SRC}
+            alt="Manchester United crest"
+            className="h-[82%] w-[82%] object-contain"
+          />
+        )
+      : (
+          <span>
+            {isChampion ? rankIndex + 1 : rankIndex === 0 ? '👑' : rankIndex === 1 ? '🥲' : rankIndex + 1}
+          </span>
+        )
+  );
+  const getToxicAwardChipClass = (isGold?: boolean) => (
+    isGold
+      ? 'border-[#d4a017]/55 bg-[linear-gradient(135deg,#fbe7a2,#e3b341)] text-[#6b4e00]'
+      : 'border-ios-gray/20 bg-ios-gray/10 text-ios-gray'
+  );
+  const storyTitleDate = useMemo(() => {
+    const sourceDate =
+      ('date' in tournament && tournament.date)
+        ? tournament.date
+        : ('startedAt' in tournament && tournament.startedAt ? new Date(tournament.startedAt) : new Date());
+    const safeDate = sourceDate instanceof Date && !Number.isNaN(sourceDate.getTime()) ? sourceDate : new Date();
+    const day = String(safeDate.getDate()).padStart(2, '0');
+    const month = String(safeDate.getMonth() + 1).padStart(2, '0');
+    const year = String(safeDate.getFullYear()).slice(-2);
+    return `${day}/${month}/${year}`;
+  }, [tournament]);
+  const buildStorySavedTitle = () => (
+    `${(tournament.name || 'FOM Play Klasemen').trim()}${isToxicStoryMode ? ' Hall of Shame' : ''} ${storyTitleDate}`
+  );
+  const buildStoryFileName = (title: string, pageIndex = 0, pageCount = 1) => {
+    const fileSafeTitle = title
+      .toLowerCase()
+      .replace(/\//g, '-')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 72) || 'fom-play-klasemen';
+    return pageCount > 1 ? `${fileSafeTitle}-${pageIndex + 1}-of-${pageCount}.png` : `${fileSafeTitle}.png`;
+  };
+  const syncStoryVariantBeforeExport = async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  };
+  const renderStoryImageBlob = async () => {
+    const sourceNode = storyExportRef.current;
+    if (!sourceNode) throw new Error('Story preview is not ready yet.');
+    await document.fonts?.ready;
+
+    const blob = await htmlToImageBlob(sourceNode, {
+      width: 360,
+      height: 640,
+      canvasWidth: 1080,
+      canvasHeight: 1920,
+      pixelRatio: 1,
+      cacheBust: true,
+      backgroundColor: 'transparent'
+    });
+    if (!blob) throw new Error('Unable to export story image.');
+    return blob;
+  };
+  const renderStoryImageBlobs = async () => {
+    const blobs: Blob[] = [];
+    for (let pageIndex = 0; pageIndex < storyPageCount; pageIndex += 1) {
+      setStoryExportPageIndex(pageIndex);
+      await syncStoryVariantBeforeExport();
+      blobs.push(await renderStoryImageBlob());
+    }
+    setStoryExportPageIndex(0);
+    return blobs;
+  };
+  const downloadStoryBlob = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+  const showStoryBlobInPreview = (blob: Blob) => {
+    if (storyImageUrlRef.current) URL.revokeObjectURL(storyImageUrlRef.current);
+    const url = URL.createObjectURL(blob);
+    storyImageUrlRef.current = url;
+    setStoryImageUrl(url);
+  };
+  const handleStoryAction = async () => {
+    if (isStoryImageBusy) return;
+    setStoryImageError('');
+    setIsStoryImageBusy(true);
+    try {
+      const storySavedTitle = buildStorySavedTitle();
+      const blobs = await renderStoryImageBlobs();
+      const firstBlob = blobs[0];
+      if (!firstBlob) throw new Error('Unable to export story image.');
+      showStoryBlobInPreview(firstBlob);
+      setIsStoryPreviewOpen(true);
+      const files = blobs.map((blob, pageIndex) => (
+        new File([blob], buildStoryFileName(storySavedTitle, pageIndex, blobs.length), { type: 'image/png' })
+      ));
+      const sharePayload = {
+        files,
+        title: storySavedTitle,
+        text: isToxicStoryMode ? 'Hall of Shame dari FOM Play' : 'Klasemen dari FOM Play'
+      };
+
+      if (navigator.share && (!navigator.canShare || navigator.canShare(sharePayload))) {
+        await navigator.share(sharePayload);
+        onShareFeedback('success', files.length > 1 ? `${files.length} gambar Story berhasil dibagikan.` : 'Gambar Story berhasil dibagikan.');
+      } else {
+        blobs.forEach((blob, pageIndex) => {
+          downloadStoryBlob(blob, buildStoryFileName(storySavedTitle, pageIndex, blobs.length));
+        });
+        onShareFeedback('ready', blobs.length > 1 ? `${blobs.length} gambar Story berhasil dibuat dan diunduh.` : 'Gambar Story berhasil dibuat dan diunduh.');
+      }
+    } catch (err) {
+      console.error('Story image export failed:', err);
+      setStoryImageError('Gagal membuat gambar Story. Preview tetap bisa discreenshot.');
+      setIsStoryPreviewOpen(true);
+      onShareFeedback('failed', 'Gagal membuat gambar Story. Coba lagi sebentar.');
+    } finally {
+      setIsStoryImageBusy(false);
+    }
+  };
+  const renderToxicStoryExportContent = (showError = false) => (
+    <div className="relative z-10 flex h-full flex-col px-4 pb-3 pt-2.5 text-white">
+      <header className="mb-1.5 flex h-7 shrink-0 items-center justify-center">
+        <img src="/fom-long-logotype-white.png" alt="" className="h-[22px] w-auto object-contain" />
+      </header>
+
+      {showError && storyImageError && (
+        <p className="mb-1 rounded-full bg-black/28 px-3 py-1.5 text-[10px] font-bold text-white/90">
+          {storyImageError}
+        </p>
+      )}
+
+      <section className="relative shrink-0 overflow-hidden rounded-[20px] border border-[#b78a1c]/75 bg-[#111008] px-3.5 py-3 text-center shadow-[0_14px_36px_rgba(0,0,0,0.34),inset_0_1px_0_rgba(255,215,128,0.16)]">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(196,145,23,0.34)_0%,rgba(68,50,5,0.34)_32%,rgba(17,16,8,0.96)_64%),linear-gradient(145deg,rgba(44,34,3,0.95),rgba(8,8,4,0.98))]" />
+        <p className="relative z-10 text-[8px] font-black uppercase tracking-[0.22em] text-[#c89a2c]">The Cupu D&apos;Or 2026</p>
+
+        {toxicStandings.isEmpty ? (
+          <div className="relative z-10 py-5">
+            <div className="text-[26px] leading-none">🎾</div>
+            <h3 className="mt-2 text-[18px] font-black leading-tight text-[#f3c64c]">Belum ada korban.</h3>
+            <p className="mt-1 text-[11px] font-semibold text-[#d8c792]">Main dulu, baru kita hina.</p>
+          </div>
+        ) : (
+          <>
+            <div className="relative z-10 mt-2.5 flex justify-center gap-3">
+              {toxicStandings.heroPlayers.map((player) => (
+                <div key={player.id} className="flex min-w-0 flex-col items-center">
+                  <div className="mb-[-7px] text-[24px] leading-none drop-shadow-[0_3px_8px_rgba(252,211,77,0.35)]">👑</div>
+                  <div className="flex h-[60px] w-[60px] items-center justify-center overflow-hidden rounded-full border-[2.5px] border-[#d7a827] bg-[#9a430a] text-[22px] font-black text-white shadow-[0_0_0_1px_rgba(255,230,140,0.16),0_0_28px_rgba(197,145,23,0.34)]">
+                    {player.avatar ? (
+                      <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
+                    ) : (
+                      <span>{player.initials}</span>
+                    )}
+                  </div>
+                  <p className="mt-2 max-w-[118px] truncate text-[18px] font-black leading-tight tracking-tight text-[#f3c64c]">{player.name}</p>
+                </div>
+              ))}
+            </div>
+            <span className="relative z-10 mt-2 inline-flex max-w-full items-center rounded-full border border-[#b78a1c]/80 bg-black/18 px-3.5 py-1 text-[8.6px] font-black uppercase tracking-[0.12em] text-[#f6d36b]">
+              {toxicStandings.heroTitle} 👑
+            </span>
+            <p className="relative z-10 mx-auto mt-2 max-w-[270px] text-[10.5px] font-semibold italic leading-snug text-[#d8c792]">
+              “{toxicStandings.heroRoast}”
+            </p>
+          </>
+        )}
+      </section>
+
+      <section className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[18px] border border-amber-300/55 bg-[#fffaf0]/96 p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.14)]">
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-black/[0.06] px-1 pb-1">
+          <h3 className="text-[9px] font-black uppercase tracking-[0.14em] text-on-surface">Hall of Shame</h3>
+          <span className="rounded-full bg-[linear-gradient(135deg,#f59e0b,#e65e14)] px-2 py-0.5 text-[6.7px] font-black uppercase tracking-wide text-white">
+            {toxicStandings.sortLabel}
+          </span>
+        </div>
+        {!toxicStandings.isEmpty && (
+          <div className="grid grid-cols-[minmax(0,1fr)_50px_29px_26px] items-center gap-1 border-b border-black/[0.055] px-1 py-0.5 text-[6.2px] font-black uppercase leading-none tracking-wide text-on-surface/46">
+            <span>Player</span>
+            <div className="grid grid-cols-4 text-center">
+              <span>W</span>
+              <span>L</span>
+              <span>D</span>
+              <span>M</span>
+            </div>
+            <span className="text-center">Diff</span>
+            <span className="text-center">Pts</span>
+          </div>
+        )}
+
+        {toxicStandings.isEmpty ? (
+          <div className="flex flex-1 items-center justify-center px-4 text-center">
+            <p className="text-[12px] font-semibold leading-relaxed text-ios-gray">
+              Belum ada ranking toxic untuk dibagikan.
+            </p>
+          </div>
+        ) : (
+          <div className="min-h-0 flex flex-1 flex-col justify-between gap-0.5 pt-0.5">
+            {toxicStoryRows.map((player, i) => {
+              const rankIndex = storyRankOffset + i;
+              const isChampion = Boolean(player.isChampion);
+              return (
+                <div
+                  key={player.id}
+                  className={cn(
+                    'grid grid-cols-[minmax(0,1fr)_50px_29px_26px] items-center gap-1 border-b border-black/[0.055] px-1 py-1 last:border-b-0',
+                    isChampion && 'opacity-70'
+                  )}
+                >
+                  <div className="min-w-0 flex items-center gap-1.5">
+                    <div className={cn(
+                      'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[8px] font-black leading-none',
+                      getToxicRankBadgeClass(rankIndex, isChampion)
+                    )}>
+                      {renderToxicRankBadgeContent(rankIndex, isChampion)}
+                    </div>
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ios-gray/10 text-[7.5px] font-black text-ios-gray">
+                      {player.avatar ? (
+                        <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
+                      ) : player.initials}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[9.7px] font-black leading-tight text-on-surface">{player.name}</p>
+                      {player.award && (
+                        <span className={cn('mt-0.5 inline-flex max-w-full rounded-full border px-[5px] py-[1px] text-[5.8px] font-black uppercase leading-none tracking-wide', getToxicAwardChipClass(player.award.isGold))}>
+                          {player.award.label} {player.award.emoji || ''}
+                        </span>
+                      )}
+                      <p className="mt-0.5 truncate text-[6.8px] font-semibold italic leading-tight text-ios-gray/78">
+                        {player.roast}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-4 text-center text-[7.8px] font-bold leading-none text-ios-gray/82 tabular-nums">
+                    <span>{player.w}</span>
+                    <span>{player.l}</span>
+                    <span>{player.d}</span>
+                    <span>{player.matches}</span>
+                  </div>
+                  <p className={cn('text-center text-[10px] font-black leading-none tabular-nums', player.pointsDiff > 0 ? infoTheme.accent : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
+                    {player.pointsDiff > 0 ? `+${player.pointsDiff}` : player.pointsDiff}
+                  </p>
+                  <p className="text-center text-[10px] font-black leading-none text-on-surface tabular-nums">{player.totalPoints}</p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <footer className="mt-1.5 flex shrink-0 justify-center text-white/78">
+        <div className="inline-flex items-center justify-center gap-2.5">
+          <span className="text-[8px] font-medium leading-none">fomplay.asia/app</span>
+          <span className="text-[8px] font-medium leading-none text-white/38">|</span>
+          <span className="text-[8px] font-medium leading-none">Jangan baper, ya</span>
+          {storyPageCount > 1 && (
+            <>
+              <span className="text-[8px] font-medium leading-none text-white/38">|</span>
+              <span className="text-[8px] font-medium leading-none">{activeStoryPageIndex + 1}/{storyPageCount}</span>
+            </>
+          )}
+        </div>
+      </footer>
+    </div>
+  );
+
+  return (
+    <div className="relative min-h-screen pb-12 overflow-hidden bg-transparent z-0">
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <div className={cn('absolute inset-0', klasemenPageBgTheme.base)} />
+        <div className="absolute inset-x-0 top-0 h-screen min-h-screen max-h-none overflow-hidden">
+          {klasemenHeroPhoto && (
+            <img
+              src={klasemenHeroPhoto}
+              alt="Standings background"
+              className="absolute inset-0 h-full w-full object-cover object-center scale-[1.12]"
+            />
+          )}
+          <div className={cn('absolute inset-0', klasemenPageBgTheme.photoBlend)} />
+        </div>
+      </div>
+
+      <header
+        className="relative z-20 bg-transparent border-b border-transparent"
+        style={{ paddingTop: 'calc(var(--app-safe-top, 0px) + 12px)' }}
+      >
+        <div className="standings-header-inner max-w-lg mx-auto h-10 px-5 relative flex items-center justify-between">
+          <div className="shrink-0">
+            <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
+              {!isTournamentEnded && (
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-white/55 animate-ping" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
+                </span>
+              )}
+              <span className={cn(!isTournamentEnded && "animate-pulse")}>
+                {isTournamentEnded ? 'Ended' : 'Live'}
+              </span>
+            </span>
+          </div>
+          <div className="absolute left-1/2 -translate-x-1/2 flex justify-center items-center pointer-events-none">
+            <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className="standings-header-logo h-7 w-auto object-contain" />
+          </div>
+          <div className="standings-header-actions shrink-0 flex items-center gap-3">
+            <InstallAppButton compact variant="minimum" className="standings-header-install text-white" />
+            <div ref={shareMenuRef} className="relative">
+              <button
+                onClick={() => setIsShareMenuOpen((open) => !open)}
+                className="standings-header-share tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white"
+                aria-expanded={isShareMenuOpen}
+                aria-haspopup="menu"
+                aria-label="Share standings"
+              >
+                <Share2 size={16} />
+                <span className="standings-header-share-label text-[12px] font-semibold">Share</span>
+              </button>
+              {isShareMenuOpen && (
+                <div
+                  className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-2xl border border-white/28 bg-white/92 p-1.5 text-on-surface shadow-[0_16px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl"
+                  role="menu"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsShareMenuOpen(false);
+                      onShare(tournament);
+                    }}
+                    className="tap-target flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-bold text-on-surface"
+                    role="menuitem"
+                  >
+                    <Share2 size={15} className="text-ios-gray" />
+                    Share Link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsShareMenuOpen(false);
+                      void handleStoryAction();
+                    }}
+                    disabled={isStoryImageBusy}
+                    className="tap-target flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-bold text-on-surface disabled:opacity-60"
+                    role="menuitem"
+                  >
+                    {isStoryImageBusy ? <RefreshCw size={15} className="animate-spin text-primary" /> : <Instagram size={15} className="text-primary" />}
+                    {isStoryImageBusy ? 'Preparing' : isToxicTabActive ? 'Toxic Story' : 'Story Image'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main
+        className="standings-main relative z-10 px-5 space-y-4 max-w-lg mx-auto"
+        style={{
+          paddingTop: '12px',
+          paddingBottom: showSharedTrialCta
+            ? 'calc(var(--app-safe-bottom, 0px) + 104px)'
+            : 'calc(var(--app-safe-bottom, 0px) + 16px)'
+        }}
+      >
+        {isSharedViewer && (
+          <p className="px-1 text-[10px] font-medium leading-tight text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
+            This page is read-only.
+          </p>
+        )}
+
+        {statsSyncBadge && (
+          <section className="-mt-1">
+            <div className={cn('w-full rounded-2xl px-4 py-3 border backdrop-blur-md flex items-start gap-3', statsSyncBadge.tone)}>
+              <div className="min-w-0">
+                <p className="text-[12px] font-bold tracking-tight">{statsSyncBadge.title}</p>
+                <p className="mt-1 text-[12px] leading-snug font-medium">
+                  {statsSyncBadge.message}
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <section className={cn('relative overflow-hidden rounded-[22px] border border-white/42 bg-white/10 p-3.5 backdrop-blur-md', infoTheme.shadow)}>
+          <div className="relative mb-2.5 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="truncate text-[17px] font-black leading-tight tracking-tight text-white">{tournament.name || '-'}</h2>
+              <p className="mt-0.5 truncate text-[10.5px] font-semibold text-white/82">{locationDateLabel}</p>
+            </div>
+            <span className="shrink-0 text-[13px] font-black leading-none tabular-nums text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
+              {totalElapsed}
+            </span>
+          </div>
+
+          <div className="relative grid grid-cols-4 gap-1.5">
+            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
+              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Mode</p>
+              <p className="mt-1 truncate text-[10px] font-bold leading-none text-white">
+                <span className="standings-format-full">{tournament.format}</span>
+                <span className="standings-format-short">{compactFormatLabel}</span>
+              </p>
+            </div>
+            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
+              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Player</p>
+              <p className="mt-1 text-[10px] font-bold leading-none text-white tabular-nums">{sortedPlayers.length}</p>
+            </div>
+            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
+              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Court</p>
+              <p className="mt-1 text-[10px] font-bold leading-none text-white tabular-nums">{courtsCount}</p>
+            </div>
+            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
+              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Round</p>
+              <p className="mt-1 text-[10px] font-bold leading-none text-white tabular-nums">{displayedRoundCount}/{totalRounds || 0}</p>
+            </div>
+          </div>
+
+          <div className="relative mt-2.5 border-t border-white/24 pt-2">
+            <div className="flex min-h-[30px] items-center justify-between gap-1.5">
+              <p className="min-w-0 truncate text-[10.5px] font-semibold text-white/84">
+                Hosted with{' '}
+                <button
+                  type="button"
+                  onClick={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
+                  className="inline p-0 bg-transparent border-0 font-bold text-white underline-offset-2 hover:underline cursor-pointer"
+                >
+                  FOM Play
+                </button>
+              </p>
+              {toxicModeEnabled && (
+                <button
+                  type="button"
+                  onClick={() => setStandingsTab(isToxicTabActive ? 'standings' : 'toxic')}
+                  aria-label={isToxicTabActive ? 'Standings' : 'Hall of Shame'}
+                  className={cn(
+                    'tap-target inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-full border px-2 text-[10px] font-black backdrop-blur-md transition-all',
+                    isToxicTabActive
+                      ? 'border-white/28 bg-white/18 text-white'
+                      : 'border-amber-300/40 bg-[linear-gradient(135deg,#f59e0b,#e65e14)] text-white shadow-[0_4px_12px_rgba(245,158,11,0.24)]'
+                  )}
+                >
+                  {isToxicTabActive ? (
+                    <span>Standings</span>
+                  ) : (
+                    <>
+                      <Flame size={11} />
+                      <span>Toxic</span>
+                    </>
+                  )}
+                </button>
+              )}
+              <button
+                onClick={onOpenActive}
+                className={cn('tap-target inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border bg-white/18 px-3 text-[11px] font-extrabold text-white backdrop-blur-md', infoTheme.accentBorder)}
+              >
+                <span className={cn('flex h-5 w-5 items-center justify-center rounded-full bg-white/90', infoTheme.accent)}>
+                  <Zap size={12} />
+                </span>
+                <span>{isTournamentEnded ? 'Rounds' : 'Active'}</span>
+                <ChevronRight size={13} className="opacity-80" />
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {isToxicTabActive && toxicStandings.tickerMessage && (
+          <section className="toxic-ticker flex items-center gap-2 rounded-[14px] border border-amber-400/35 bg-[#140e04]/72 px-3 py-2.5 text-[11.5px] font-semibold italic leading-none text-amber-100 backdrop-blur-md">
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400 animate-pulse" />
+            <span className="min-w-0 truncate">{toxicStandings.tickerMessage}</span>
+          </section>
+        )}
+
+        {isToxicTabActive && (
+          <section className="space-y-3">
+            {toxicStandings.isEmpty ? (
+              <div className="rounded-[24px] border border-amber-300/45 bg-[#fffaf0]/96 px-5 py-9 text-center shadow-[0_12px_28px_rgba(15,23,42,0.14)]">
+                <div className="text-[30px] leading-none">🎾</div>
+                <h3 className="mt-3 text-[19px] font-black tracking-tight text-on-surface">Belum ada korban.</h3>
+                <p className="mt-1 text-[12.5px] font-semibold text-ios-gray">Main dulu, baru kita hina.</p>
+              </div>
+            ) : toxicStandings.isPeacefulTie ? (
+              <div className="rounded-[24px] border border-amber-300/45 bg-[#fffaf0]/96 px-5 py-7 text-center shadow-[0_12px_28px_rgba(15,23,42,0.14)]">
+                <h3 className="text-[18px] font-black tracking-tight text-on-surface">{toxicStandings.heroTitle}</h3>
+                <p className="mt-2 text-[12.5px] font-semibold italic leading-relaxed text-ios-gray">{toxicStandings.heroRoast}</p>
+              </div>
+            ) : (
+              <div className="relative overflow-hidden rounded-[24px] border border-[#b78a1c]/75 bg-[#111008] px-4 py-6 text-center shadow-[0_16px_44px_rgba(0,0,0,0.36),inset_0_1px_0_rgba(255,215,128,0.16)]">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(196,145,23,0.32)_0%,rgba(68,50,5,0.34)_32%,rgba(17,16,8,0.96)_64%),linear-gradient(145deg,rgba(44,34,3,0.95),rgba(8,8,4,0.98))]" />
+                {toxicConfettiRunId > 0 && (
+                  <div key={toxicConfettiRunId} className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+                    {Array.from({ length: 26 }).map((_, index) => (
+                      <span
+                        key={index}
+                        className="toxic-confetti-piece"
+                        style={{
+                          left: `${(index * 37 + 13) % 100}%`,
+                          width: `${5 + (index % 3) * 2}px`,
+                          height: `${8 + (index % 4) * 3}px`,
+                          backgroundColor: ['#f5c842', '#e8b53a', '#fde68a', '#e65e14', '#ffffff'][index % 5],
+                          borderRadius: index % 2 ? '999px' : '2px',
+                          animationDelay: `${(index % 9) * 0.06}s`,
+                          animationDuration: `${1.2 + (index % 6) * 0.13}s`,
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+                <p className="relative z-20 text-[10px] font-black uppercase tracking-[0.22em] text-[#c89a2c]">The Cupu D&apos;Or 2026</p>
+                <div className="relative z-20 mt-5 flex justify-center gap-5">
+                  {toxicStandings.heroPlayers.map((player) => (
+                    <div key={player.id} className="flex min-w-0 flex-col items-center">
+                      <div className="toxic-crown-drop relative z-10 mb-[-9px] text-[34px] leading-none drop-shadow-[0_3px_8px_rgba(252,211,77,0.35)]">👑</div>
+                      <div className="flex h-[88px] w-[88px] items-center justify-center overflow-hidden rounded-full border-[3px] border-[#d7a827] bg-[#9a430a] text-[28px] font-black text-white shadow-[0_0_0_1px_rgba(255,230,140,0.16),0_0_34px_rgba(197,145,23,0.38)]">
+                        {player.avatar ? (
+                          <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+                        ) : (
+                          <span>{player.initials}</span>
+                        )}
+                      </div>
+                      <p className="mt-4 max-w-[136px] truncate text-[24px] font-black leading-tight tracking-tight text-[#f3c64c] drop-shadow-[0_2px_12px_rgba(243,198,76,0.16)]">{player.name}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="relative z-20 mt-4">
+                  <span className="inline-flex max-w-full items-center rounded-full border border-[#b78a1c]/80 bg-black/18 px-4 py-1.5 text-[10.5px] font-black uppercase tracking-[0.12em] text-[#f6d36b] shadow-[0_0_20px_rgba(197,145,23,0.18)]">
+                    {toxicStandings.heroTitle} 👑
+                  </span>
+                </div>
+                <p className="relative z-20 mx-auto mt-5 max-w-[270px] text-[13px] font-semibold italic leading-relaxed text-[#d8c792]">
+                  “{toxicStandings.heroRoast}”
+                </p>
+              </div>
+            )}
+          </section>
+        )}
+
+        {(!isToxicTabActive || !toxicStandings.isEmpty) && (
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-3 px-1">
+              <h3 className="text-[12px] font-bold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">
+                {isToxicTabActive ? 'Hall of Shame' : 'Ranking Player'}
+              </h3>
+              <span className={cn(
+                'shrink-0 rounded-full border px-2.5 py-1 text-[9.5px] font-extrabold uppercase tracking-wide shadow-[0_4px_14px_rgba(15,23,42,0.08)] backdrop-blur-md',
+                isToxicTabActive
+                  ? 'border-amber-300/40 bg-[linear-gradient(135deg,#f59e0b,#e65e14)] text-white'
+                  : cn('bg-white/82', infoTheme.accentBorder, infoTheme.accent)
+              )}>
+                {isToxicTabActive ? toxicStandings.sortLabel : 'W > Diff > Pts'}
+              </span>
+            </div>
+
+            <div className={cn(
+              'overflow-hidden rounded-2xl p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)] backdrop-blur-md',
+              isToxicTabActive ? 'border border-amber-300/45 bg-[#fffaf0]/96' : 'border border-white/48 bg-white/84'
+            )}>
+              <div className="standings-compact-grid grid grid-cols-[minmax(0,1fr)_70px_40px_40px] gap-2 border-b border-black/[0.06] px-0 pb-1.5 text-[9px] font-black uppercase leading-none tracking-wider text-on-surface/48">
+                <span>Player</span>
+                <div className="standings-compact-meta grid grid-cols-4 text-center">
+                  <span>W</span>
+                  <span>L</span>
+                  <span>D</span>
+                  <span>M</span>
+                </div>
+                <span className="text-center">Diff</span>
+                <span className="text-center">Pts</span>
+              </div>
+              <div className="space-y-0.5 pt-0.5">
+                {(isToxicTabActive ? toxicStandings.rows : sortedPlayers).map((player, i) => {
+                  const toxicRow = isToxicTabActive ? toxicStandings.rows[i] : null;
+                  const isChampion = Boolean(toxicRow?.isChampion);
+                  return (
+                    <div
+                      key={player.id}
+                      className={cn(
+                        'standings-compact-grid standings-compact-row grid grid-cols-[minmax(0,1fr)_70px_40px_40px] items-center gap-2 py-2.5',
+                        isToxicTabActive
+                          ? cn('border-b border-black/[0.055] px-0 last:border-b-0', isChampion && 'bg-black/[0.025] opacity-80')
+                          : getStandingsRowClass(i)
+                      )}
+                    >
+                      <div className={cn('standings-compact-player min-w-0 flex gap-2', isToxicTabActive ? 'items-start' : 'items-center')}>
+                        <div className={cn(
+                          'standings-compact-rank flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-black leading-none tabular-nums',
+                          !isToxicTabActive && i === 0 && 'standings-medal-badge standings-medal-gold',
+                          !isToxicTabActive && i === 1 && 'standings-medal-badge standings-medal-silver',
+                          !isToxicTabActive && i === 2 && 'standings-medal-badge standings-medal-bronze',
+                          isToxicTabActive ? getToxicRankBadgeClass(i, isChampion) : getStandingsRankBadgeClass(i)
+                        )}>
+                          {isToxicTabActive ? renderToxicRankBadgeContent(i, isChampion) : i + 1}
+                        </div>
+                        <div className="standings-compact-avatar flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10">
+                          {player.avatar ? (
+                            <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-[10px] font-bold text-ios-gray">{player.initials}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                            <p className={cn('standings-compact-player-name truncate text-[13px] font-semibold leading-tight', isChampion ? 'text-on-surface/62' : 'text-on-surface')}>
+                              {player.name}
+                            </p>
+                            {toxicRow?.award && toxicRow.award.isGold && (
+                              <span className={cn('inline-flex max-w-full shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[8px] font-black uppercase leading-tight tracking-wide whitespace-normal break-words', getToxicAwardChipClass(true))}>
+                                {toxicRow.award.label} {toxicRow.award.emoji || ''}
+                              </span>
+                            )}
+                          </div>
+                          {toxicRow && (
+                            <div className="mt-1.5 min-w-0 space-y-1">
+                              {toxicRow.award && !toxicRow.award.isGold && (
+                                <span className={cn('inline-flex max-w-full items-center rounded-full border px-1.5 py-0.5 text-[8px] font-black uppercase leading-tight tracking-wide whitespace-normal break-words', getToxicAwardChipClass(false))}>
+                                  {toxicRow.award.label} {toxicRow.award.emoji || ''}
+                                </span>
+                              )}
+                              <p className="text-[9.5px] font-semibold italic leading-snug text-ios-gray/78 whitespace-normal break-words">
+                                {toxicRow.roast}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="standings-compact-meta grid grid-cols-4 text-center text-[10.5px] font-bold leading-none text-ios-gray/82 tabular-nums">
+                        <span>{player.w}</span>
+                        <span>{player.l}</span>
+                        <span>{player.d}</span>
+                        <span>{player.matches}</span>
+                      </div>
+                      <div className="text-center">
+                        <p className={cn('text-[13px] font-display font-black leading-none tabular-nums', player.pointsDiff > 0 ? infoTheme.accent : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
+                          {player.pointsDiff > 0 ? `+${player.pointsDiff}` : player.pointsDiff}
+                        </p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-[13px] font-bold leading-none text-on-surface tabular-nums">{player.totalPoints}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+                {sortedPlayers.length === 0 && (
+                  <div className="rounded-[14px] border border-ios-gray/10 bg-white/95 p-4 text-center text-[12px] font-semibold text-ios-gray">
+                    Player data is not available yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {isToxicTabActive && toxicStandings.awardCards.length >= 2 && (
+          <section className="space-y-2">
+            <h3 className="px-1 text-[12px] font-bold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">Toxic Awards</h3>
+            <div className="-mx-5 flex gap-2 overflow-x-auto px-5 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {toxicStandings.awardCards.map((award) => (
+                <div key={`${award.id}-${award.player.id}`} className="min-w-[156px] max-w-[156px] rounded-2xl border border-amber-300/35 bg-white/95 p-3 shadow-[0_8px_22px_rgba(15,23,42,0.11)]">
+                  <div className="text-[21px] leading-none">{award.emoji || '🏅'}</div>
+                  <p className="mt-2 text-[11.5px] font-black leading-tight text-on-surface">{award.label}</p>
+                  <div className="mt-2 flex min-w-0 items-center gap-1.5">
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ios-gray/10 text-[8px] font-black text-ios-gray">
+                      {award.player.avatar ? (
+                        <img className="h-full w-full object-cover" src={award.player.avatar} alt="" referrerPolicy="no-referrer" />
+                      ) : award.player.initials}
+                    </span>
+                    <span className="min-w-0 truncate text-[10px] font-bold text-on-surface/78">{award.player.name}</span>
+                  </div>
+                  <p className="mt-1.5 text-[9.5px] font-semibold italic leading-snug text-ios-gray">{award.note}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {isToxicTabActive && (
+          <p className="px-2 text-center text-[9.5px] font-semibold leading-snug text-white/72">
+            All roasts are about this match only. Jangan baper, ya.
+          </p>
+        )}
+
+        <section className="pt-1 pb-8">
+          <button
+            onClick={() => onShare(tournament)}
+            className={cn(
+              'w-full h-[52px] rounded-[14px] text-white font-bold text-[15px] tracking-[0.01em] tap-target inline-flex items-center justify-center gap-2 border border-white/12',
+              isToxicTabActive
+                ? 'bg-[linear-gradient(135deg,#f59e0b,#e65e14)] shadow-[0_8px_22px_rgba(245,158,11,0.28)]'
+                : cn(infoTheme.accentSolid, infoTheme.accentSolidShadow)
+            )}
+          >
+            <Share2 size={16} />
+            {isToxicTabActive ? 'Share the Shame' : 'Share Standings'}
+          </button>
+        </section>
+      </main>
+
+      {showSharedTrialCta && <SharedViewerFomPlayCta />}
+
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed left-0 top-0 z-0 opacity-0"
+        style={{ width: 360, height: 640 }}
+      >
+        <div
+          ref={storyExportRef}
+          className="relative h-[640px] w-[360px] overflow-hidden bg-black"
+        >
+          <div className={cn('absolute inset-0', klasemenPageBgTheme.base)} />
+          {klasemenHeroPhoto && (
+            <img
+              src={klasemenHeroPhoto}
+              alt=""
+              className="absolute inset-0 h-full w-full object-cover object-center scale-[1.08]"
+            />
+          )}
+          <div className={cn('absolute inset-0', klasemenPageBgTheme.photoBlend)} />
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.46)_0%,rgba(0,0,0,0.20)_22%,rgba(0,0,0,0.10)_46%,rgba(0,0,0,0.24)_100%)]" />
+
+          {isToxicStoryMode ? renderToxicStoryExportContent() : (
+          <div className={storyExportShellClass}>
+            <header className={storyExportLogoHeaderClass}>
+              <img src="/fom-long-logotype-white.png" alt="" className={storyExportLogoClass} />
+            </header>
+
+            <section className={storySummaryCardClass} style={storySummaryCardStyle}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className={storyTitleClass}>{tournament.name || '-'}</h2>
+                  <p className={storySubtitleClass}>{locationDateLabel}</p>
+                </div>
+                <span className={storyTimerClass}>{totalElapsed}</span>
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-1.5 text-center">
+                <div className={storySummaryStatClass}>
+                  <p className={storyStatLabelClass}>Mode</p>
+                  <p className={storyStatValueClass}>{tournament.format}</p>
+                </div>
+                <div className={storySummaryStatClass}>
+                  <p className={storyStatLabelClass}>Players</p>
+                  <p className={cn(storyStatValueClass, 'tabular-nums')}>{sortedPlayers.length}</p>
+                </div>
+                <div className={storySummaryStatClass}>
+                  <p className={storyStatLabelClass}>Court</p>
+                  <p className={cn(storyStatValueClass, 'tabular-nums')}>{courtsCount}</p>
+                </div>
+                <div className={storySummaryStatClass}>
+                  <p className={storyStatLabelClass}>Round</p>
+                  <p className={cn(storyStatValueClass, 'tabular-nums')}>{displayedRoundCount}/{totalRounds || 0}</p>
+                </div>
+              </div>
+            </section>
+
+            <section className={storyRankingCardClass}>
+              <div className={storyRankingHeaderClass}>
+                <div className={storyPlayerHeaderGridClass}>
+                  <span className="text-center">Ranking</span>
+                  {storyShowAvatars && <span aria-hidden="true" />}
+                  <span className={storyPlayerHeaderNameClass}>Player</span>
+                </div>
+                <div className={storyWldmHeaderClass}>
+                  <span>W</span>
+                  <span>L</span>
+                  <span>D</span>
+                  <span>M</span>
+                </div>
+                <span className="text-center">Diff</span>
+                <span className="text-center">Pts</span>
+              </div>
+              <div className={storyRankingRowsClass}>
+                {storyPlayers.map((player, i) => (
+                  <div
+                    key={player.id}
+                    className={storyRowClass}
+                  >
+                    <div className="min-w-0 flex items-center gap-2">
+                      <div className={cn(
+                        storyRankBadgeClass,
+                        storyRankOffset + i === 0 && 'standings-medal-badge standings-medal-gold',
+                        storyRankOffset + i === 1 && 'standings-medal-badge standings-medal-silver',
+                        storyRankOffset + i === 2 && 'standings-medal-badge standings-medal-bronze',
+                        getStoryRankBadgeClass(storyRankOffset + i)
+                      )}>
+                        {storyRankOffset + i + 1}
+                      </div>
+                      {storyShowAvatars && (
+                        <div className={storyAvatarClass}>
+                          {player.avatar ? (
+                            <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
+                          ) : (
+                            <span className="text-[9px] font-bold text-ios-gray">{player.initials}</span>
+                          )}
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className={storyPlayerNameClass}>{player.name}</p>
+                      </div>
+                    </div>
+                    <div className={storyWldmValueClass}>
+                      <span>{player.w}</span>
+                      <span>{player.l}</span>
+                      <span>{player.d}</span>
+                      <span>{player.matches}</span>
+                    </div>
+                    <p className={cn('text-center leading-none tabular-nums', storyDiffClass, player.pointsDiff > 0 ? infoTheme.accent : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
+                      {player.pointsDiff > 0 ? `+${player.pointsDiff}` : player.pointsDiff}
+                    </p>
+                    <p className={cn("text-center leading-none text-on-surface tabular-nums", storyPtsClass)}>{player.totalPoints}</p>
+                  </div>
+                ))}
+                {storyPlayers.length === 0 && (
+                  <div className="rounded-[12px] border border-white/18 bg-white/54 p-4 text-center text-[12px] font-medium text-ios-gray">
+                    Player data is not available yet.
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <div className={storyFooterSpacerClass} />
+            <footer className={storyFooterClass}>
+              <div className={storyFooterRowClass}>
+                <span className={storyFooterTextClass}>fomplay.asia/app</span>
+                <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
+                <span className={storyFooterTextClass}>@fo.motion</span>
+                {storyPageCount > 1 && (
+                  <>
+                    <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
+                    <span className={storyFooterTextClass}>{activeStoryPageIndex + 1}/{storyPageCount}</span>
+                  </>
+                )}
+              </div>
+            </footer>
+          </div>
+          )}
+        </div>
+      </div>
+
+      {isStoryPreviewOpen && (
+        <div
+          className="fixed inset-0 z-[240] flex items-center justify-center bg-black/86 px-3 py-3"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Story standings preview"
+        >
+          <button
+            type="button"
+            onClick={() => setIsStoryPreviewOpen(false)}
+            className="tap-target absolute right-4 z-[250] h-10 w-10 rounded-full border border-white/15 bg-white/12 text-white backdrop-blur-xl inline-flex items-center justify-center"
+            style={{ top: 'calc(var(--app-safe-top, 0px) + 12px)' }}
+            aria-label="Close story preview"
+          >
+            <X size={19} />
+          </button>
+
+          {storyImageUrl ? (
+            <img
+              src={storyImageUrl}
+              alt="Generated standings story"
+              className="aspect-[9/16] max-h-[calc(100dvh-24px)] bg-black object-contain shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
+              style={{ width: 'min(calc(100vw - 24px), 430px)' }}
+            />
+          ) : (
+            <div
+              className="relative aspect-[9/16] max-h-[calc(100dvh-24px)] overflow-hidden bg-black shadow-[0_24px_80px_rgba(0,0,0,0.45)]"
+              style={{ width: 'min(calc(100vw - 24px), 430px)' }}
+            >
+              <div className={cn('absolute inset-0', klasemenPageBgTheme.base)} />
+              {klasemenHeroPhoto && (
+                <img
+                  src={klasemenHeroPhoto}
+                  alt="Standings story background"
+                  className="absolute inset-0 h-full w-full object-cover object-center scale-[1.08]"
+                />
+              )}
+              <div className={cn('absolute inset-0', klasemenPageBgTheme.photoBlend)} />
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.46)_0%,rgba(0,0,0,0.20)_22%,rgba(0,0,0,0.10)_46%,rgba(0,0,0,0.24)_100%)]" />
+
+              {isToxicStoryMode ? renderToxicStoryExportContent(true) : (
+              <div className={storyExportShellClass}>
+                <header className={storyExportLogoHeaderClass}>
+                  <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className={storyExportLogoClass} />
+                </header>
+
+                {storyImageError && (
+                  <p className="mb-1 rounded-full bg-black/28 px-3 py-1.5 text-[10px] font-bold text-white/90">
+                    {storyImageError}
+                  </p>
+                )}
+
+                <section className={storySummaryCardClass} style={storySummaryCardStyle}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className={storyTitleClass}>{tournament.name || '-'}</h2>
+                      <p className={storySubtitleClass}>{locationDateLabel}</p>
+                    </div>
+                    <span className={storyTimerClass}>{totalElapsed}</span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-4 gap-1.5 text-center">
+                    <div className={storySummaryStatClass}>
+                      <p className={storyStatLabelClass}>Mode</p>
+                      <p className={storyStatValueClass}>{tournament.format}</p>
+                    </div>
+                    <div className={storySummaryStatClass}>
+                      <p className={storyStatLabelClass}>Players</p>
+                      <p className={cn(storyStatValueClass, 'tabular-nums')}>{sortedPlayers.length}</p>
+                    </div>
+                    <div className={storySummaryStatClass}>
+                      <p className={storyStatLabelClass}>Court</p>
+                      <p className={cn(storyStatValueClass, 'tabular-nums')}>{courtsCount}</p>
+                    </div>
+                    <div className={storySummaryStatClass}>
+                      <p className={storyStatLabelClass}>Round</p>
+                      <p className={cn(storyStatValueClass, 'tabular-nums')}>{displayedRoundCount}/{totalRounds || 0}</p>
+                    </div>
+                  </div>
+                </section>
+
+                <section className={storyRankingCardClass}>
+                  <div className={storyRankingHeaderClass}>
+                    <div className={storyPlayerHeaderGridClass}>
+                      <span className="text-center">Ranking</span>
+                      {storyShowAvatars && <span aria-hidden="true" />}
+                      <span className={storyPlayerHeaderNameClass}>Player</span>
+                    </div>
+                    <div className={storyWldmHeaderClass}>
+                      <span>W</span>
+                      <span>L</span>
+                      <span>D</span>
+                      <span>M</span>
+                    </div>
+                    <span className="text-center">Diff</span>
+                    <span className="text-center">Pts</span>
+                  </div>
+                  <div className={storyRankingRowsClass}>
+                    {storyPlayers.map((player, i) => (
+                      <div
+                        key={player.id}
+                        className={storyRowClass}
+                      >
+                        <div className="min-w-0 flex items-center gap-2">
+                          <div className={cn(
+                            storyRankBadgeClass,
+                            storyRankOffset + i === 0 && 'standings-medal-badge standings-medal-gold',
+                            storyRankOffset + i === 1 && 'standings-medal-badge standings-medal-silver',
+                            storyRankOffset + i === 2 && 'standings-medal-badge standings-medal-bronze',
+                            getStoryRankBadgeClass(storyRankOffset + i)
+                          )}>
+                            {storyRankOffset + i + 1}
+                          </div>
+                          {storyShowAvatars && (
+                            <div className={storyAvatarClass}>
+                              {player.avatar ? (
+                                <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+                              ) : (
+                                <span className="text-[9px] font-bold text-ios-gray">{player.initials}</span>
+                              )}
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className={storyPlayerNameClass}>{player.name}</p>
+                          </div>
+                        </div>
+                        <div className={storyWldmValueClass}>
+                          <span>{player.w}</span>
+                          <span>{player.l}</span>
+                          <span>{player.d}</span>
+                          <span>{player.matches}</span>
+                        </div>
+                        <p className={cn('text-center leading-none tabular-nums', storyDiffClass, player.pointsDiff > 0 ? infoTheme.accent : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
+                          {player.pointsDiff > 0 ? `+${player.pointsDiff}` : player.pointsDiff}
+                        </p>
+                        <p className={cn("text-center leading-none text-on-surface tabular-nums", storyPtsClass)}>{player.totalPoints}</p>
+                      </div>
+                    ))}
+                    {storyPlayers.length === 0 && (
+                      <div className="rounded-[12px] border border-white/18 bg-white/54 p-4 text-center text-[12px] font-medium text-ios-gray">
+                        Player data is not available yet.
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <div className={storyFooterSpacerClass} />
+                <footer className={storyFooterClass}>
+                  <div className={storyFooterRowClass}>
+                    <span className={storyFooterTextClass}>fomplay.asia/app</span>
+                    <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
+                    <span className={storyFooterTextClass}>@fo.motion</span>
+                    {storyPageCount > 1 && (
+                      <>
+                        <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
+                        <span className={storyFooterTextClass}>{activeStoryPageIndex + 1}/{storyPageCount}</span>
+                      </>
+                    )}
+                  </div>
+                </footer>
+              </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};

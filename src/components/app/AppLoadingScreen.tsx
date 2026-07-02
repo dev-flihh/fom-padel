@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 
+const LOADING_SCREEN_ORANGE = '#ff5500';
+
 export const AppLoadingScreen = () => {
   useEffect(() => {
     const html = document.documentElement;
@@ -10,8 +12,8 @@ export const AppLoadingScreen = () => {
     const hadHtmlClass = html.classList.contains('app-loading');
     const hadBodyClass = body.classList.contains('app-loading');
     const hadRootClass = root?.classList.contains('app-loading') ?? false;
-    html.style.backgroundColor = '#ff5501';
-    body.style.backgroundColor = '#ff5501';
+    html.style.backgroundColor = LOADING_SCREEN_ORANGE;
+    body.style.backgroundColor = LOADING_SCREEN_ORANGE;
     html.classList.add('app-loading');
     body.classList.add('app-loading');
     root?.classList.add('app-loading');
@@ -29,7 +31,7 @@ export const AppLoadingScreen = () => {
     <div
       className="fixed inset-0 z-[220] overflow-hidden"
       style={{
-        backgroundColor: '#ff5501'
+        backgroundColor: LOADING_SCREEN_ORANGE
       }}
     >
       <img
@@ -41,10 +43,11 @@ export const AppLoadingScreen = () => {
       />
       <div
         aria-hidden="true"
-        className="absolute left-0 right-0 bg-[#ff5501]"
+        className="absolute left-0 right-0"
         style={{
           bottom: 'calc(-1 * env(safe-area-inset-bottom, 0px) - 140px)',
-          height: 'calc(env(safe-area-inset-bottom, 0px) + 180px)'
+          height: 'calc(env(safe-area-inset-bottom, 0px) + 180px)',
+          backgroundColor: LOADING_SCREEN_ORANGE
         }}
       />
     </div>

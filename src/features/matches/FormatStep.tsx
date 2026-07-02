@@ -10,12 +10,19 @@ type FormatImpactCopy = Record<MatchFormat, {
   icon: ElementType;
 }>;
 
+const clampNumericInput = (value: string, min: number, max: number) => {
+  const parsed = Number(value.replace(/[^\d]/g, ''));
+  if (!Number.isFinite(parsed)) return null;
+  return Math.min(max, Math.max(min, parsed));
+};
+
 export const FormatStep = ({
   format,
   criteria,
   scoringType,
   courts,
   numRounds,
+  durationMinutes,
   points,
   structureSummaryLabel,
   formatImpactCopy,
@@ -29,6 +36,7 @@ export const FormatStep = ({
   onScoringTypeChange,
   onCourtsChange,
   onNumRoundsChange,
+  onDurationMinutesChange,
   onPointsChange
 }: {
   format: MatchFormat;
@@ -36,6 +44,7 @@ export const FormatStep = ({
   scoringType: ScoringType;
   courts: number;
   numRounds: number;
+  durationMinutes: number;
   points: number;
   structureSummaryLabel: string;
   formatImpactCopy: FormatImpactCopy;
@@ -49,6 +58,7 @@ export const FormatStep = ({
   onScoringTypeChange: (value: ScoringType) => void;
   onCourtsChange: (value: number) => void;
   onNumRoundsChange: (value: number) => void;
+  onDurationMinutesChange: (value: number) => void;
   onPointsChange: (value: number) => void;
 }) => (
   <section className="space-y-6">
@@ -161,61 +171,110 @@ export const FormatStep = ({
             key: 'courts',
             label: 'Courts',
             value: courts,
+            min: 1,
+            max: 12,
             help: 'How many matches can run at the same time.',
             dec: () => onCourtsChange(Math.max(1, courts - 1)),
-            inc: () => onCourtsChange(Math.min(12, courts + 1))
+            inc: () => onCourtsChange(Math.min(12, courts + 1)),
+            set: onCourtsChange
           },
           {
             key: 'rounds',
             label: 'Rounds',
             value: numRounds,
+            min: 1,
+            max: 30,
             help: 'How many times players rotate and play.',
             dec: () => onNumRoundsChange(Math.max(1, numRounds - 1)),
-            inc: () => onNumRoundsChange(Math.min(30, numRounds + 1))
+            inc: () => onNumRoundsChange(Math.min(30, numRounds + 1)),
+            set: onNumRoundsChange
+          },
+          {
+            key: 'duration',
+            label: 'Duration',
+            value: durationMinutes,
+            suffix: 'min',
+            min: 30,
+            max: 360,
+            help: 'Estimated total playing time for this session.',
+            dec: () => onDurationMinutesChange(Math.max(30, durationMinutes - 15)),
+            inc: () => onDurationMinutesChange(Math.min(360, durationMinutes + 15)),
+            set: onDurationMinutesChange
           },
           {
             key: 'points',
             label: 'Points',
             value: format === 'Match Play' ? 'N/A' : points,
+            min: 1,
+            max: 99,
             help: format === 'Match Play'
               ? 'Not used in Match Play. This format uses tennis-style game scoring instead of a point target.'
               : 'Target total points for each game.',
             dec: () => onPointsChange(Math.max(1, points - 1)),
             inc: () => onPointsChange(Math.min(99, points + 1)),
+            set: onPointsChange,
             disabled: format === 'Match Play'
           }
-        ].map((item) => (
-          <div
-            key={item.key}
-            className={cn(
-              "rounded-[20px] bg-white px-4 py-3.5",
-              item.disabled && "bg-[#fbfbfd]"
-            )}
-          >
-            <div className="flex items-center gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <p className={cn("text-[10px] font-bold uppercase tracking-[0.12em]", item.disabled ? "text-ios-gray/82" : "text-on-surface")}>{item.label}</p>
-                  {item.disabled && (
-                    <span className="rounded-full bg-ios-gray/[0.08] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-ios-gray">
-                      Match Play
-                    </span>
-                  )}
+        ].map((item) => {
+          const numericValue = typeof item.value === 'number' ? item.value : null;
+          return (
+            <div
+              key={item.key}
+              className={cn(
+                "rounded-[20px] bg-white px-4 py-3.5",
+                item.disabled && "bg-[#fbfbfd]"
+              )}
+            >
+              <div className="flex items-center gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className={cn("text-[10px] font-bold uppercase tracking-[0.12em]", item.disabled ? "text-ios-gray/82" : "text-on-surface")}>{item.label}</p>
+                    {item.disabled && (
+                      <span className="rounded-full bg-ios-gray/[0.08] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] text-ios-gray">
+                        Match Play
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-[12px] font-medium leading-[1.45] text-ios-gray">{item.help}</p>
                 </div>
-                <p className="mt-1 text-[12px] font-medium leading-[1.45] text-ios-gray">{item.help}</p>
-              </div>
-              <div className="flex shrink-0 items-center justify-center gap-2">
-                <button type="button" disabled={item.disabled} onClick={item.dec} className="tap-target flex h-8 w-8 items-center justify-center rounded-full bg-[#fbfbfd] text-on-surface shadow-[0_1px_3px_rgba(17,24,39,0.08)] disabled:opacity-35">
-                  <Minus size={14} />
-                </button>
-                <span className={cn("min-w-8 text-center text-[20px] font-bold tracking-[-0.03em]", item.disabled ? "text-ios-gray/70" : "text-on-surface")}>{item.value}</span>
-                <button type="button" disabled={item.disabled} onClick={item.inc} className="tap-target flex h-8 w-8 items-center justify-center rounded-full bg-[#fbfbfd] text-on-surface shadow-[0_1px_3px_rgba(17,24,39,0.08)] disabled:opacity-35">
-                  <Plus size={14} />
-                </button>
+                <div className="flex shrink-0 items-center justify-center gap-2">
+                  <button type="button" disabled={item.disabled} onClick={item.dec} className="tap-target flex h-8 w-8 items-center justify-center rounded-full bg-[#fbfbfd] text-on-surface shadow-[0_1px_3px_rgba(17,24,39,0.08)] disabled:opacity-35">
+                    <Minus size={14} />
+                  </button>
+                  {numericValue === null ? (
+                    <span className="min-w-10 text-center text-[20px] font-bold tracking-[-0.03em] text-ios-gray/70">{item.value}</span>
+                  ) : (
+                    <div className="flex items-baseline rounded-[12px] border border-transparent transition-all focus-within:border-primary/20 focus-within:bg-primary/[0.06] focus-within:ring-2 focus-within:ring-primary/10">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        min={item.min}
+                        max={item.max}
+                        value={numericValue}
+                        disabled={item.disabled}
+                        aria-label={`${item.label} value`}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onChange={(event) => {
+                          if (event.target.value.trim() === '') return;
+                          const nextValue = clampNumericInput(event.target.value, item.min, item.max);
+                          if (nextValue !== null) item.set(nextValue);
+                        }}
+                        className="h-9 w-12 bg-transparent text-center text-[20px] font-bold tracking-[-0.03em] text-on-surface outline-none disabled:text-ios-gray/70"
+                      />
+                      {'suffix' in item && item.suffix && (
+                        <span className="-ml-1 pr-2 text-[11px] font-bold text-ios-gray">{item.suffix}</span>
+                      )}
+                    </div>
+                  )}
+                  <button type="button" disabled={item.disabled} onClick={item.inc} className="tap-target flex h-8 w-8 items-center justify-center rounded-full bg-[#fbfbfd] text-on-surface shadow-[0_1px_3px_rgba(17,24,39,0.08)] disabled:opacity-35">
+                    <Plus size={14} />
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   </section>

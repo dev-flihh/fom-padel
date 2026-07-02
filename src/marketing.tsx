@@ -424,8 +424,16 @@ const MarketingHeader = ({
   return (
     <header className="sticky top-0 z-40 border-b border-black/6 bg-white/92 backdrop-blur-xl">
       <div className="mx-auto flex h-16 w-full max-w-[1200px] items-center justify-between gap-4 px-5 sm:px-6">
-        <MarketingLink href={TOP_LEVEL_PATHS.home} onClick={() => window.location.assign('/')} className="flex items-center">
-          <img src="/fom-logotype-nav.png?v=20260421-logo2" alt="FOM" className="h-[34px] w-auto object-contain" />
+        <MarketingLink
+          href={TOP_LEVEL_PATHS.home}
+          onClick={() => window.location.assign('/')}
+          aria-label="FOM Play home"
+          className="flex items-center gap-2"
+        >
+          <img src="/assets/fom-logomark-color.png" alt="" aria-hidden="true" className="h-[36px] w-[47px] object-contain" />
+          <span className="font-display text-[29px] font-extrabold leading-none tracking-normal text-[#111827]">
+            FOM<span className="text-[#ff5500]">Play</span>
+          </span>
         </MarketingLink>
 
         <div className="hidden items-center gap-1.5 md:flex">

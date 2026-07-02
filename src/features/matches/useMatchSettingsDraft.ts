@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { INITIAL_TOURNAMENT } from '../../constants';
-import { type MatchFormat, type Player, type RankingCriteria, type ScoringType, type Tournament } from '../../types';
+import { type MatchFormat, type Player, type RankingCriteria, type ScoringType, type ToxicIntensity, type Tournament } from '../../types';
 import { getDefaultMatchThemeColorId, getMatchThemeColor } from '../tournaments/matchTheme';
+import { normalizeToxicIntensity } from './toxicSettings';
 
 export const useMatchSettingsDraft = ({
   tournament,
@@ -21,11 +22,14 @@ export const useMatchSettingsDraft = ({
   const [format, setFormat] = useState<MatchFormat>(tournament.format);
   const [selectedThemeColorId, setSelectedThemeColorId] = useState(() => tournament.themeColorId || getDefaultMatchThemeColorId(tournament.format));
   const hasCustomizedThemeColorRef = useRef(Boolean(tournament.themeColorId));
+  const [toxicModeEnabled, setToxicModeEnabled] = useState(Boolean(tournament.toxicModeEnabled));
+  const [toxicIntensity, setToxicIntensity] = useState<ToxicIntensity>(() => normalizeToxicIntensity(tournament.toxicIntensity));
   const [criteria, setCriteria] = useState<RankingCriteria>(tournament.criteria);
   const [scoringType, setScoringType] = useState<ScoringType>(tournament.scoringType || 'Golden Point');
   const [courts, setCourts] = useState(tournament.courts);
   const [points, setPoints] = useState(tournament.totalPoints);
   const [numRounds, setNumRounds] = useState(tournament.numRounds || 5);
+  const [durationMinutes, setDurationMinutes] = useState(tournament.durationMinutes || 120);
   const [gameName, setGameName] = useState(() => ((tournament.name || '').trim() === INITIAL_TOURNAMENT.name ? '' : (tournament.name || '')));
   const [venueName, setVenueName] = useState(() => tournament.venueName || '');
 
@@ -33,6 +37,7 @@ export const useMatchSettingsDraft = ({
     const normalizedName = gameName;
     const normalizedVenue = venueName;
     const normalizedLocation = location.trim();
+    const normalizedToxicIntensity = normalizeToxicIntensity(toxicIntensity);
 
     setTournament((prev) => {
       const prevName = (prev.name || '').trim() === INITIAL_TOURNAMENT.name ? '' : (prev.name || '');
@@ -44,11 +49,14 @@ export const useMatchSettingsDraft = ({
         prevName === normalizedName &&
         prev.format === format &&
         prev.themeColorId === selectedThemeColorId &&
+        Boolean(prev.toxicModeEnabled) === toxicModeEnabled &&
+        normalizeToxicIntensity(prev.toxicIntensity) === normalizedToxicIntensity &&
         prev.criteria === criteria &&
         prevScoringType === scoringType &&
         prev.courts === courts &&
         prev.totalPoints === points &&
         prev.numRounds === numRounds &&
+        prev.durationMinutes === durationMinutes &&
         prevVenue === normalizedVenue &&
         prevLocation === normalizedLocation
       ) {
@@ -60,16 +68,19 @@ export const useMatchSettingsDraft = ({
         name: normalizedName,
         format,
         themeColorId: selectedThemeColorId,
+        toxicModeEnabled,
+        toxicIntensity: normalizedToxicIntensity,
         criteria,
         scoringType,
         courts,
         totalPoints: points,
         numRounds,
+        durationMinutes,
         venueName: normalizedVenue,
         location: normalizedLocation
       };
     });
-  }, [gameName, venueName, location, format, selectedThemeColorId, criteria, scoringType, courts, points, numRounds, setTournament]);
+  }, [gameName, venueName, location, format, selectedThemeColorId, toxicModeEnabled, toxicIntensity, criteria, scoringType, courts, points, numRounds, durationMinutes, setTournament]);
 
   const applyFormatChoice = (value: MatchFormat) => {
     setFormat(value);
@@ -101,6 +112,8 @@ export const useMatchSettingsDraft = ({
       name: gameName.trim() || 'Padel Match',
       format,
       themeColorId: selectedThemeColorId,
+      toxicModeEnabled,
+      toxicIntensity: normalizeToxicIntensity(toxicIntensity),
       criteria,
       scoringType,
       courts,
@@ -108,6 +121,7 @@ export const useMatchSettingsDraft = ({
       players: selectedPlayers,
       inactivePlayerIds: [],
       numRounds,
+      durationMinutes,
       venueName: venueName.trim(),
       location: location.trim(),
       backgroundId: selectedBackgroundId || tournament.backgroundId,
@@ -118,20 +132,26 @@ export const useMatchSettingsDraft = ({
 
   return {
     format,
+    toxicModeEnabled,
+    toxicIntensity,
     criteria,
     scoringType,
     courts,
     points,
     numRounds,
+    durationMinutes,
     gameName,
     venueName,
     selectedThemeColor: getMatchThemeColor(format, selectedThemeColorId),
     venueDisplayLabel: [venueName.trim(), location.trim()].filter(Boolean).join(', ') || 'Venue not set',
     setCriteria,
+    setToxicModeEnabled,
+    setToxicIntensity,
     setScoringType,
     setCourts,
     setPoints,
     setNumRounds,
+    setDurationMinutes,
     setGameName,
     setVenueName,
     applyFormatChoice,

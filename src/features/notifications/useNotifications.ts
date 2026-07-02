@@ -72,6 +72,29 @@ export const useNotifications = ({ enabled }: { enabled: boolean }) => {
     }
   };
 
+  const queueToast = (toast: AppNotification) => {
+    setNotificationToasts((prev) => [toast, ...prev].slice(0, 3));
+    notificationToastTimeoutsRef.current[toast.id] = window.setTimeout(() => {
+      setNotificationToasts((prev) => prev.filter((item) => item.id !== toast.id));
+      delete notificationToastTimeoutsRef.current[toast.id];
+    }, 3200);
+  };
+
+  const createNotificationRecord = (
+    title: string,
+    message: string,
+    type: AppNotification['type'],
+    tone?: AppNotification['tone']
+  ): AppNotification => ({
+    id: Math.random().toString(36).substr(2, 9),
+    title,
+    message,
+    timestamp: new Date(),
+    type,
+    tone: inferNotificationTone(title, message, type, tone),
+    read: false,
+  });
+
   const addNotification = (
     title: string,
     message: string,
@@ -79,25 +102,22 @@ export const useNotifications = ({ enabled }: { enabled: boolean }) => {
     tone?: AppNotification['tone']
   ) => {
     if (!enabled) return;
-    const newNotif: AppNotification = {
-      id: Math.random().toString(36).substr(2, 9),
-      title,
-      message,
-      timestamp: new Date(),
-      type,
-      tone: inferNotificationTone(title, message, type, tone),
-      read: false,
-    };
+    const newNotif = createNotificationRecord(title, message, type, tone);
     setNotifications((prev) => [newNotif, ...prev]);
-    setNotificationToasts((prev) => [newNotif, ...prev].slice(0, 3));
-    notificationToastTimeoutsRef.current[newNotif.id] = window.setTimeout(() => {
-      setNotificationToasts((prev) => prev.filter((toast) => toast.id !== newNotif.id));
-      delete notificationToastTimeoutsRef.current[newNotif.id];
-    }, 3200);
+    queueToast(newNotif);
 
     if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       new Notification(title, { body: message });
     }
+  };
+
+  const showTransientToast = (
+    title: string,
+    message: string,
+    type: AppNotification['type'],
+    tone?: AppNotification['tone']
+  ) => {
+    queueToast(createNotificationRecord(title, message, type, tone));
   };
 
   const handleMarkAsRead = (id: string) => {
@@ -129,14 +149,23 @@ export const useNotifications = ({ enabled }: { enabled: boolean }) => {
 
   const showShareFeedbackToast = (state: ShareFeedbackState, message?: string) => {
     if (state === 'success') {
-      addNotification('Share Berhasil', message || 'Link berhasil disalin dan live update sudah aktif.', 'system', 'success');
+      const title = 'Copied Link';
+      const body = message || 'Link berhasil disalin.';
+      if (enabled) addNotification(title, body, 'system', 'success');
+      else showTransientToast(title, body, 'system', 'success');
       return;
     }
     if (state === 'ready') {
-      addNotification('Share Siap', message || 'Link sudah siap dibagikan dan live update sudah aktif.', 'system', 'success');
+      const title = 'Share Ready';
+      const body = message || 'Link sudah siap dibagikan.';
+      if (enabled) addNotification(title, body, 'system', 'success');
+      else showTransientToast(title, body, 'system', 'success');
       return;
     }
-    addNotification('Share Gagal', message || 'Belum bisa menyalin atau membagikan link saat ini.', 'system', 'error');
+    const title = 'Share Failed';
+    const body = message || 'Belum bisa menyalin atau membagikan link saat ini.';
+    if (enabled) addNotification(title, body, 'system', 'error');
+    else showTransientToast(title, body, 'system', 'error');
   };
 
   const showShareCopiedToast = (state: ShareCopiedState) => {

@@ -5,6 +5,7 @@ import {
   getTournamentHistoryStorageKey,
   getTournamentStorageKey,
 } from './historyPersistence';
+import { stripLargeInlineImages, stripTournamentPlayerAvatars } from '../../services/firestoreSerialization';
 import type { Player, Tournament, TournamentHistory } from '../../types';
 
 type UseLocalTournamentPersistenceParams = {
@@ -26,12 +27,23 @@ export const useLocalTournamentPersistence = ({
 }: UseLocalTournamentPersistenceParams) => {
   useEffect(() => {
     if (!userUid || isSharedViewer) return;
-    localStorage.setItem(getPlayersStorageKey(userUid), JSON.stringify(allPlayers));
+    try {
+      localStorage.setItem(getPlayersStorageKey(userUid), JSON.stringify(stripLargeInlineImages(allPlayers)));
+    } catch (err) {
+      console.error('Write local players cache error:', err);
+    }
   }, [allPlayers, isSharedViewer, userUid]);
 
   useEffect(() => {
     if (!userUid || isSharedViewer) return;
-    localStorage.setItem(getTournamentStorageKey(userUid), JSON.stringify(tournament));
+    try {
+      localStorage.setItem(
+        getTournamentStorageKey(userUid),
+        JSON.stringify(stripLargeInlineImages(stripTournamentPlayerAvatars(tournament)))
+      );
+    } catch (err) {
+      console.error('Write local active tournament cache error:', err);
+    }
   }, [isSharedViewer, tournament, userUid]);
 
   useEffect(() => {

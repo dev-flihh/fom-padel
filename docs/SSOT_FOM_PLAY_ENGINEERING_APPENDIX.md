@@ -1,6 +1,6 @@
 # FOM Play Engineering Appendix
 
-Last Updated: 2026-04-29 (Asia/Jakarta)
+Last Updated: 2026-05-12 (Asia/Jakarta)
 Primary Reference: `docs/SSOT_FOM_PLAY.md`
 
 ## 1. Scope
@@ -9,6 +9,7 @@ Dokumen ini menjelaskan implementasi teknis inti yang paling penting untuk engin
 - active match lifecycle
 - persistence and restore
 - stats pipeline
+- rooms
 - Firestore ownership model
 - hosting/runtime packaging
 
@@ -36,6 +37,7 @@ Auth bootstrap juga menangani:
 - admin-role backfill untuk email admin tertentu
 - normalization legacy MMR awal
 - merge Firebase Auth profile dengan Firestore profile
+- room deep links via `?room={roomId}` after auth state is resolved
 
 ## 4. Tournament Draft And Generation
 
@@ -70,6 +72,8 @@ Kalau score pada ronde lama diubah dan hasilnya valid untuk standings:
 ### Active player changes
 - perubahan roster aktif tidak mengubah ronde yang sedang berjalan
 - perubahan berlaku mulai ronde berikutnya
+- active roster save can also replace manual players with registered FOM friends
+- replacement rewrites tournament players, byes, match team references, and inactive IDs
 
 ### Court changes
 - court changes disimpan sebagai `courtChanges[]`
@@ -109,6 +113,7 @@ Important note:
 - host writes `sharedMatches/{shareId}`
 - same share ID is reused when possible for the same active tournament
 - share ID is cached locally per `(uid, startedAt)`
+- share payloads strip oversized inline image data and player avatars before Firestore writes
 
 ### Viewer side
 - viewer subscribes directly to the `sharedMatches` doc
@@ -118,6 +123,7 @@ Important note:
 ### Safety note
 - `sharedMatches` is public-readable by rules
 - payload should therefore be treated as public tournament view data
+- app supports a `skipSharePersistence` flag for e2e/offline-style flows that still need share UX feedback without writing the shared document
 
 ## 9. History Model
 
@@ -125,8 +131,9 @@ Important note:
 When tournament is finished on client:
 - finalized rounds are constructed
 - `endedAt` is assigned
-- local `tournaments` state prepends the new history item
-- Firestore `tournaments/{id}` is written
+- Firestore `tournament_details/{id}` and summary `tournaments/{id}` are written with large inline images and player avatars stripped
+- local `tournaments` state prepends the new history item only after the cloud save succeeds
+- if the cloud save fails, the finalized active tournament is kept as a recovery snapshot and the finish flow is blocked
 
 ### History read path
 Current cloud fetch aims to:
@@ -137,6 +144,46 @@ Current cloud fetch aims to:
 
 ### Read-only replay
 Archived tournaments are replayed by converting `TournamentHistory` into a read-only `Tournament` object for `active` and `klasemen`.
+
+## 9A. Rooms Model
+
+### Current implementation surface
+- `src/features/rooms/RoomListScreen.tsx`
+- `src/features/rooms/RoomEditorScreen.tsx`
+- `src/features/rooms/RoomDetailScreen.tsx`
+- `src/features/rooms/RoomMatchSetupScreen.tsx`
+- `src/features/rooms/useRooms.ts`
+- `src/features/rooms/roomRepository.ts`
+- `src/features/rooms/roomMappers.ts`
+- `src/features/rooms/types.ts`
+
+### Data source
+- collection constant: `ROOMS_COLLECTION = 'rooms'`
+- repository uses primary `db`
+- hosted room list currently reads the collection and filters by `hostUid` client-side, then sorts by `scheduledFor asc`
+- public upcoming list currently reads the collection and filters by `visibility = public` plus `scheduledFor >= Date.now()` client-side, then sorts by `scheduledFor asc`
+- host room setup saves `settings` and `matchSetupConfiguredAt`
+- invite sharing builds `/app?room={roomId}` text and uses native share, clipboard, or prompt fallback
+
+### Launch path
+When a host starts a room:
+1. verify caller is room host
+2. verify room status is `scheduled`
+3. verify `matchSetupConfiguredAt` exists
+4. verify joined players meet `max(4, minPlayers)`
+5. convert joined room participants into match `Player` records
+6. map room `settings` into a fresh tournament draft
+7. call normal tournament generation
+8. persist active tournament snapshot
+9. update room to `in_progress`
+10. write `launchedTournamentId` and `launchPayload`
+11. route to `active`
+
+### Implementation caveats
+- participant join / leave currently rewrites the room `participants` array after a document read
+- room repository currently uses broad collection reads and client-side filters, which should be revisited before scale
+- invite, cancellation, completion, and private/friends discoverability are modeled but not fully productized
+- current rules are MVP-level: authenticated read, public unauthenticated read when `visibility = public`, host create/delete/update, and authenticated participant-array updates
 
 ## 10. Ranking And Stats Pipeline
 
@@ -178,6 +225,7 @@ Gunakan database ini untuk semua source of truth produk.
 - `player_stats`
 - `tournaments`
 - `tournament_details`
+- `rooms`
 - `player_match_ledger`
 - `users/{uid}/history_summary`
 - `users/{uid}/friends`
@@ -197,6 +245,7 @@ Gunakan database ini untuk public-share, draft, derived snapshot, dan operationa
 
 ### Decision rule
 - Jika data adalah identitas user, ranking agregat, history permanen, ledger, atau trigger source backend, simpan di primary DB.
+- Jika data adalah planning match yang harus bertahan sampai diluncurkan sebagai tournament, simpan di primary DB.
 - Jika data bisa direbuild, hanya dipakai untuk restore sementara, atau aman diperlakukan sebagai public/share snapshot, simpan di ephemeral DB.
 - Jangan memecah satu flow bisnis inti ke dua database bila keduanya mewakili source of truth yang sama.
 
@@ -230,9 +279,13 @@ This means finalized delete is not a UI-only delete. It is a real stats rollback
 - `users/{uid}/sentFriendRequests/*`
 - `users/{uid}/notifications/*`
 - `tournaments/{tournamentId}` when `userId == auth.uid`
+- `rooms/{roomId}` when `hostUid == auth.uid`
+- `tournaments/{tournamentId}` read access also applies to authenticated participants with matching `users/{uid}/history_summary/{tournamentId}`
+- `tournament_details/{tournamentId}` read access also applies to authenticated participants with matching `users/{uid}/history_summary/{tournamentId}`
 
 ### Public-read docs
 - `sharedMatches/{shareId}`
+- `rooms/{roomId}` only when room visibility and product rules explicitly allow it
 
 ### Server-controlled docs
 - `player_stats/*`
@@ -269,6 +322,9 @@ Reason:
 - `sharedMatches` and `active_tournament_drafts` may keep the legacy database ID visible in the frontend bundle by design; that alone is not evidence of a failed cutover
 - route/hosting changes can create documentation drift quickly because app shell and landing shell now diverge
 - some docs and comments may still use older mental models like “hybrid homepage”; current build packaging should override those assumptions
+- rooms currently use primary `db`; seeing `rooms` in the primary database is expected, not a failed ephemeral routing decision
+- because room participation rewrites an array, concurrent join / leave behavior needs extra care if rooms are opened to larger public usage
+- local active cache, shared payloads, and finalized history writes strip large inline image data / tournament player avatars to avoid oversized storage and public payload bloat
 
 ## 16. Firestore Observability
 
@@ -287,6 +343,7 @@ Update this file if there are changes in:
 - auth bootstrap
 - route packaging / hosting rewrites
 - share sync
+- rooms lifecycle, rules, indexes, or database routing
 - history sourcing
 - Cloud Functions behavior
 - Firestore collection roles or collection-to-database routing

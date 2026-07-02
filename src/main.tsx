@@ -11,14 +11,31 @@ const isStandaloneDisplayMode =
   || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
 
 let updateSW: ((reloadPage?: boolean) => Promise<void>) | undefined;
+let swRegistration: ServiceWorkerRegistration | undefined;
+type FomUpdateWindow = Window & {
+  __fomUpdateAvailable?: boolean;
+  __fomApplyServiceWorkerUpdate?: () => Promise<void>;
+};
+const fomUpdateWindow = window as FomUpdateWindow;
+
+const notifyAppUpdateAvailable = () => {
+  fomUpdateWindow.__fomUpdateAvailable = true;
+  fomUpdateWindow.__fomApplyServiceWorkerUpdate = () => (
+    updateSW ? updateSW(true) : Promise.resolve()
+  );
+  window.dispatchEvent(new CustomEvent('fom-play:update-available'));
+};
 
 if (isAppRoute && isStandaloneDisplayMode) {
   updateSW = registerSW({
     immediate: true,
+    onRegisteredSW(_swUrl, registration) {
+      swRegistration = registration;
+    },
     onNeedRefresh() {
       // Do not force-refresh the app while Firebase Auth may be using
       // sessionStorage for an OAuth popup/redirect handshake.
-      updateSW?.(false);
+      notifyAppUpdateAvailable();
     },
   });
 } else if ('serviceWorker' in navigator) {
@@ -35,12 +52,12 @@ if (isAppRoute && isStandaloneDisplayMode) {
 
 // Periodically re-check updates while app is open (helps installed PWA sessions).
 window.setInterval(() => {
-  updateSW?.(false);
+  void swRegistration?.update();
 }, 60 * 1000);
 
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && updateSW) {
-    updateSW(false);
+  if (document.visibilityState === 'visible' && swRegistration) {
+    void swRegistration.update();
   }
 });
 

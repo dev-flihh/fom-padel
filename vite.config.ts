@@ -36,7 +36,7 @@ export default defineConfig(({mode}) => {
       react(), 
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         includeAssets: ['favicon.png', 'apple-touch-icon.png'],
         workbox: {
           // Keep Firebase Auth reserved handler routes and the app shell out of
@@ -48,8 +48,8 @@ export default defineConfig(({mode}) => {
           name: 'FOM Play',
           short_name: 'FOM Play',
           description: 'Padel Tournament & MMR System',
-          theme_color: '#F86600',
-          background_color: '#F86600',
+          theme_color: '#FFFFFF',
+          background_color: '#FFFFFF',
           start_url: '/app',
           scope: '/',
           display: 'standalone',

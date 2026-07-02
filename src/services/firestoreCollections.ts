@@ -13,5 +13,10 @@ export const PLAYER_STATS_COLLECTION = 'player_stats';
 export const PLAYER_MATCH_LEDGER_COLLECTION = 'player_match_ledger';
 
 export const SHARED_MATCHES_COLLECTION = 'sharedMatches';
+export const ROOMS_COLLECTION = 'rooms';
+export const ROOM_FINANCE_COLLECTION = 'finance';
+export const ROOM_PRIVATE_FINANCE_DOC_ID = 'private';
+export const ROOM_PARTICIPANT_FINANCE_COLLECTION = 'participant_finance';
 export const FEEDBACK_SUBMISSIONS_COLLECTION = 'feedback_submissions';
 export const LEADERBOARD_SNAPSHOTS_COLLECTION = 'leaderboard_snapshots';
+export const USER_FINANCE_MATCH_SNAPSHOTS_COLLECTION = 'finance_match_snapshots';

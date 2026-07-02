@@ -19,9 +19,9 @@ import {
   type TopLevelRoute,
 } from '../../marketing';
 import type { Screen, Tournament, TournamentHistory } from '../../types';
-import { getMatchThemeColor } from '../tournaments/matchTheme';
 
 const APP_DESCRIPTION = 'Buka FOM Play untuk mengelola game padel, live score, klasemen, dan ranking pemain.';
+const BROWSER_CHROME_COLOR = '#ffffff';
 
 type UseAppChromeParams = {
   isAppShellRoute: boolean;
@@ -181,32 +181,21 @@ export const useAppChrome = ({
         themeColorMeta.setAttribute('name', 'theme-color');
         document.head.appendChild(themeColorMeta);
       }
-      themeColorMeta.setAttribute('content', '#fffaf5');
-      document.documentElement.style.backgroundColor = '#fffaf5';
-      document.body.style.backgroundColor = '#fffaf5';
+      themeColorMeta.setAttribute('content', BROWSER_CHROME_COLOR);
+      document.documentElement.style.backgroundColor = BROWSER_CHROME_COLOR;
+      document.body.style.backgroundColor = BROWSER_CHROME_COLOR;
       return;
     }
 
-    const getSystemBarColor = () => {
-      if (screen === 'active' || screen === 'klasemen') {
-        const visualTournament = (screen === 'active'
-          ? (activeScreenTournament || tournament)
-          : (selectedKlasemenTournament || tournament)) as Tournament | TournamentHistory;
-        return getMatchThemeColor(visualTournament?.format || 'Mexicano', visualTournament?.themeColorId).systemBar;
-      }
-      return '#ffffff';
-    };
-
-    const systemBarColor = getSystemBarColor();
     let themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (!themeColorMeta) {
       themeColorMeta = document.createElement('meta');
       themeColorMeta.setAttribute('name', 'theme-color');
       document.head.appendChild(themeColorMeta);
     }
-    themeColorMeta.setAttribute('content', systemBarColor);
-    document.documentElement.style.backgroundColor = systemBarColor;
-    document.body.style.backgroundColor = systemBarColor;
+    themeColorMeta.setAttribute('content', BROWSER_CHROME_COLOR);
+    document.documentElement.style.backgroundColor = BROWSER_CHROME_COLOR;
+    document.body.style.backgroundColor = BROWSER_CHROME_COLOR;
   }, [activeScreenTournament, isAppShellRoute, screen, selectedKlasemenTournament, tournament]);
 
   useEffect(() => {

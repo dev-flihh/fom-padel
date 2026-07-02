@@ -12,6 +12,7 @@ import {
   Star,
   CircleHelp,
   BookOpen,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Screen, Player, Tournament, Match, Round, TournamentHistory, Friend, CourtChange } from './types';
@@ -41,6 +42,7 @@ import { MatchActiveScreen } from './features/matches/MatchActiveScreen';
 import { useActiveMatchDeletionAction } from './features/matches/useActiveMatchDeletionAction';
 import { KlasemenScreen } from './features/matches/KlasemenScreen';
 import { MatchSettingsScreen } from './features/matches/MatchSettingsScreen';
+import { getActivePlayersFromTournament, rebuildAmericanoFutureRounds } from './features/matches/americanoScheduler';
 import { useMatchMutationActions } from './features/matches/useMatchMutationActions';
 import { useRoundProgressionActions } from './features/matches/useRoundProgressionActions';
 import { TournamentHistoryCard } from './features/history/HistoryCards';
@@ -75,9 +77,32 @@ import { useFriendMatchPickerActions } from './features/friends/useFriendMatchPi
 import { dedupePlayersById, sortPlayersByName } from './features/matches/matchSetupUtils';
 import { isLikelyFirebaseUid, MANUAL_PLAYER_ID_PREFIX } from './features/players/playerUtils';
 import { usePlayerProfileSync } from './features/players/usePlayerProfileSync';
-import { createFreshTournamentDraft, hasSetupDraftChanges, sanitizeInactivePlayerIds } from './features/tournaments/tournamentDraft';
+import { generateTournamentFromSettings } from './features/tournaments/generateTournament';
+import { createFreshTournamentDraft, hasSetupDraftChanges } from './features/tournaments/tournamentDraft';
 import { useActiveTournamentLifecycle } from './features/tournaments/useActiveTournamentLifecycle';
 import { useTournamentSetupActions } from './features/tournaments/useTournamentSetupActions';
+import { RoomListScreen } from './features/rooms/RoomListScreen';
+import { RoomEditorScreen } from './features/rooms/RoomEditorScreen';
+import { RoomDetailScreen } from './features/rooms/RoomDetailScreen';
+import { RoomMatchSetupScreen } from './features/rooms/RoomMatchSetupScreen';
+import { useRooms } from './features/rooms/useRooms';
+import type { FinancePaymentStatus, FinancePlayerType, Room, RoomFinancePrivate, RoomParticipant, RoomParticipantFinance, RoomSettingsSnapshot } from './features/rooms/types';
+import { buildJoinedPlayersFromRoom, buildRoomParticipantFromPlayer, buildTournamentDraftFromRoom } from './features/rooms/roomMappers';
+import { createRoom, getRoomById, removeRoomParticipant, saveRoom, upsertRoomParticipant } from './features/rooms/roomRepository';
+import {
+  buildHostFinanceMatchSnapshot,
+  buildRoomFinancePrivate,
+  buildRoomPublicPricing,
+  calculateParticipantFinances,
+  getRoomPublicPricing,
+} from './features/rooms/roomFinance';
+import {
+  getRoomFinancePrivate,
+  getRoomParticipantFinance,
+  listRoomParticipantFinances,
+  saveRoomFinanceState,
+  saveRoomFinanceStateDelta,
+} from './features/rooms/roomFinanceRepository';
 import {
   SHARED_MATCHES_COLLECTION,
   TOURNAMENT_DETAILS_COLLECTION,
@@ -108,6 +133,159 @@ const getScoreToneClass = (score: number) => {
   return 'text-on-surface';
 };
 
+type RoomShareDeliveryResult = 'copied' | 'shared' | 'manual' | 'failed';
+type FomUpdateWindow = Window & {
+  __fomUpdateAvailable?: boolean;
+  __fomApplyServiceWorkerUpdate?: () => Promise<void>;
+};
+
+const getRoomShareBaseUrl = () => {
+  const envPublicUrl = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
+  if (envPublicUrl) {
+    const normalizedPublicUrl = envPublicUrl.startsWith('http://') || envPublicUrl.startsWith('https://')
+      ? envPublicUrl
+      : `https://${envPublicUrl}`;
+    const shareBaseUrl = new URL(normalizedPublicUrl);
+    shareBaseUrl.pathname = '/app';
+    return shareBaseUrl;
+  }
+
+  return new URL('/app', window.location.origin);
+};
+
+const buildRoomShareUrl = (roomId: string) => {
+  try {
+    const shareUrl = getRoomShareBaseUrl();
+    shareUrl.searchParams.set('room', roomId);
+
+    const isLocalHost = ['localhost', '127.0.0.1'].includes(shareUrl.hostname);
+    const envNetworkHost = ((import.meta as any).env?.VITE_SHARE_NETWORK_HOST as string | undefined)?.trim() || '';
+    let savedNetworkHost = '';
+    try {
+      savedNetworkHost = localStorage.getItem('fom_share_network_host') || '';
+    } catch {
+      savedNetworkHost = '';
+    }
+    const networkHost = (envNetworkHost || savedNetworkHost).trim();
+
+    if (isLocalHost && networkHost) {
+      shareUrl.hostname = networkHost;
+      shareUrl.protocol = 'http:';
+    }
+
+    return shareUrl.toString();
+  } catch {
+    return `${window.location.origin}/app?room=${encodeURIComponent(roomId)}`;
+  }
+};
+
+const formatRoomShareDateTime = (scheduledFor: number) => {
+  try {
+    const date = new Date(scheduledFor);
+    const dateLabel = date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+    const timeLabel = date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    return `${dateLabel} ${timeLabel}`;
+  } catch {
+    return 'Date TBA';
+  }
+};
+
+const buildRoomShareText = (room: Room, roomUrl: string) => {
+  const title = String(room.title || 'FOM Room').trim();
+  const location = [room.settings.venueName, room.settings.location]
+    .filter(Boolean)
+    .join(' · ')
+    .trim();
+
+  return [
+    title,
+    `⏰ ${formatRoomShareDateTime(room.scheduledFor)}`,
+    `📍 ${(location || 'Location TBA').toUpperCase()}`,
+    '',
+    `RSVP: ${roomUrl}`,
+  ].join('\n');
+};
+
+const sortRoomListBySchedule = (rooms: Room[]) => (
+  [...rooms].sort((a, b) => Number(a.scheduledFor || 0) - Number(b.scheduledFor || 0))
+);
+
+const mergeRoomIntoList = (rooms: Room[], room?: Room | null) => {
+  if (!room?.id) return rooms;
+  const byId = new Map<string, Room>();
+  rooms.forEach((item) => {
+    if (!item?.id) return;
+    byId.set(item.id, item);
+  });
+  byId.set(room.id, room);
+  return sortRoomListBySchedule(Array.from(byId.values()));
+};
+
+const hasJoinedRoomParticipant = (room: Room, uid?: string | null) => (
+  Boolean(uid) &&
+  (room.participants || []).some((participant) => (
+    participant.status === 'joined' &&
+    (participant.uid === uid || participant.id === uid || participant.playerId === uid)
+  ))
+);
+
+const shareRoomInvite = async ({
+  text,
+}: {
+  text: string;
+}): Promise<RoomShareDeliveryResult> => {
+  try {
+    const sharePayload = { text };
+    if (navigator.share && (!navigator.canShare || navigator.canShare(sharePayload))) {
+      await navigator.share(sharePayload);
+      return 'shared';
+    }
+  } catch {
+    // fallback below
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return 'copied';
+    }
+  } catch {
+    // fallback below
+  }
+
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.top = '-9999px';
+    ta.style.left = '-9999px';
+    ta.style.pointerEvents = 'none';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const copied = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (copied) return 'copied';
+  } catch {
+    // fallback below
+  }
+
+  try {
+    window.prompt('Copy this room invite:', text);
+    return 'manual';
+  } catch {
+    return 'failed';
+  }
+};
+
 
 const ADMIN_EMAILS = ['falih.hrmn@gmail.com'];
 
@@ -132,242 +310,6 @@ const normalizePlayerSource = (player: Player, currentUid?: string | null): Play
         : 'manual';
 
   return { ...player, source: inferredSource };
-};
-
-const calculateMMRChange = (isWin: boolean, scoreDiff: number, isUnderdog: boolean, isFavorite: boolean) => {
-  let change = 0;
-  if (isWin) {
-    change = scoreDiff >= 10 ? 40 : 25;
-    if (isUnderdog) change += 15;
-  } else {
-    change = scoreDiff >= 10 ? -35 : -20;
-    if (isFavorite) change -= 15;
-  }
-  return change;
-};
-
-const getActivePlayersFromTournament = (tournament: Tournament) => {
-  const inactiveIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
-  const inactiveSet = new Set(inactiveIds);
-  return (tournament.players || []).filter((player) => !inactiveSet.has(player.id));
-};
-
-const rebuildAmericanoFutureRounds = (
-  tournament: Tournament,
-  targetNumRounds: number
-): Round[] => {
-  const safeTarget = Math.max(1, Math.floor(targetNumRounds || 1));
-  const currentRoundIndex = tournament.rounds.findIndex((round) => (
-    (round.matches || []).some((match) => match.status === 'active')
-  ));
-  const lockedRoundCount = currentRoundIndex === -1
-    ? Math.min(tournament.rounds.length, safeTarget)
-    : Math.min(currentRoundIndex + 1, safeTarget);
-
-  const nextRounds: Round[] = tournament.rounds.slice(0, lockedRoundCount).map((round) => ({
-    ...round,
-    playersBye: [...(round.playersBye || [])],
-    matches: round.matches.map((match) => ({
-      ...match,
-      teamA: { ...match.teamA, players: [...match.teamA.players] },
-      teamB: { ...match.teamB, players: [...match.teamB.players] }
-    }))
-  }));
-
-  const activePlayers = getActivePlayersFromTournament(tournament);
-  const playerMatchCounts: Record<string, number> = {};
-  const partnerCounts: Record<string, Record<string, number>> = {};
-  const opponentCounts: Record<string, Record<string, number>> = {};
-  const lastPartnerByPlayer: Record<string, string | null> = {};
-
-  activePlayers.forEach((player) => {
-    playerMatchCounts[player.id] = 0;
-    partnerCounts[player.id] = {};
-    opponentCounts[player.id] = {};
-    lastPartnerByPlayer[player.id] = null;
-  });
-
-  const getPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
-    if (map[a.id] === undefined || map[b.id] === undefined) return 0;
-    return map[a.id]?.[b.id] || 0;
-  };
-
-  const incrementPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
-    if (map[a.id] === undefined || map[b.id] === undefined) return;
-    map[a.id][b.id] = (map[a.id][b.id] || 0) + 1;
-    map[b.id][a.id] = (map[b.id][a.id] || 0) + 1;
-  };
-
-  nextRounds.forEach((round) => {
-    round.matches.forEach((match) => {
-      const [p1, p2] = match.teamA.players;
-      const [p3, p4] = match.teamB.players;
-      if (!p1 || !p2 || !p3 || !p4) return;
-
-      [p1, p2, p3, p4].forEach((player) => {
-        if (playerMatchCounts[player.id] === undefined) return;
-        playerMatchCounts[player.id] = (playerMatchCounts[player.id] || 0) + 1;
-      });
-
-      incrementPairCount(partnerCounts, p1, p2);
-      incrementPairCount(partnerCounts, p3, p4);
-      incrementPairCount(opponentCounts, p1, p3);
-      incrementPairCount(opponentCounts, p1, p4);
-      incrementPairCount(opponentCounts, p2, p3);
-      incrementPairCount(opponentCounts, p2, p4);
-
-      if (playerMatchCounts[p1.id] !== undefined && playerMatchCounts[p2.id] !== undefined) {
-        lastPartnerByPlayer[p1.id] = p2.id;
-        lastPartnerByPlayer[p2.id] = p1.id;
-      }
-      if (playerMatchCounts[p3.id] !== undefined && playerMatchCounts[p4.id] !== undefined) {
-        lastPartnerByPlayer[p3.id] = p4.id;
-        lastPartnerByPlayer[p4.id] = p3.id;
-      }
-    });
-  });
-
-  const listCombinationsOf3 = (arr: Player[]) => {
-    const combos: Player[][] = [];
-    for (let i = 0; i < arr.length; i++) {
-      for (let j = i + 1; j < arr.length; j++) {
-        for (let k = j + 1; k < arr.length; k++) {
-          combos.push([arr[i], arr[j], arr[k]]);
-        }
-      }
-    }
-    return combos;
-  };
-
-  const evaluateSplitPenalty = (group: Player[]) => {
-    const splits: [number, number, number, number][] = [
-      [0, 1, 2, 3],
-      [0, 2, 1, 3],
-      [0, 3, 1, 2]
-    ];
-    let best = {
-      penalty: Number.POSITIVE_INFINITY,
-      teamA: [group[0], group[1]] as [Player, Player],
-      teamB: [group[2], group[3]] as [Player, Player]
-    };
-
-    for (const [a1, a2, b1, b2] of splits) {
-      const teamA: [Player, Player] = [group[a1], group[a2]];
-      const teamB: [Player, Player] = [group[b1], group[b2]];
-
-      const partnerPenaltyA =
-        getPairCount(partnerCounts, teamA[0], teamA[1]) * 100 +
-        (lastPartnerByPlayer[teamA[0].id] === teamA[1].id ? 180 : 0);
-      const partnerPenaltyB =
-        getPairCount(partnerCounts, teamB[0], teamB[1]) * 100 +
-        (lastPartnerByPlayer[teamB[0].id] === teamB[1].id ? 180 : 0);
-
-      const opponentPenalty =
-        getPairCount(opponentCounts, teamA[0], teamB[0]) * 12 +
-        getPairCount(opponentCounts, teamA[0], teamB[1]) * 12 +
-        getPairCount(opponentCounts, teamA[1], teamB[0]) * 12 +
-        getPairCount(opponentCounts, teamA[1], teamB[1]) * 12;
-
-      const penalty = partnerPenaltyA + partnerPenaltyB + opponentPenalty;
-      if (penalty < best.penalty) {
-        best = { penalty, teamA, teamB };
-      }
-    }
-
-    return best;
-  };
-
-  const playersPerRound = Math.min(Math.floor(activePlayers.length / 4) * 4, tournament.courts * 4);
-  while (nextRounds.length < safeTarget) {
-    const roundId = nextRounds.length + 1;
-    const sortedPlayers = [...activePlayers].sort((a, b) => {
-      const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
-      return diff !== 0 ? diff : (Math.random() - 0.5);
-    });
-    const playersInRound = sortedPlayers.slice(0, playersPerRound);
-    const playersBye = sortedPlayers.slice(playersPerRound);
-    const roundMatches: Match[] = [];
-
-    if (playersPerRound > 0) {
-      const remaining = [...playersInRound];
-      for (let m = 0; m < playersPerRound / 4; m++) {
-        if (remaining.length < 4) break;
-        remaining.sort((a, b) => {
-          const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
-          return diff !== 0 ? diff : (Math.random() - 0.5);
-        });
-
-        const seed = remaining[0];
-        const candidates = remaining.slice(1);
-        const trios = listCombinationsOf3(candidates);
-        let bestGroup: Player[] = [seed, ...candidates.slice(0, 3)];
-        let bestPenalty = Number.POSITIVE_INFINITY;
-
-        trios.forEach((trio) => {
-          const group = [seed, ...trio];
-          const pairwisePenalty = group.reduce((sum, playerA, i) => {
-            for (let j = i + 1; j < group.length; j++) {
-              const playerB = group[j];
-              const interactions =
-                getPairCount(partnerCounts, playerA, playerB) * 16 +
-                getPairCount(opponentCounts, playerA, playerB) * 6;
-              sum += interactions;
-              if (
-                lastPartnerByPlayer[playerA.id] === playerB.id ||
-                lastPartnerByPlayer[playerB.id] === playerA.id
-              ) {
-                sum += 30;
-              }
-            }
-            return sum;
-          }, 0);
-
-          if (pairwisePenalty < bestPenalty) {
-            bestPenalty = pairwisePenalty;
-            bestGroup = group;
-          }
-        });
-
-        const { teamA, teamB } = evaluateSplitPenalty(bestGroup);
-        const [p1, p2] = teamA;
-        const [p3, p4] = teamB;
-        roundMatches.push({
-          id: `r${roundId}-m${m + 1}`,
-          court: m + 1,
-          roundId,
-          status: 'pending',
-          teamA: { players: [p1, p2], score: 0 },
-          teamB: { players: [p3, p4], score: 0 }
-        });
-
-        [p1, p2, p3, p4].forEach((player) => {
-          playerMatchCounts[player.id] = (playerMatchCounts[player.id] || 0) + 1;
-        });
-        incrementPairCount(partnerCounts, p1, p2);
-        incrementPairCount(partnerCounts, p3, p4);
-        incrementPairCount(opponentCounts, p1, p3);
-        incrementPairCount(opponentCounts, p1, p4);
-        incrementPairCount(opponentCounts, p2, p3);
-        incrementPairCount(opponentCounts, p2, p4);
-        lastPartnerByPlayer[p1.id] = p2.id;
-        lastPartnerByPlayer[p2.id] = p1.id;
-        lastPartnerByPlayer[p3.id] = p4.id;
-        lastPartnerByPlayer[p4.id] = p3.id;
-
-        const groupIds = new Set(bestGroup.map((player) => player.id));
-        const nextRemaining = remaining.filter((player) => !groupIds.has(player.id));
-        remaining.splice(0, remaining.length, ...nextRemaining);
-      }
-    }
-
-    nextRounds.push({
-      id: roundId,
-      matches: roundMatches,
-      playersBye
-    });
-  }
-
-  return nextRounds;
 };
 
 const { recordDbMetric, recordDbError } = createDbMetricsRecorder(trackFirestoreRoute);
@@ -461,12 +403,20 @@ export default function App() {
     };
   }, [initialE2EScenario]);
   const e2eBackgroundPlayers = useMemo<Player[]>(() => {
-    if (initialE2EScenario !== 'background-flow' && initialE2EScenario !== 'start-match-flow') return [];
+    if (
+      initialE2EScenario !== 'background-flow' &&
+      initialE2EScenario !== 'start-match-flow' &&
+      initialE2EScenario !== 'share-flow' &&
+      initialE2EScenario !== 'shared-viewer-flow' &&
+      initialE2EScenario !== 'toxic-active-ticker' &&
+      initialE2EScenario !== 'americano-incomplete-round'
+    ) return [];
+    const toxicTickerNames = ['Falih', 'Endo', 'Kasyf', 'Wildan'];
     return Array.from({ length: 4 }).map((_, idx) => ({
       id: `e2e-bg-p${idx + 1}`,
-      name: `BG Player ${idx + 1}`,
+      name: initialE2EScenario === 'toxic-active-ticker' ? toxicTickerNames[idx] : `BG Player ${idx + 1}`,
       rating: 3.5 + (idx * 0.1),
-      initials: `B${idx + 1}`,
+      initials: initialE2EScenario === 'toxic-active-ticker' ? toxicTickerNames[idx].slice(0, 1) : `B${idx + 1}`,
       stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 }
     }));
   }, [initialE2EScenario]);
@@ -489,8 +439,334 @@ export default function App() {
       location: 'Jakarta Selatan'
     };
   }, [e2eBackgroundPlayers, initialE2EScenario]);
+  const e2eShareTournament = useMemo<Tournament | null>(() => {
+    if (
+      initialE2EScenario !== 'share-flow' &&
+      initialE2EScenario !== 'shared-viewer-flow' &&
+      initialE2EScenario !== 'toxic-active-ticker' &&
+      initialE2EScenario !== 'americano-incomplete-round'
+    ) return null;
+    const startedAt = Date.now() - (18 * 60 * 1000);
+    const isToxicActiveTicker = initialE2EScenario === 'toxic-active-ticker';
+    const isAmericanoIncompleteRound = initialE2EScenario === 'americano-incomplete-round';
+    if (isAmericanoIncompleteRound) {
+      return {
+        id: 'e2e-americano-incomplete-round',
+        name: 'E2E Americano Guard',
+        format: 'Americano',
+        themeColorId: 'green',
+        toxicModeEnabled: false,
+        criteria: 'Matches Won',
+        scoringType: 'Golden Point',
+        startedAt,
+        courts: 1,
+        totalPoints: 6,
+        players: e2eBackgroundPlayers,
+        inactivePlayerIds: [],
+        rounds: [
+          {
+            id: 1,
+            matches: [
+              {
+                id: 'e2e-americano-r1-m1',
+                court: 1,
+                roundId: 1,
+                status: 'active',
+                startedAt,
+                duration: '18:00',
+                teamA: { players: [e2eBackgroundPlayers[0], e2eBackgroundPlayers[1]], score: 3, sets: [3] },
+                teamB: { players: [e2eBackgroundPlayers[2], e2eBackgroundPlayers[3]], score: 0, sets: [0] }
+              }
+            ],
+            playersBye: []
+          },
+          {
+            id: 2,
+            matches: [
+              {
+                id: 'e2e-americano-r2-m1',
+                court: 1,
+                roundId: 2,
+                status: 'pending',
+                teamA: { players: [e2eBackgroundPlayers[0], e2eBackgroundPlayers[2]], score: 0, sets: [0] },
+                teamB: { players: [e2eBackgroundPlayers[1], e2eBackgroundPlayers[3]], score: 0, sets: [0] }
+              }
+            ],
+            playersBye: []
+          }
+        ],
+        numRounds: 2,
+        venueName: 'E2E Court',
+        location: 'Jakarta Selatan'
+      };
+    }
+    return {
+      id: isToxicActiveTicker ? 'e2e-toxic-active-ticker' : 'e2e-share-flow',
+      name: isToxicActiveTicker ? 'E2E Toxic Ticker' : 'E2E Share Flow',
+      format: isToxicActiveTicker ? 'Mexicano' : 'Match Play',
+      themeColorId: 'orange',
+      toxicModeEnabled: isToxicActiveTicker,
+      toxicIntensity: 'savage',
+      criteria: 'Matches Won',
+      scoringType: 'Advantage',
+      startedAt,
+      courts: 1,
+      totalPoints: isToxicActiveTicker ? 6 : 0,
+      players: e2eBackgroundPlayers,
+      inactivePlayerIds: [],
+      rounds: isToxicActiveTicker
+        ? [
+            {
+              id: 1,
+              matches: [
+                {
+                  id: 'e2e-toxic-ticker-r1-m1',
+                  court: 1,
+                  roundId: 1,
+                  status: 'completed',
+                  startedAt: startedAt - (16 * 60 * 1000),
+                  duration: '16:00',
+                  teamA: { players: [e2eBackgroundPlayers[0], e2eBackgroundPlayers[1]], score: 5, sets: [5] },
+                  teamB: { players: [e2eBackgroundPlayers[2], e2eBackgroundPlayers[3]], score: 1, sets: [1] }
+                }
+              ],
+              playersBye: []
+            },
+            {
+              id: 2,
+              matches: [
+                {
+                  id: 'e2e-toxic-ticker-r2-m1',
+                  court: 1,
+                  roundId: 2,
+                  status: 'active',
+                  startedAt,
+                  duration: '18:00',
+                  teamA: { players: [e2eBackgroundPlayers[0], e2eBackgroundPlayers[1]], score: 5, sets: [5] },
+                  teamB: { players: [e2eBackgroundPlayers[2], e2eBackgroundPlayers[3]], score: 0, sets: [0] }
+                }
+              ],
+              playersBye: []
+            }
+          ]
+        : [
+            {
+              id: 1,
+              matches: [
+                {
+                  id: 'e2e-share-r1-m1',
+                  court: 1,
+                  roundId: 1,
+                  status: 'active',
+                  startedAt,
+                  duration: '18:00',
+                  teamA: { players: [e2eBackgroundPlayers[0], e2eBackgroundPlayers[1]], score: 4, sets: [4] },
+                  teamB: { players: [e2eBackgroundPlayers[2], e2eBackgroundPlayers[3]], score: 3, sets: [3] }
+                }
+              ],
+              playersBye: []
+            }
+          ],
+      numRounds: 3,
+      venueName: 'E2E Court',
+      location: 'Jakarta Selatan'
+    };
+  }, [e2eBackgroundPlayers, initialE2EScenario]);
+  const e2eToxicTournament = useMemo<Tournament | null>(() => {
+    if (
+      initialE2EScenario !== 'toxic-standings' &&
+      initialE2EScenario !== 'toxic-empty' &&
+      initialE2EScenario !== 'toxic-shared' &&
+      initialE2EScenario !== 'toxic-co-king'
+    ) return null;
+    const startedAt = Date.now() - (82 * 60 * 1000);
+    const isCoKingScenario = initialE2EScenario === 'toxic-co-king';
+    const toxicPlayerRows = isCoKingScenario
+      ? [
+          ['tox-cok-p1', 'Falih', 'F', 4.5],
+          ['tox-cok-p2', 'Endo', 'E', 4.1],
+          ['tox-cok-p3', 'Aditya Avif Chan', 'AAC', 3.8],
+          ['tox-cok-p4', 'Ariel', 'A', 3.7],
+        ]
+      : [
+          ['tox-p1', 'Falih', 'F', 4.5],
+          ['tox-p2', 'Ariel', 'A', 4.2],
+          ['tox-p3', 'Fadhil', 'F', 4.0],
+          ['tox-p4', 'Baban', 'B', 3.8],
+          ['tox-p5', 'Endo', 'E', 3.7],
+          ['tox-p6', 'Valerievk', 'V', 3.6],
+          ['tox-p7', 'Airlangga Sundawa', 'AS', 3.5],
+          ['tox-p8', 'Sonya Vera', 'SV', 3.4],
+        ];
+    const players: Player[] = toxicPlayerRows.map(([id, name, initials, rating], index) => ({
+      id: initialE2EScenario === 'toxic-empty' && index === 0 ? 'e2e-user' : String(id),
+      name: String(name),
+      initials: String(initials),
+      rating: Number(rating),
+      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 },
+    }));
+    const makeMatch = (
+      roundId: number,
+      court: number,
+      teamAIndexes: [number, number],
+      teamBIndexes: [number, number],
+      scoreA: number,
+      scoreB: number
+    ): Match => ({
+      id: `tox-r${roundId}-m${court}`,
+      court,
+      roundId,
+      status: initialE2EScenario === 'toxic-empty' ? 'active' : 'completed',
+      startedAt: startedAt + ((roundId - 1) * 18 * 60 * 1000),
+      duration: '18:00',
+      teamA: { players: teamAIndexes.map((index) => players[index]), score: initialE2EScenario === 'toxic-empty' ? 0 : scoreA },
+      teamB: { players: teamBIndexes.map((index) => players[index]), score: initialE2EScenario === 'toxic-empty' ? 0 : scoreB },
+    });
+    const rounds: Round[] = isCoKingScenario
+      ? [
+          {
+            id: 1,
+            matches: [makeMatch(1, 1, [0, 1], [2, 3], 6, 0)],
+            playersBye: [],
+          },
+        ]
+      : initialE2EScenario === 'toxic-empty'
+      ? [
+          {
+            id: 1,
+            matches: [makeMatch(1, 1, [0, 1], [6, 7], 0, 0)],
+            playersBye: players.slice(2, 6),
+          },
+        ]
+      : [
+          {
+            id: 1,
+            matches: [
+              makeMatch(1, 1, [0, 1], [6, 7], 6, 2),
+              makeMatch(1, 2, [2, 3], [4, 5], 5, 4),
+            ],
+            playersBye: [],
+          },
+          {
+            id: 2,
+            matches: [
+              makeMatch(2, 1, [0, 2], [5, 7], 6, 1),
+              makeMatch(2, 2, [1, 3], [4, 6], 5, 3),
+            ],
+            playersBye: [],
+          },
+          {
+            id: 3,
+            matches: [
+              makeMatch(3, 1, [0, 4], [6, 7], 6, 0),
+              makeMatch(3, 2, [1, 5], [2, 3], 2, 5),
+            ],
+            playersBye: [],
+          },
+        ];
+
+    return {
+      id: `e2e-${initialE2EScenario}`,
+      name: initialE2EScenario === 'toxic-empty'
+        ? 'Toxic Empty Match'
+        : isCoKingScenario
+          ? 'Co-King Cupu Test'
+          : 'Fom Intense Weekend',
+      format: 'Mexicano',
+      themeColorId: 'orange',
+      toxicModeEnabled: true,
+      criteria: 'Matches Won',
+      scoringType: 'Golden Point',
+      startedAt,
+      endedAt: initialE2EScenario === 'toxic-empty' ? undefined : startedAt + (70 * 60 * 1000),
+      courts: isCoKingScenario ? 1 : 2,
+      totalPoints: 6,
+      players,
+      inactivePlayerIds: [],
+      rounds,
+      numRounds: rounds.length,
+      venueName: 'Sand Padel',
+      location: 'Tangerang',
+    };
+  }, [initialE2EScenario]);
+  const e2ePublicRooms = useMemo<Room[]>(() => {
+    if (!initialE2EScenario) return [];
+    const buildFutureRoomTime = (daysFromNow: number, hour: number, minute: number) => {
+      const date = new Date(Date.now() + (daysFromNow * 24 * 60 * 60 * 1000));
+      date.setHours(hour, minute, 0, 0);
+      if (date.getTime() <= Date.now()) date.setDate(date.getDate() + 1);
+      return date.getTime();
+    };
+    return [
+      {
+        id: 'e2e-room-saturday',
+        hostUid: 'e2e-user',
+        hostDisplayName: 'E2E User',
+        title: 'Padel Sabtu Sore',
+        description: 'Public padel room for weekend players.',
+        status: 'scheduled',
+        visibility: 'public',
+        scheduledFor: buildFutureRoomTime(1, 15, 0),
+        settings: {
+          name: 'Padel Sabtu Sore',
+          format: 'Americano',
+          criteria: 'Matches Won',
+          courts: 2,
+          totalPoints: 21,
+          numRounds: 4,
+          durationMinutes: 120,
+          venueName: 'FOM Court Senayan',
+          location: 'Jaksel'
+        },
+        participants: [
+          { id: 'e2e-room-saturday-p1', displayName: 'Falih Harman', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-saturday-p2', displayName: 'Naya', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-saturday-p3', displayName: 'Bima', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-saturday-p4', displayName: 'Raka', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-saturday-p5', displayName: 'Dian', source: 'fom', status: 'joined' }
+        ],
+        minPlayers: 4,
+        maxPlayers: 8
+      },
+      {
+        id: 'e2e-room-friday',
+        hostUid: 'e2e-host-2',
+        hostDisplayName: 'Padel Yard',
+        title: 'Friday Night Padel',
+        description: 'Friendly public room after office hours.',
+        status: 'scheduled',
+        visibility: 'public',
+        scheduledFor: buildFutureRoomTime(2, 19, 0),
+        settings: {
+          name: 'Friday Night Padel',
+          format: 'Mexicano',
+          criteria: 'Matches Won',
+          courts: 2,
+          totalPoints: 21,
+          numRounds: 4,
+          durationMinutes: 90,
+          venueName: 'Padel Yard BSD',
+          location: 'Tangerang'
+        },
+        participants: [
+          { id: 'e2e-room-friday-p1', displayName: 'Mika', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-friday-p2', displayName: 'Sasha', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-friday-p3', displayName: 'Reno', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-friday-p4', displayName: 'Tara', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-friday-p5', displayName: 'Arga', source: 'fom', status: 'joined' },
+          { id: 'e2e-room-friday-p6', displayName: 'Dito', source: 'fom', status: 'joined' }
+        ],
+        minPlayers: 4,
+        maxPlayers: 8
+      }
+    ];
+  }, [initialE2EScenario]);
   const e2eProfileHistory = useMemo<TournamentHistory[]>(() => {
-    if (initialE2EScenario !== 'profile-flow' && initialE2EScenario !== 'standings-6p') return [];
+    if (
+      initialE2EScenario !== 'profile-flow' &&
+      initialE2EScenario !== 'standings-6p' &&
+      initialE2EScenario !== 'standings-long-history'
+    ) return [];
     const currentUid = 'e2e-user';
     const currentPlayer = {
       id: currentUid,
@@ -552,7 +828,98 @@ export default function App() {
     ];
     const now = Date.now();
 
-    return [
+    const longHistory: TournamentHistory = {
+      id: 'e2e-standings-long-history',
+      userId: currentUid,
+      name: 'Senayan Long Session',
+      format: 'Match Play',
+      criteria: 'Matches Won',
+      scoringType: 'Advantage',
+      date: new Date(now - (4 * 24 * 60 * 60 * 1000)),
+      startedAt: now - (4 * 24 * 60 * 60 * 1000) - (105 * 60 * 1000),
+      endedAt: now - (4 * 24 * 60 * 60 * 1000),
+      courts: 2,
+      totalPoints: 0,
+      numRounds: 5,
+      numPlayers: 8,
+      rounds: [
+        {
+          id: 1,
+          matches: [
+            {
+              id: 'e2e-long-history-r1',
+              court: 1,
+              roundId: 1,
+              status: 'completed',
+              teamA: { players: [currentPlayer, teammate], score: 6, sets: [6] },
+              teamB: { players: [opponents[0], opponents[1]], score: 3, sets: [3] }
+            }
+          ],
+          playersBye: opponents.slice(2, 6)
+        },
+        {
+          id: 2,
+          matches: [
+            {
+              id: 'e2e-long-history-r2',
+              court: 1,
+              roundId: 2,
+              status: 'completed',
+              teamA: { players: [currentPlayer, opponents[2]], score: 5, sets: [5] },
+              teamB: { players: [teammate, opponents[3]], score: 6, sets: [6] }
+            }
+          ],
+          playersBye: [opponents[0], opponents[1], opponents[4], opponents[5]]
+        },
+        {
+          id: 3,
+          matches: [
+            {
+              id: 'e2e-long-history-r3',
+              court: 2,
+              roundId: 3,
+              status: 'completed',
+              teamA: { players: [currentPlayer, opponents[4]], score: 6, sets: [6] },
+              teamB: { players: [opponents[1], opponents[5]], score: 2, sets: [2] }
+            }
+          ],
+          playersBye: [teammate, opponents[0], opponents[2], opponents[3]]
+        },
+        {
+          id: 4,
+          matches: [
+            {
+              id: 'e2e-long-history-r4',
+              court: 1,
+              roundId: 4,
+              status: 'completed',
+              teamA: { players: [currentPlayer, opponents[3]], score: 4, sets: [4] },
+              teamB: { players: [opponents[0], opponents[2]], score: 6, sets: [6] }
+            }
+          ],
+          playersBye: [teammate, opponents[1], opponents[4], opponents[5]]
+        },
+        {
+          id: 5,
+          matches: [
+            {
+              id: 'e2e-long-history-r5',
+              court: 2,
+              roundId: 5,
+              status: 'completed',
+              teamA: { players: [currentPlayer, teammate], score: 6, sets: [6] },
+              teamB: { players: [opponents[4], opponents[5]], score: 1, sets: [1] }
+            }
+          ],
+          playersBye: opponents.slice(0, 4)
+        }
+      ],
+      players: [currentPlayer, teammate, ...opponents],
+      venueName: 'Racquet Padel Club',
+      location: 'Jakarta Selatan, DKI Jakarta'
+    };
+
+    const profileHistories: TournamentHistory[] = [
       {
         id: 'e2e-profile-h1',
         userId: currentUid,
@@ -606,7 +973,7 @@ export default function App() {
         userId: currentUid,
         name: 'Thursday Competitive Mix',
         format: 'Americano',
-        criteria: 'Points',
+        criteria: 'Points Won',
         scoringType: 'Golden Point',
         date: new Date(now - (25 * 24 * 60 * 60 * 1000)),
         startedAt: now - (25 * 24 * 60 * 60 * 1000) - (80 * 60 * 1000),
@@ -650,6 +1017,8 @@ export default function App() {
         location: 'Jakarta Barat, DKI Jakarta'
       }
     ];
+
+    return initialE2EScenario === 'standings-long-history' ? [longHistory] : profileHistories;
   }, [initialE2EScenario]);
   const [screen, setScreen] = useState<Screen>(initialSharedContext.isShared ? initialSharedContext.targetView : 'login');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -685,16 +1054,33 @@ export default function App() {
   const [draftMatchBackgroundId, setDraftMatchBackgroundId] = useState<string | null>(null);
   const [activeSaveState, setActiveSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const [needsRegenerateFromRound, setNeedsRegenerateFromRound] = useState<number | null>(null);
+  const [isRoomSaving, setIsRoomSaving] = useState(false);
+  const [roomEditorMode, setRoomEditorMode] = useState<'create' | 'edit'>('create');
+  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  const [selectedRoomFinance, setSelectedRoomFinance] = useState<RoomFinancePrivate | null>(null);
+  const [selectedRoomParticipantFinances, setSelectedRoomParticipantFinances] = useState<RoomParticipantFinance[]>([]);
+  const [isRoomFinanceSaving, setIsRoomFinanceSaving] = useState(false);
+  const [isRoomParticipantSaving, setIsRoomParticipantSaving] = useState(false);
+  const [isRoomStarting, setIsRoomStarting] = useState(false);
+  const [isRoomSetupSaving, setIsRoomSetupSaving] = useState(false);
+  const [isAppUpdateAvailable, setIsAppUpdateAvailable] = useState(() => (
+    Boolean((window as FomUpdateWindow).__fomUpdateAvailable)
+  ));
+  const [isAppUpdateRefreshing, setIsAppUpdateRefreshing] = useState(false);
   const [isDocumentVisible, setIsDocumentVisible] = useState(() => (
     typeof document === 'undefined' ? true : document.visibilityState === 'visible'
   ));
   const isAuthResolvedRef = useRef(false);
+  const roomLinkHydrationRef = useRef('');
   const sharedLinkDiscoveryKeyRef = useRef('');
   const hydratedHistoryCacheRef = useRef<string | null>(null);
   const historySyncInFlightRef = useRef(false);
   const lastFriendPickerSummaryRef = useRef('');
   const hasForcedAppShellQuery = isAppShellQuery(new URLSearchParams(window.location.search));
   const isAppShellRoute = hasForcedAppShellQuery || topLevelRoute === 'app';
+  const initialRoomLinkId = useMemo(() => (
+    new URLSearchParams(window.location.search).get('room')
+  ), []);
   const publicRoute = (topLevelRoute === 'app' || topLevelRoute === 'blog' ? 'home' : topLevelRoute) as PublicTopLevelRoute;
   const isArchivedMarketingRoute = !isAppShellRoute && marketingBasePath === ARCHIVE_BASE_PATH;
   const {
@@ -744,6 +1130,7 @@ export default function App() {
   } = useShareActions({
     userUid: user?.uid,
     tournament,
+    skipSharePersistence: Boolean(initialE2EScenario),
     isSharedViewer,
     sharedMatchId,
     setSharedMatchId,
@@ -760,22 +1147,29 @@ export default function App() {
   });
   const {
     handleDeleteRoundsFrom,
+    handleUpdateToxicSettings,
     handleUpdateScore,
     handleUpdateActivePlayers,
     handleUpdateRounds,
     handleUpdateCourts,
-    handleUpdateMatchPlayScore,
     handleSwapPlayer,
+    handleReplaceManualPlayer,
+    handleSaveRosterChanges,
   } = useMatchMutationActions({
     tournament,
     needsRegenerateFromRound,
     setTournament,
     setNeedsRegenerateFromRound,
     persistActiveTournamentSnapshot,
+    syncSharedMatchesSnapshot,
     addNotification,
     rebuildAmericanoFutureRounds,
   });
-  const { handleNextRound } = useRoundProgressionActions({
+  const {
+    handleNextRound,
+    handleStartAmericanoRound,
+    handleCompleteAmericanoRound,
+  } = useRoundProgressionActions({
     tournament,
     user,
     needsRegenerateFromRound,
@@ -790,7 +1184,9 @@ export default function App() {
     markTournamentStatsSyncError,
     recordDbMetric,
     recordDbError,
-    saveTournamentDetailAndSummary,
+    saveTournamentDetailAndSummary: initialE2EScenario
+      ? async () => undefined
+      : saveTournamentDetailAndSummary,
     serverTimestamp,
     toTournamentDetailCollectionLabel: TOURNAMENT_DETAILS_COLLECTION,
     getActivePlayersFromTournament,
@@ -799,7 +1195,7 @@ export default function App() {
   const {
     handleGenerateTournament,
     handleSkipMatchBackground,
-    handleAddPlayerDuringActiveMatch,
+    handleAddPlayerDuringActiveMatch: addPlayerDuringActiveMatch,
   } = useTournamentSetupActions({
     tournament,
     setTournament,
@@ -887,6 +1283,984 @@ export default function App() {
     usersCollection: USERS_COLLECTION,
     userFriendsCollection: USER_FRIENDS_COLLECTION,
   });
+  const {
+    hostedRooms,
+    publicRooms,
+    loading: isRoomsLoading,
+    refresh: refreshRooms,
+  } = useRooms({
+    userUid: user?.uid,
+    enabled: isLoggedIn && isAppShellRoute && !initialE2EScenario,
+  });
+  const visibleHostedRooms = useMemo(() => {
+    if (initialE2EScenario) return [];
+    const shouldMergeSelectedRoom = Boolean(
+      selectedRoom &&
+      user?.uid &&
+      selectedRoom.hostUid === user.uid
+    );
+    return mergeRoomIntoList(hostedRooms, shouldMergeSelectedRoom ? selectedRoom : null);
+  }, [hostedRooms, initialE2EScenario, selectedRoom, user?.uid]);
+  const visiblePublicRooms = useMemo(() => {
+    if (initialE2EScenario) return e2ePublicRooms;
+    const shouldMergeSelectedRoom = Boolean(
+      selectedRoom &&
+      (
+        selectedRoom.visibility === 'public' ||
+        hasJoinedRoomParticipant(selectedRoom, user?.uid)
+      )
+    );
+    return mergeRoomIntoList(publicRooms, shouldMergeSelectedRoom ? selectedRoom : null);
+  }, [e2ePublicRooms, initialE2EScenario, publicRooms, selectedRoom, user?.uid]);
+  const visibleRoomsLoading = initialE2EScenario ? false : isRoomsLoading;
+
+  const refreshRoomFinance = async (room: Room, options?: { save?: boolean }) => {
+    const pricing = getRoomPublicPricing(room);
+    if (!pricing.enabled) {
+      setSelectedRoomFinance(null);
+      setSelectedRoomParticipantFinances([]);
+      return;
+    }
+
+    const currentUserUid = String(user?.uid || '').trim();
+    const isHost = currentUserUid && room.hostUid === currentUserUid;
+
+    if (!isHost) {
+      setSelectedRoomFinance(null);
+      if (!currentUserUid) {
+        setSelectedRoomParticipantFinances([]);
+        return;
+      }
+      try {
+        const ownFinance = await getRoomParticipantFinance(room.id, currentUserUid);
+        setSelectedRoomParticipantFinances(ownFinance ? [ownFinance] : []);
+      } catch (err) {
+        console.error('Room participant finance fetch error:', err);
+        setSelectedRoomParticipantFinances([]);
+      }
+      return;
+    }
+
+    if (initialE2EScenario && selectedRoomFinance) {
+      const calculatedAt = Date.now();
+      const nextPrivateFinance = {
+        ...selectedRoomFinance,
+        lastCalculatedAt: calculatedAt,
+      };
+      const participantFinances = calculateParticipantFinances({
+        settings: nextPrivateFinance,
+        participants: room.participants || [],
+        existingFinances: selectedRoomParticipantFinances,
+        calculatedAt,
+      });
+      setSelectedRoomFinance(nextPrivateFinance);
+      setSelectedRoomParticipantFinances(participantFinances);
+      return;
+    }
+
+    try {
+      const privateFinance = await getRoomFinancePrivate(room.id);
+      if (!privateFinance) {
+        setSelectedRoomFinance(null);
+        setSelectedRoomParticipantFinances([]);
+        return;
+      }
+
+      const existingFinances = await listRoomParticipantFinances(room.id);
+      const calculatedAt = Date.now();
+      const nextPrivateFinance = {
+        ...privateFinance,
+        lastCalculatedAt: calculatedAt,
+      };
+      const participantFinances = calculateParticipantFinances({
+        settings: nextPrivateFinance,
+        participants: room.participants || [],
+        existingFinances,
+        calculatedAt,
+      });
+      const hostSnapshot = room.status === 'scheduled'
+        ? undefined
+        : buildHostFinanceMatchSnapshot({
+            room,
+            settings: nextPrivateFinance,
+            participantFinances,
+            completedAt: typeof room.completedAt === 'number'
+              ? room.completedAt
+              : room.status === 'completed'
+                ? calculatedAt
+                : undefined,
+          });
+
+      if (options?.save === true) {
+        await saveRoomFinanceStateDelta({
+          roomId: room.id,
+          privateFinance: nextPrivateFinance,
+          participantFinances,
+          previousParticipantFinances: existingFinances,
+          hostSnapshot,
+        });
+      }
+
+      setSelectedRoomFinance(nextPrivateFinance);
+      setSelectedRoomParticipantFinances(participantFinances);
+    } catch (err) {
+      console.error('Room finance fetch error:', err);
+      setSelectedRoomFinance(null);
+      setSelectedRoomParticipantFinances([]);
+    }
+  };
+
+  const handleAddPlayerDuringActiveMatch = (newPlayer: Player) => {
+    addPlayerDuringActiveMatch(newPlayer);
+
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    const pricing = room ? getRoomPublicPricing(room) : null;
+    if (
+      !room ||
+      !currentUserUid ||
+      room.hostUid !== currentUserUid ||
+      room.status !== 'in_progress' ||
+      !pricing?.enabled
+    ) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const participant = buildRoomParticipantFromPlayer(newPlayer, {
+          status: 'joined',
+          joinedAt: Date.now(),
+        });
+        const nextParticipants = [
+          ...(room.participants || []).filter((item) => item.id !== participant.id),
+          participant,
+        ];
+        const nextRoom = {
+          ...room,
+          participants: nextParticipants,
+        };
+
+        await saveRoom(room.id, { participants: nextParticipants });
+        setSelectedRoom(nextRoom);
+        await refreshRoomFinance(nextRoom, { save: true });
+        await refreshRooms();
+      } catch (err) {
+        console.error('Active room participant finance sync error:', err);
+      }
+    })();
+  };
+
+  const handleCreateRoom = async ({
+    title,
+    description,
+    visibility,
+    scheduledFor,
+    format,
+    criteria,
+    scoringType,
+    courts,
+    numRounds,
+    durationMinutes,
+    maxPlayers,
+    venueName,
+    location,
+    feeEnabled,
+    feeAmount,
+    courtCostPerCourt,
+    ballCost,
+    publicPrice,
+    includeHostInFriendSplit,
+    invitedParticipants,
+  }: {
+    title: string;
+    description: string;
+    visibility: 'private' | 'friends' | 'public';
+    scheduledFor: number;
+    format: Tournament['format'];
+    criteria: Tournament['criteria'];
+    scoringType?: Tournament['scoringType'];
+    courts: number;
+    numRounds: number;
+    durationMinutes: number;
+    maxPlayers: number;
+    venueName: string;
+    location: string;
+    feeEnabled: boolean;
+    feeAmount: number;
+    courtCostPerCourt: number;
+    ballCost: number;
+    publicPrice: number;
+    includeHostInFriendSplit: boolean;
+    invitedParticipants: RoomParticipant[];
+  }) => {
+    const hostUid = String(user?.uid || '').trim();
+    if (!hostUid) {
+      addNotification('Login Required', 'Please log in first to create a room.', 'system');
+      throw new Error('Login required to create a room.');
+    }
+
+    setIsRoomSaving(true);
+    try {
+      const hostParticipant: RoomParticipant = {
+        id: hostUid,
+        uid: hostUid,
+        playerId: hostUid,
+        displayName: user?.displayName || 'Host',
+        avatar: user?.photoURL || '',
+        initials: (user?.displayName || 'Host')
+          .split(' ')
+          .filter(Boolean)
+          .map((part: string) => part[0])
+          .join('')
+          .slice(0, 2)
+          .toUpperCase() || 'HO',
+        rating: Number(user?.mmr || 0),
+        source: 'host',
+        status: 'joined',
+        joinedAt: Date.now(),
+      };
+      const roomDraft: Omit<Room, 'id' | 'createdAt' | 'updatedAt'> = {
+        hostUid,
+        hostDisplayName: user?.displayName || 'Host',
+        title,
+        description,
+        status: 'scheduled',
+        visibility,
+        scheduledFor,
+        settings: {
+          name: title,
+          format,
+          criteria,
+          scoringType: format === 'Match Play' ? scoringType : undefined,
+          courts,
+          totalPoints: format === 'Match Play' ? 0 : 21,
+          numRounds,
+          durationMinutes,
+          venueName,
+          location,
+        },
+        participants: [hostParticipant, ...(invitedParticipants || [])],
+        minPlayers: 4,
+        maxPlayers,
+        pricing: buildRoomPublicPricing({
+          enabled: feeEnabled,
+          publicPrice: publicPrice || feeAmount,
+        }),
+        feeEnabled,
+        feeAmount: feeEnabled ? (publicPrice || feeAmount) : 0,
+      };
+
+      if (initialE2EScenario) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        const createdRoom = {
+          ...roomDraft,
+          id: `e2e-created-room-${Date.now()}`,
+        };
+        addNotification('Room Created', `${title} has been scheduled successfully.`, 'system');
+        return createdRoom;
+      }
+
+      const roomId = await createRoom(roomDraft);
+      if (feeEnabled) {
+        try {
+          const privateFinance = buildRoomFinancePrivate({
+            roomId,
+            hostUid,
+            enabled: feeEnabled,
+            courtCostPerCourt,
+            courtCount: roomDraft.settings.courts,
+            ballCost,
+            publicPrice: publicPrice || feeAmount,
+            includeHostInFriendSplit,
+          });
+          const participantFinances = calculateParticipantFinances({
+            settings: privateFinance,
+            participants: roomDraft.participants,
+          });
+          await saveRoomFinanceState({
+            roomId,
+            privateFinance,
+            participantFinances,
+          });
+        } catch (financeErr) {
+          console.error('Create room finance setup error:', financeErr);
+          addNotification('Pricing Setup Pending', 'The room was created, but payment tracking could not be initialized yet.', 'system', 'error');
+        }
+      }
+      let createdRoom: Room = { ...roomDraft, id: roomId };
+      try {
+        await refreshRooms();
+        createdRoom = await getRoomById(roomId) || createdRoom;
+        if (feeEnabled) {
+          await refreshRoomFinance(createdRoom, { save: false });
+        }
+      } catch (postCreateErr) {
+        console.error('Create room post-save refresh error:', postCreateErr);
+      }
+      addNotification('Room Created', `${title} has been scheduled successfully.`, 'system');
+      return createdRoom;
+    } catch (err) {
+      console.error('Create room error:', err);
+      addNotification('Create Room Failed', 'There was a problem creating the room. Please try again.', 'system', 'error');
+      throw err;
+    } finally {
+      setIsRoomSaving(false);
+    }
+  };
+
+  const syncSelectedRoomById = async (roomId: string) => {
+    const freshRoom = await getRoomById(roomId);
+    if (freshRoom) {
+      setSelectedRoom(freshRoom);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedRoom || screen !== 'room-detail') {
+      setSelectedRoomFinance(null);
+      setSelectedRoomParticipantFinances([]);
+      return;
+    }
+    void refreshRoomFinance(selectedRoom);
+  }, [screen, selectedRoom?.id, selectedRoom?.participants?.length, selectedRoom?.status, user?.uid]);
+
+  const handleJoinRoom = async () => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid) {
+      addNotification('Login Required', 'Please log in first to join a room.', 'system');
+      return;
+    }
+    if (room.hostUid === currentUserUid) return;
+
+    setIsRoomParticipantSaving(true);
+    try {
+      await upsertRoomParticipant(room.id, {
+        id: currentUserUid,
+        uid: currentUserUid,
+        playerId: currentUserUid,
+        displayName: user?.displayName || 'Player',
+        avatar: user?.photoURL || '',
+        initials: (user?.displayName || 'Player')
+          .split(' ')
+          .filter(Boolean)
+          .map((part: string) => part[0])
+          .join('')
+          .slice(0, 2)
+          .toUpperCase() || 'PL',
+        rating: Number(user?.mmr || 0),
+        source: 'fom',
+        status: 'joined',
+        joinedAt: Date.now(),
+      });
+      await Promise.all([
+        refreshRooms(),
+        syncSelectedRoomById(room.id),
+      ]);
+      addNotification('Joined Room', `You joined ${room.title}.`, 'system');
+    } catch (err) {
+      console.error('Join room error:', err);
+      addNotification('Join Failed', 'There was a problem joining this room.', 'system', 'error');
+    } finally {
+      setIsRoomParticipantSaving(false);
+    }
+  };
+
+  const handleLeaveRoom = async () => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid) {
+      addNotification('Login Required', 'Please log in first to leave a room.', 'system');
+      return;
+    }
+    if (room.hostUid === currentUserUid) return;
+
+    setIsRoomParticipantSaving(true);
+    try {
+      await removeRoomParticipant(room.id, currentUserUid);
+      await Promise.all([
+        refreshRooms(),
+        syncSelectedRoomById(room.id),
+      ]);
+      addNotification('Left Room', `You left ${room.title}.`, 'system');
+    } catch (err) {
+      console.error('Leave room error:', err);
+      addNotification('Leave Failed', 'There was a problem leaving this room.', 'system', 'error');
+    } finally {
+      setIsRoomParticipantSaving(false);
+    }
+  };
+
+  const handleUpdateRoomFromDetail = async ({
+    title,
+    description,
+    visibility,
+    scheduledFor,
+    venueName,
+    location,
+    maxPlayers,
+    pricingEnabled,
+    courtCount,
+    courtCostPerCourt,
+    ballCost,
+    publicPrice,
+    includeHostInFriendSplit,
+  }: {
+    title: string;
+    description: string;
+    visibility: Room['visibility'];
+    scheduledFor: number;
+    venueName: string;
+    location: string;
+    maxPlayers: number;
+    pricingEnabled: boolean;
+    courtCount: number;
+    courtCostPerCourt: number;
+    ballCost: number;
+    publicPrice: number;
+    includeHostInFriendSplit: boolean;
+  }) => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
+      addNotification('Host Only', 'Only the room host can edit this room.', 'system', 'error');
+      return;
+    }
+
+    const nextSettings: RoomSettingsSnapshot = {
+      ...room.settings,
+      name: title,
+      courts: Math.max(1, courtCount),
+      venueName,
+      location,
+    };
+    const nextPricing = buildRoomPublicPricing({
+      enabled: pricingEnabled,
+      publicPrice,
+    });
+    const nextRoom: Room = {
+      ...room,
+      title,
+      description,
+      visibility,
+      scheduledFor,
+      settings: nextSettings,
+      maxPlayers: Math.max(4, maxPlayers),
+      pricing: nextPricing,
+      feeEnabled: pricingEnabled,
+      feeAmount: pricingEnabled ? publicPrice : 0,
+    };
+
+    setIsRoomSaving(true);
+    try {
+      if (!initialE2EScenario) {
+        await saveRoom(room.id, {
+          title: nextRoom.title,
+          description: nextRoom.description,
+          visibility: nextRoom.visibility,
+          scheduledFor: nextRoom.scheduledFor,
+          settings: nextRoom.settings,
+          maxPlayers: nextRoom.maxPlayers,
+          pricing: nextRoom.pricing,
+          feeEnabled: nextRoom.feeEnabled,
+          feeAmount: nextRoom.feeAmount,
+        });
+      }
+
+      if (pricingEnabled) {
+        const calculatedAt = Date.now();
+        const existingFinances = initialE2EScenario
+          ? selectedRoomParticipantFinances
+          : await listRoomParticipantFinances(room.id);
+        const privateFinance = buildRoomFinancePrivate({
+          roomId: room.id,
+          hostUid: currentUserUid,
+          enabled: true,
+          courtCostPerCourt,
+          courtCount,
+          ballCost,
+          publicPrice,
+          includeHostInFriendSplit,
+          calculatedAt,
+        });
+        const participantFinances = calculateParticipantFinances({
+          settings: privateFinance,
+          participants: nextRoom.participants || [],
+          existingFinances,
+          calculatedAt,
+        });
+        const hostSnapshot = nextRoom.status === 'scheduled'
+          ? undefined
+          : buildHostFinanceMatchSnapshot({
+              room: nextRoom,
+              settings: privateFinance,
+              participantFinances,
+              completedAt: typeof nextRoom.completedAt === 'number'
+                ? nextRoom.completedAt
+                : nextRoom.status === 'completed'
+                  ? calculatedAt
+                  : undefined,
+            });
+
+        if (!initialE2EScenario) {
+          await saveRoomFinanceState({
+            roomId: room.id,
+            privateFinance,
+            participantFinances,
+            hostSnapshot,
+          });
+        }
+        setSelectedRoomFinance(privateFinance);
+        setSelectedRoomParticipantFinances(participantFinances);
+      } else {
+        setSelectedRoomFinance(null);
+        setSelectedRoomParticipantFinances([]);
+      }
+
+      setSelectedRoom(nextRoom);
+      if (!initialE2EScenario) {
+        await refreshRooms();
+      }
+      addNotification('Room Updated', `${title} has been updated.`, 'system', 'success');
+    } catch (err) {
+      console.error('Update room error:', err);
+      addNotification('Update Failed', 'There was a problem updating this room.', 'system', 'error');
+    } finally {
+      setIsRoomSaving(false);
+    }
+  };
+
+  const handleAddRoomParticipant = async (participant: RoomParticipant) => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
+      addNotification('Host Only', 'Only the room host can add players.', 'system', 'error');
+      return;
+    }
+
+    const joinedCount = (room.participants || []).filter((item) => item.status === 'joined').length;
+    if (room.maxPlayers && joinedCount >= room.maxPlayers && !(room.participants || []).some((item) => item.id === participant.id)) {
+      addNotification('Room Full', 'Increase player slots before adding more players.', 'system', 'error');
+      return;
+    }
+
+    const nextParticipant: RoomParticipant = {
+      ...participant,
+      status: 'joined',
+      joinedAt: participant.joinedAt || Date.now(),
+    };
+    const nextParticipants = [
+      ...(room.participants || []).filter((item) => item.id !== nextParticipant.id),
+      nextParticipant,
+    ];
+    const nextRoom = {
+      ...room,
+      participants: nextParticipants,
+    };
+
+    setIsRoomParticipantSaving(true);
+    try {
+      if (!initialE2EScenario) {
+        await upsertRoomParticipant(room.id, nextParticipant);
+      }
+      setSelectedRoom(nextRoom);
+      await refreshRoomFinance(nextRoom, { save: true });
+      if (!initialE2EScenario) {
+        await refreshRooms();
+      }
+      addNotification('Player Added', `${nextParticipant.displayName} joined this room.`, 'system', 'success');
+    } catch (err) {
+      console.error('Add room participant error:', err);
+      addNotification('Add Player Failed', 'There was a problem adding this player.', 'system', 'error');
+    } finally {
+      setIsRoomParticipantSaving(false);
+    }
+  };
+
+  const handleRemoveRoomParticipant = async (participantId: string) => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
+      addNotification('Host Only', 'Only the room host can remove players.', 'system', 'error');
+      return;
+    }
+    if (participantId === currentUserUid || (room.participants || []).some((item) => item.id === participantId && item.source === 'host')) {
+      addNotification('Host Locked', 'The host cannot be removed from the room.', 'system', 'error');
+      return;
+    }
+
+    const removedParticipant = (room.participants || []).find((item) => item.id === participantId);
+    const nextRoom = {
+      ...room,
+      participants: (room.participants || []).filter((item) => item.id !== participantId),
+    };
+
+    setIsRoomParticipantSaving(true);
+    try {
+      if (!initialE2EScenario) {
+        await removeRoomParticipant(room.id, participantId);
+      }
+      setSelectedRoom(nextRoom);
+      await refreshRoomFinance(nextRoom, { save: true });
+      if (!initialE2EScenario) {
+        await refreshRooms();
+      }
+      addNotification('Player Removed', `${removedParticipant?.displayName || 'Player'} was removed from this room.`, 'system', 'success');
+    } catch (err) {
+      console.error('Remove room participant error:', err);
+      addNotification('Remove Failed', 'There was a problem removing this player.', 'system', 'error');
+    } finally {
+      setIsRoomParticipantSaving(false);
+    }
+  };
+
+  const handleUpdateRoomParticipantFinance = async (
+    participantId: string,
+    patch: {
+      playerType?: FinancePlayerType;
+      paymentStatus?: FinancePaymentStatus;
+    }
+  ) => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
+      addNotification('Host Only', 'Only the room host can update payment tracking.', 'system', 'error');
+      return;
+    }
+
+    const privateFinance = selectedRoomFinance || await getRoomFinancePrivate(room.id);
+    if (!privateFinance) {
+      addNotification('Pricing Missing', 'Set pricing before updating payment tracking.', 'system', 'error');
+      return;
+    }
+
+    setIsRoomFinanceSaving(true);
+    try {
+      const existingFinances = selectedRoomParticipantFinances.length > 0
+        ? selectedRoomParticipantFinances
+        : await listRoomParticipantFinances(room.id);
+      const calculatedAt = Date.now();
+      const baseFinances = calculateParticipantFinances({
+        settings: privateFinance,
+        participants: room.participants || [],
+        existingFinances,
+        calculatedAt,
+      });
+      const patchedFinances = baseFinances.map((finance) => {
+        if (finance.participantId !== participantId) return finance;
+        const paymentStatus = patch.paymentStatus || finance.paymentStatus;
+        return {
+          ...finance,
+          ...patch,
+          paymentStatus,
+          paidAt: paymentStatus === 'paid' ? (finance.paidAt || calculatedAt) : finance.paidAt,
+          markedPaidBy: paymentStatus === 'paid' ? currentUserUid : finance.markedPaidBy,
+        };
+      });
+      const nextPrivateFinance = {
+        ...privateFinance,
+        lastCalculatedAt: calculatedAt,
+      };
+      const nextParticipantFinances = calculateParticipantFinances({
+        settings: nextPrivateFinance,
+        participants: room.participants || [],
+        existingFinances: patchedFinances,
+        calculatedAt,
+      });
+      const hostSnapshot = room.status === 'scheduled'
+        ? undefined
+        : buildHostFinanceMatchSnapshot({
+            room,
+            settings: nextPrivateFinance,
+            participantFinances: nextParticipantFinances,
+            completedAt: typeof room.completedAt === 'number'
+              ? room.completedAt
+              : room.status === 'completed'
+                ? calculatedAt
+                : undefined,
+          });
+
+      await saveRoomFinanceStateDelta({
+        roomId: room.id,
+        privateFinance: nextPrivateFinance,
+        participantFinances: nextParticipantFinances,
+        previousParticipantFinances: existingFinances,
+        hostSnapshot,
+      });
+
+      setSelectedRoomFinance(nextPrivateFinance);
+      setSelectedRoomParticipantFinances(nextParticipantFinances);
+    } catch (err) {
+      console.error('Update room participant finance error:', err);
+      addNotification('Payment Update Failed', 'There was a problem updating payment tracking.', 'system', 'error');
+    } finally {
+      setIsRoomFinanceSaving(false);
+    }
+  };
+
+  const handleSaveRoomParticipantChanges = async ({
+    participants,
+    participantFinances,
+  }: {
+    participants: RoomParticipant[];
+    participantFinances: RoomParticipantFinance[];
+  }) => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
+      addNotification('Host Only', 'Only the room host can save participant changes.', 'system', 'error');
+      throw new Error('Only host can save participant changes.');
+    }
+
+    const joinedCount = (participants || []).filter((participant) => participant.status === 'joined').length;
+    if (room.maxPlayers && joinedCount > room.maxPlayers) {
+      addNotification('Room Full', 'Reduce players or increase player slots before saving.', 'system', 'error');
+      throw new Error('Room exceeds max players.');
+    }
+
+    const nextRoom: Room = {
+      ...room,
+      participants,
+    };
+    const pricing = getRoomPublicPricing(room);
+
+    setIsRoomParticipantSaving(true);
+    setIsRoomFinanceSaving(true);
+    try {
+      let nextPrivateFinance = selectedRoomFinance;
+      let nextParticipantFinances = participantFinances;
+
+      if (pricing.enabled) {
+        const privateFinance = selectedRoomFinance || await getRoomFinancePrivate(room.id);
+        if (!privateFinance) {
+          addNotification('Pricing Missing', 'Set pricing before saving participant payment changes.', 'system', 'error');
+          throw new Error('Pricing private finance is missing.');
+        }
+
+        const calculatedAt = Date.now();
+        nextPrivateFinance = {
+          ...privateFinance,
+          lastCalculatedAt: calculatedAt,
+        };
+        nextParticipantFinances = calculateParticipantFinances({
+          settings: nextPrivateFinance,
+          participants,
+          existingFinances: participantFinances,
+          calculatedAt,
+        });
+        const hostSnapshot = room.status === 'scheduled'
+          ? undefined
+          : buildHostFinanceMatchSnapshot({
+              room: nextRoom,
+              settings: nextPrivateFinance,
+              participantFinances: nextParticipantFinances,
+              completedAt: typeof nextRoom.completedAt === 'number'
+                ? nextRoom.completedAt
+                : nextRoom.status === 'completed'
+                  ? calculatedAt
+                  : undefined,
+            });
+
+        if (!initialE2EScenario) {
+          await saveRoomFinanceStateDelta({
+            roomId: room.id,
+            roomPatch: { participants },
+            privateFinance: nextPrivateFinance,
+            participantFinances: nextParticipantFinances,
+            previousParticipantFinances: selectedRoomParticipantFinances,
+            hostSnapshot,
+          });
+        }
+      } else if (!initialE2EScenario) {
+        await saveRoom(room.id, { participants });
+      }
+
+      setSelectedRoom(nextRoom);
+      setSelectedRoomFinance(nextPrivateFinance);
+      setSelectedRoomParticipantFinances(nextParticipantFinances);
+      if (!initialE2EScenario) {
+        await refreshRooms();
+      }
+      addNotification('Participants Saved', 'Participant and payment changes have been saved.', 'system', 'success');
+    } catch (err) {
+      console.error('Save room participant changes error:', err);
+      addNotification('Save Failed', 'There was a problem saving participant changes.', 'system', 'error');
+      throw err;
+    } finally {
+      setIsRoomParticipantSaving(false);
+      setIsRoomFinanceSaving(false);
+    }
+  };
+
+  const handleStartRoom = async () => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid) {
+      addNotification('Login Required', 'Please log in first to start a room.', 'system');
+      return;
+    }
+    if (room.hostUid !== currentUserUid) {
+      addNotification('Host Only', 'Only the room host can start this room.', 'system', 'error');
+      return;
+    }
+    if (!room.matchSetupConfiguredAt) {
+      addNotification('Setup Required', 'Configure the match setup before starting this room.', 'system', 'error');
+      setScreen('room-setup');
+      return;
+    }
+
+    const joinedPlayers = buildJoinedPlayersFromRoom(room.participants || []);
+    const minPlayers = Math.max(4, Number(room.minPlayers || 4));
+    if (joinedPlayers.length < minPlayers) {
+      addNotification('Not Enough Players', `This room needs at least ${minPlayers} joined players before it can start.`, 'system', 'error');
+      return;
+    }
+
+    setIsRoomStarting(true);
+    try {
+      const tournamentDraft = buildTournamentDraftFromRoom({
+        baseTournament: createFreshTournamentDraft(),
+        players: joinedPlayers,
+        settings: room.settings,
+      });
+      const launchedTournament = generateTournamentFromSettings(tournamentDraft);
+
+      setSharedMatchId(null);
+      setTournament(launchedTournament);
+      setDraftMatchBackgroundId(room.settings.backgroundId || null);
+      setNeedsRegenerateFromRound(null);
+      setSelectedKlasemenTournament(null);
+      setActiveScreenTournament(null);
+      setActiveBackScreen('dashboard');
+
+      await persistActiveTournamentSnapshot(launchedTournament);
+      await saveRoom(room.id, {
+        status: 'in_progress',
+        launchedTournamentId: launchedTournament.id,
+        launchPayload: {
+          roomId: room.id,
+          launchedAt: Date.now(),
+          launchedBy: currentUserUid,
+          tournamentDraft: launchedTournament,
+        },
+      });
+      await Promise.all([
+        refreshRooms(),
+        syncSelectedRoomById(room.id),
+      ]);
+
+      setScreen('active');
+      addNotification('Room Started', `${room.title} is now live.`, 'system');
+    } catch (err) {
+      console.error('Start room error:', err);
+      addNotification('Start Room Failed', 'There was a problem starting this room.', 'system', 'error');
+    } finally {
+      setIsRoomStarting(false);
+    }
+  };
+
+  const handleSaveRoomMatchSetup = async (settings: RoomSettingsSnapshot) => {
+    const room = selectedRoom;
+    const currentUserUid = String(user?.uid || '').trim();
+    if (!room || !currentUserUid) {
+      addNotification('Login Required', 'Please log in first to configure this room.', 'system');
+      return;
+    }
+    if (room.hostUid !== currentUserUid) {
+      addNotification('Host Only', 'Only the room host can configure match setup.', 'system', 'error');
+      return;
+    }
+
+    setIsRoomSetupSaving(true);
+    try {
+      const nextRoomPatch = {
+        settings,
+        matchSetupConfiguredAt: Date.now(),
+      };
+
+      if (initialE2EScenario) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        setSelectedRoom((prev) => prev ? { ...prev, ...nextRoomPatch } : prev);
+        addNotification('Setup Saved', 'Match setup has been saved for this room.', 'system', 'success');
+        setScreen('room-detail');
+        return;
+      }
+
+      await saveRoom(room.id, nextRoomPatch);
+      const existingFinance = await getRoomFinancePrivate(room.id);
+      if (existingFinance?.enabled) {
+        const nextRoom = {
+          ...room,
+          ...nextRoomPatch,
+        };
+        const nextPrivateFinance = buildRoomFinancePrivate({
+          roomId: room.id,
+          hostUid: currentUserUid,
+          enabled: true,
+          courtCostPerCourt: existingFinance.courtCostPerCourt,
+          courtCount: settings.courts,
+          ballCost: existingFinance.ballCost,
+          publicPrice: existingFinance.publicPrice,
+          includeHostInFriendSplit: existingFinance.includeHostInFriendSplit,
+        });
+        const existingFinances = await listRoomParticipantFinances(room.id);
+        const participantFinances = calculateParticipantFinances({
+          settings: nextPrivateFinance,
+          participants: room.participants || [],
+          existingFinances,
+        });
+        const hostSnapshot = room.status === 'scheduled'
+          ? undefined
+          : buildHostFinanceMatchSnapshot({
+              room: nextRoom,
+              settings: nextPrivateFinance,
+              participantFinances,
+              completedAt: typeof room.completedAt === 'number' ? room.completedAt : undefined,
+            });
+        await saveRoomFinanceState({
+          roomId: room.id,
+          privateFinance: nextPrivateFinance,
+          participantFinances,
+          hostSnapshot,
+        });
+      }
+      await Promise.all([
+        refreshRooms(),
+        syncSelectedRoomById(room.id),
+      ]);
+      addNotification('Setup Saved', 'Match setup has been saved for this room.', 'system', 'success');
+      setScreen('room-detail');
+    } catch (err) {
+      console.error('Save room setup error:', err);
+      addNotification('Setup Save Failed', 'There was a problem saving this match setup.', 'system', 'error');
+    } finally {
+      setIsRoomSetupSaving(false);
+    }
+  };
+
+  const handleShareRoom = async (room: Room) => {
+    try {
+      const roomUrl = buildRoomShareUrl(room.id);
+      const shareText = buildRoomShareText(room, roomUrl);
+      const shareResult = await shareRoomInvite({
+        text: shareText,
+      });
+
+      if (shareResult === 'copied') {
+        showShareFeedbackToast('success', 'Room invite copied.');
+        return;
+      }
+      if (shareResult === 'shared' || shareResult === 'manual') {
+        showShareFeedbackToast('ready', 'Room invite is ready to share.');
+        return;
+      }
+      showShareFeedbackToast('failed', 'Unable to share this room link right now.');
+    } catch (err) {
+      console.error('Share room error:', err);
+      showShareFeedbackToast('failed', 'Unable to share this room link right now.');
+    }
+  };
 
   const navigateTopLevel = (nextRoute: TopLevelRoute) => {
     const nextPath = getTopLevelPath(nextRoute, nextRoute === 'app' || nextRoute === 'blog' ? '' : marketingBasePath);
@@ -927,6 +2301,32 @@ export default function App() {
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
+
+  useEffect(() => {
+    const handleAppUpdateAvailable = () => {
+      setIsAppUpdateAvailable(true);
+    };
+
+    window.addEventListener('fom-play:update-available', handleAppUpdateAvailable);
+    return () => window.removeEventListener('fom-play:update-available', handleAppUpdateAvailable);
+  }, []);
+
+  const handleApplyAppUpdate = async () => {
+    if (isAppUpdateRefreshing) return;
+    setIsAppUpdateRefreshing(true);
+    const updateWindow = window as FomUpdateWindow;
+    try {
+      if (updateWindow.__fomApplyServiceWorkerUpdate) {
+        await updateWindow.__fomApplyServiceWorkerUpdate();
+        window.setTimeout(() => window.location.reload(), 1200);
+        return;
+      }
+      window.location.reload();
+    } catch (error) {
+      console.warn('App update refresh failed, reloading page:', error);
+      window.location.reload();
+    }
+  };
 
   useAppChrome({
     isAppShellRoute,
@@ -1022,7 +2422,83 @@ export default function App() {
       setTournament(e2eBackgroundTournament);
       setDraftMatchBackgroundId(null);
       setMatchSettingsWizardStep(0);
-      setScreen('dashboard');
+      setScreen(new URLSearchParams(window.location.search).get('screen') === 'rooms' ? 'rooms' : 'dashboard');
+      return;
+    }
+
+    if ((
+      initialE2EScenario === 'share-flow' ||
+      initialE2EScenario === 'toxic-active-ticker' ||
+      initialE2EScenario === 'americano-incomplete-round'
+    ) && e2eShareTournament) {
+      setIsSharedViewer(false);
+      setSharedMatchId('e2eshare');
+      setLinkedShareIds(['e2eshare']);
+      setIsSharedDataReady(true);
+      setUser({ uid: 'e2e-user', displayName: 'E2E User', mmr: 1500 });
+      setIsLoggedIn(true);
+      setIsAuthChecked(true);
+      setTournaments([]);
+      setSelectedHistory(null);
+      setSelectedKlasemenTournament(null);
+      setAllPlayers(e2eBackgroundPlayers);
+      setTournament(e2eShareTournament);
+      setActiveScreenTournament(null);
+      setActiveBackScreen('dashboard');
+      setKlasemenBackScreen('active');
+      setScreen('active');
+      return;
+    }
+
+    if (initialE2EScenario === 'shared-viewer-flow' && e2eShareTournament) {
+      const sharedView = new URLSearchParams(window.location.search).get('view') === 'klasemen'
+        ? 'klasemen'
+        : 'active';
+      setIsSharedViewer(true);
+      setSharedMatchId(null);
+      setLinkedShareIds([]);
+      setIsSharedDataReady(true);
+      setUser(null);
+      setIsLoggedIn(false);
+      setIsAuthChecked(true);
+      setTournaments([]);
+      setSelectedHistory(null);
+      setSelectedKlasemenTournament(null);
+      setAllPlayers(e2eBackgroundPlayers);
+      setTournament(e2eShareTournament);
+      setActiveScreenTournament(null);
+      setActiveBackScreen('dashboard');
+      setKlasemenBackScreen('active');
+      setSharedTargetScreen(sharedView);
+      setScreen(sharedView);
+      return;
+    }
+
+    if (
+      (initialE2EScenario === 'toxic-standings' ||
+        initialE2EScenario === 'toxic-empty' ||
+        initialE2EScenario === 'toxic-shared' ||
+        initialE2EScenario === 'toxic-co-king') &&
+      e2eToxicTournament
+    ) {
+      const sharedMode = initialE2EScenario === 'toxic-shared';
+      setIsSharedViewer(sharedMode);
+      setSharedMatchId(sharedMode ? null : 'e2etoxic');
+      setLinkedShareIds(sharedMode ? [] : ['e2etoxic']);
+      setIsSharedDataReady(true);
+      setUser(sharedMode ? null : { uid: 'e2e-user', displayName: 'E2E User', mmr: 1500 });
+      setIsLoggedIn(!sharedMode);
+      setIsAuthChecked(true);
+      setTournaments([]);
+      setSelectedHistory(null);
+      setSelectedKlasemenTournament(e2eToxicTournament);
+      setAllPlayers(e2eToxicTournament.players);
+      setTournament(e2eToxicTournament);
+      setActiveScreenTournament(null);
+      setActiveBackScreen('dashboard');
+      setKlasemenBackScreen('active');
+      setSharedTargetScreen('klasemen');
+      setScreen('klasemen');
       return;
     }
 
@@ -1063,7 +2539,7 @@ export default function App() {
       return;
     }
 
-    if (initialE2EScenario === 'standings-6p') {
+    if (initialE2EScenario === 'standings-6p' || initialE2EScenario === 'standings-long-history') {
       const sixPlayerHistory = e2eProfileHistory[0] || null;
       if (sixPlayerHistory) {
         setIsSharedViewer(false);
@@ -1102,6 +2578,8 @@ export default function App() {
     e2eBackgroundPlayers,
     e2eBackgroundTournament,
     e2eFinishedHistory,
+    e2eShareTournament,
+    e2eToxicTournament,
     initialE2EScenario,
     isSharedViewer,
     sharedTargetScreen
@@ -1110,6 +2588,7 @@ export default function App() {
   useAuthBootstrap({
     disabled: Boolean(initialE2EScenario),
     isSharedViewer,
+    hasRoomLinkTarget: Boolean(initialRoomLinkId),
     sharedTargetScreen,
     hydratedHistoryCacheRef,
     isAuthResolvedRef,
@@ -1133,6 +2612,47 @@ export default function App() {
     setIsHistorySyncing,
     setHasResolvedInitialHistoryHydration,
   });
+
+  useEffect(() => {
+    const roomId = String(initialRoomLinkId || '').trim();
+    if (!roomId || initialE2EScenario || !isAppShellRoute || !isAuthChecked) return;
+    if (roomLinkHydrationRef.current === roomId) return;
+    roomLinkHydrationRef.current = roomId;
+
+    let cancelled = false;
+    const hydrateRoomLink = async () => {
+      try {
+        const linkedRoom = await getRoomById(roomId);
+        if (cancelled) return;
+        if (!linkedRoom) {
+          addNotification('Room Not Found', 'This room link is no longer available.', 'system', 'error');
+          return;
+        }
+        setSelectedRoom(linkedRoom);
+        setScreen('room-detail');
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Open room link error:', err);
+        addNotification('Room Link Failed', 'There was a problem opening this room link.', 'system', 'error');
+      }
+    };
+
+    void hydrateRoomLink();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    addNotification,
+    initialE2EScenario,
+    initialRoomLinkId,
+    isAppShellRoute,
+    isAuthChecked,
+  ]);
+
+  useEffect(() => {
+    if (!initialRoomLinkId || !isLoggedIn || !selectedRoom || screen !== 'login') return;
+    setScreen('room-detail');
+  }, [initialRoomLinkId, isLoggedIn, screen, selectedRoom]);
 
   useAppShellNavigation({
     isAppShellRoute,
@@ -1232,16 +2752,18 @@ export default function App() {
         currentUser={null}
         onUpdateScore={() => { }}
         onNextRound={() => { }}
+        onStartAmericanoRound={() => { }}
+        onCompleteAmericanoRound={() => { }}
         onUpdateRounds={() => false}
         onUpdateCourts={() => false}
-        onUpdateActivePlayers={() => { }}
+        onUpdateToxicSettings={() => { }}
         onAddManualPlayer={() => { }}
+        onSaveRosterChanges={() => { }}
         onDeleteRoundsFrom={() => { }}
         onDeleteMatch={() => { }}
         needsRegenerateFromRound={null}
         onOpenStandings={() => { }}
         onSwapPlayer={() => { }}
-        onUpdateMatchPlayScore={() => { }}
         onShareMatch={() => { }}
         isReadOnly={false}
         isSharedViewer={false}
@@ -1278,9 +2800,16 @@ export default function App() {
     !hasResolvedInitialHistoryHydration &&
     tournaments.length === 0 &&
     (isHistorySyncing || !hasSyncedHistoryThisSession);
-  const notificationToastOffset = showBottomNav
+  const appUpdatePromptOffset = showBottomNav
     ? 'calc(var(--app-safe-bottom, 0px) + 92px)'
     : 'calc(var(--app-safe-bottom, 0px) + 16px)';
+  const notificationToastOffset = showBottomNav
+    ? isAppUpdateAvailable
+      ? 'calc(var(--app-safe-bottom, 0px) + 166px)'
+      : 'calc(var(--app-safe-bottom, 0px) + 92px)'
+    : isAppUpdateAvailable
+      ? 'calc(var(--app-safe-bottom, 0px) + 90px)'
+      : 'calc(var(--app-safe-bottom, 0px) + 16px)';
 
   return (
     <div className="min-h-screen bg-white">
@@ -1296,10 +2825,6 @@ export default function App() {
               setMatchSettingsWizardStep(0);
               setScreen('settings');
             }}
-            onOpenRankingForMe={() => {
-              setRankingFocusRequestId((prev) => prev + 1);
-              setScreen('leaderboard');
-            }}
             tournament={tournament}
             onContinueMatch={() => {
               setActiveScreenTournament(null);
@@ -1314,19 +2839,21 @@ export default function App() {
               setHistoryBackScreen('dashboard');
               setScreen('history');
             }}
+            onOpenRooms={() => setScreen('rooms')}
+            onOpenRoom={(room) => {
+              setSelectedRoom(room);
+              setScreen('room-detail');
+            }}
             onOpenHistoryMatch={(t) => handleOpenHistoryTournament(t, 'dashboard')}
             notificationsEnabled={NOTIFICATIONS_ENABLED}
             unreadCount={unreadNotificationsCount}
             tournaments={tournaments}
+            hostedRooms={visibleHostedRooms}
+            publicRooms={visiblePublicRooms}
             user={user}
             isHistoryLoading={isHistoryLoadingForUi}
+            isRoomsLoading={visibleRoomsLoading}
             renderLogo={(className) => <AppLogo className={className} />}
-            renderHistoryCard={(item, onClick) => (
-              <TournamentHistoryCard
-                tournament={item}
-                onClick={onClick}
-              />
-            )}
           />
         )}
         {screen === 'leaderboard' && (
@@ -1370,6 +2897,7 @@ export default function App() {
               setActiveBackScreen('dashboard');
               setScreen(historyBackScreen);
             }}
+            onShareStandings={() => handleShareStandings(selectedHistory)}
             onViewFinalStandings={handleOpenHistoryFinalStandings}
             onViewMatchDetails={handleOpenHistoryMatchDetails}
           />
@@ -1379,10 +2907,11 @@ export default function App() {
             tournaments={tournaments}
             onOpenTournament={(t) => handleOpenHistoryTournament(t, 'history')}
             isHistoryLoading={isHistoryLoadingForUi}
-            renderHistoryCard={(item, onClick) => (
+            renderHistoryCard={(item, onClick, options) => (
               <TournamentHistoryCard
                 tournament={item}
                 onClick={onClick}
+                isLatest={options.isLatest}
               />
             )}
           />
@@ -1467,16 +2996,18 @@ export default function App() {
             currentUser={user}
             onUpdateScore={handleUpdateScore}
             onNextRound={handleNextRound}
+            onStartAmericanoRound={handleStartAmericanoRound}
+            onCompleteAmericanoRound={handleCompleteAmericanoRound}
             onUpdateRounds={handleUpdateRounds}
             onUpdateCourts={handleUpdateCourts}
-            onUpdateActivePlayers={handleUpdateActivePlayers}
+            onUpdateToxicSettings={handleUpdateToxicSettings}
             onAddManualPlayer={handleAddPlayerDuringActiveMatch}
+            onSaveRosterChanges={handleSaveRosterChanges}
             onDeleteRoundsFrom={handleDeleteRoundsFrom}
             onDeleteMatch={handleDeleteActiveMatch}
             needsRegenerateFromRound={needsRegenerateFromRound}
             onOpenStandings={handleOpenLiveStandings}
             onSwapPlayer={handleSwapPlayer}
-            onUpdateMatchPlayScore={handleUpdateMatchPlayScore}
             onShareMatch={handleShareCurrentMatch}
             isReadOnly={isSharedViewer || Boolean(activeScreenTournament)}
             isSharedViewer={isSharedViewer}
@@ -1574,6 +3105,76 @@ export default function App() {
             }}
           />
         )}
+        {screen === 'rooms' && (
+          <RoomListScreen
+            hostedRooms={visibleHostedRooms}
+            publicRooms={visiblePublicRooms}
+            currentUserUid={user?.uid}
+            isLoading={visibleRoomsLoading}
+            onCreateRoom={() => {
+              setRoomEditorMode('create');
+              setScreen('room-editor');
+            }}
+            onOpenRoom={(room) => {
+              setSelectedRoom(room);
+              setScreen('room-detail');
+            }}
+          />
+        )}
+        {screen === 'room-editor' && (
+          <RoomEditorScreen
+            mode={roomEditorMode}
+            editingRoom={roomEditorMode === 'edit' ? selectedRoom : null}
+            roomFinance={roomEditorMode === 'edit' ? selectedRoomFinance : null}
+            isSaving={isRoomSaving}
+            currentUser={user}
+            onBack={() => setScreen(roomEditorMode === 'edit' ? 'room-detail' : 'rooms')}
+            onSave={handleCreateRoom}
+            onUpdate={handleUpdateRoomFromDetail}
+            onOpenCreatedRoom={(room) => {
+              setSelectedRoom(room);
+              setScreen('room-detail');
+            }}
+            onOpenUpdatedRoom={() => {
+              setScreen('room-detail');
+            }}
+          />
+        )}
+        {screen === 'room-detail' && selectedRoom && (
+          <RoomDetailScreen
+            room={selectedRoom}
+            currentUserUid={user?.uid}
+            currentUserPhotoURL={user?.photoURL || ''}
+            roomFinance={selectedRoomFinance}
+            participantFinances={selectedRoomParticipantFinances}
+            isSavingFinance={isRoomFinanceSaving}
+            isSavingParticipation={isRoomParticipantSaving}
+            isStartingRoom={isRoomStarting}
+            onJoin={handleJoinRoom}
+            onLoginToJoin={() => setScreen('login')}
+            onLeave={handleLeaveRoom}
+            onStartRoom={handleStartRoom}
+            onConfigureSetup={() => setScreen('room-setup')}
+            onEditRoom={() => {
+              setRoomEditorMode('edit');
+              setScreen('room-editor');
+            }}
+            onAddParticipant={handleAddRoomParticipant}
+            onRemoveParticipant={handleRemoveRoomParticipant}
+            onUpdateParticipantFinance={handleUpdateRoomParticipantFinance}
+            onSaveParticipantChanges={handleSaveRoomParticipantChanges}
+            onShare={() => handleShareRoom(selectedRoom)}
+            onBack={() => setScreen('rooms')}
+          />
+        )}
+        {screen === 'room-setup' && selectedRoom && (
+          <RoomMatchSetupScreen
+            room={selectedRoom}
+            isSaving={isRoomSetupSaving}
+            onBack={() => setScreen('room-detail')}
+            onSave={handleSaveRoomMatchSetup}
+          />
+        )}
       </div>
 
       {showBottomNav && (
@@ -1585,7 +3186,43 @@ export default function App() {
       )}
 
       <AnimatePresence>
-        {NOTIFICATIONS_ENABLED && notificationToasts.length > 0 && (
+        {isAppShellRoute && isAppUpdateAvailable && (
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.985 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.985 }}
+            className="fixed left-1/2 z-[146] w-[min(92vw,420px)] -translate-x-1/2"
+            style={{ bottom: appUpdatePromptOffset }}
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-center gap-3 rounded-[22px] border border-black/10 bg-[#111111]/96 p-2.5 pl-3.5 text-white shadow-[0_18px_42px_rgba(15,23,42,0.24)] backdrop-blur-xl">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-primary">
+                <RefreshCw size={17} strokeWidth={2.35} className={cn(isAppUpdateRefreshing && 'animate-spin motion-reduce:animate-none')} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-extrabold leading-tight tracking-[-0.01em]">
+                  Update tersedia
+                </p>
+                <p className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-white/62">
+                  Refresh untuk pakai versi terbaru.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleApplyAppUpdate}
+                disabled={isAppUpdateRefreshing}
+                className="tap-target shrink-0 rounded-full bg-primary px-4 py-2 text-[12px] font-black leading-none text-white shadow-[0_8px_18px_rgba(230,94,20,0.28)] disabled:opacity-70"
+              >
+                {isAppUpdateRefreshing ? 'Refreshing' : 'Refresh'}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {notificationToasts.length > 0 && (
           <div
             className="fixed left-1/2 -translate-x-1/2 z-[145] w-[min(92vw,420px)] space-y-2"
             style={{ bottom: notificationToastOffset }}

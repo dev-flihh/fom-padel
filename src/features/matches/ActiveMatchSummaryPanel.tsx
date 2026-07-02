@@ -1,6 +1,7 @@
-import { AlertTriangle, ChevronRight, Settings, Trophy } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Lock, Share2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { type MatchFormat } from '../../types';
+import { AppLogo } from '../../components/app/AppLogo';
 
 type StatsSyncBadge = {
   tone: string;
@@ -14,23 +15,21 @@ export const ActiveMatchSummaryPanel = ({
   infoShadowClass,
   matchName,
   locationDateLabel,
-  totalElapsed,
   format,
-  activePlayerCount,
   totalPlayerCount,
-  courts,
   completedRounds,
   totalRounds,
+  toxicModeEnabled,
   isReadOnly,
-  isTournamentEnded,
   needsRegenerateFromRound,
-  onOpenFomPlay,
   onOpenSettings,
-  onOpenStandings
+  onShareMatch,
 }: {
   isSharedViewer: boolean;
   statsSyncBadge: StatsSyncBadge;
   infoShadowClass: string;
+  navIconClass: string;
+  navBorderClass: string;
   matchName: string;
   locationDateLabel: string;
   totalElapsed: string;
@@ -40,18 +39,54 @@ export const ActiveMatchSummaryPanel = ({
   courts: number;
   completedRounds: number;
   totalRounds: number;
+  toxicModeEnabled: boolean;
   isReadOnly: boolean;
-  isTournamentEnded: boolean;
   needsRegenerateFromRound: number | null;
   onOpenFomPlay: () => void;
   onOpenSettings: () => void;
   onOpenStandings: () => void;
+  onShareMatch: () => void;
 }) => (
+  (() => {
+    const currentRoundLabel = totalRounds > 0
+      ? Math.min(totalRounds, completedRounds + (completedRounds < totalRounds ? 1 : 0))
+      : completedRounds;
+    const progressPercent = totalRounds > 0 ? Math.min(100, Math.round((currentRoundLabel / totalRounds) * 100)) : 0;
+    const statusLabel = completedRounds >= totalRounds && totalRounds > 0 ? 'Ended' : 'Live';
+    const metaParts = locationDateLabel
+      .split('|')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const datePart = metaParts.length > 0 ? metaParts[metaParts.length - 1] : '';
+    const placeParts = metaParts.slice(0, -1);
+    const detailLineOne = [
+      ...placeParts,
+      datePart,
+    ].filter(Boolean);
+    const detailLineTwo = [
+      format,
+      totalPlayerCount > 0 ? `${totalPlayerCount} players` : '',
+      toxicModeEnabled ? 'Shame on' : ''
+    ].filter(Boolean);
+
+    return (
   <>
-    {isSharedViewer && (
-      <p className="-mt-1 -mb-3 px-1 text-[10px] font-medium text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
-        Viewer mode is active. This page is read-only.
-      </p>
+    {isReadOnly && (
+      <section className="rounded-[18px] border border-black/[0.06] bg-ios-gray/[0.035] px-3.5 py-3">
+        <div className="flex items-center gap-3">
+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-ios-gray shadow-[inset_0_0_0_1px_rgba(17,24,39,0.04)]">
+            <Lock size={15} strokeWidth={2.25} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase leading-none tracking-[0.14em] text-on-surface/72">
+              {isSharedViewer ? 'Read-only shared match' : 'Read-only match'}
+            </p>
+            <p className="mt-1 text-[11.5px] font-semibold leading-snug text-on-surface/52">
+              {isSharedViewer ? 'Host controls are off. Scores update from the match link.' : 'Saved match details can be reviewed here.'}
+            </p>
+          </div>
+        </div>
+      </section>
     )}
 
     {statsSyncBadge && (
@@ -67,72 +102,82 @@ export const ActiveMatchSummaryPanel = ({
       </section>
     )}
 
-    <section className={cn(
-      "relative overflow-hidden rounded-2xl p-4 border border-white/40 bg-white/8 backdrop-blur-md",
-      infoShadowClass
-    )}>
-      <div className="relative flex items-baseline justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <h2 className="text-[18px] font-black tracking-tight text-white truncate">{matchName || '-'}</h2>
-          <p className="mt-1 text-[11px] text-white/85 truncate">{locationDateLabel}</p>
+    <section
+      className={cn(
+        'relative standings-summary-section rounded-[18px] transition-colors',
+        !isReadOnly && 'cursor-pointer active:bg-black/[0.018]'
+      )}
+      role={!isReadOnly ? 'button' : undefined}
+      tabIndex={!isReadOnly ? 0 : undefined}
+      aria-label={!isReadOnly ? 'Open manage match' : undefined}
+      onClick={!isReadOnly ? onOpenSettings : undefined}
+      onKeyDown={!isReadOnly ? (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpenSettings();
+        }
+      } : undefined}
+    >
+      <h2 className="sr-only">Match summary</h2>
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-1.5 rounded-full border-0 bg-transparent p-0">
+          <AppLogo className="standings-header-logo h-5 w-[26px] shrink-0" />
+          <span className="font-display text-[16px] font-extrabold leading-none text-on-surface">
+            FOM<span className="text-primary">Play</span>
+          </span>
         </div>
-        <span className="shrink-0 text-[16px] leading-none font-display font-bold tabular-nums text-white/95 drop-shadow-[0_1px_1px_rgba(0,0,0,0.14)]">
-          {totalElapsed}
-        </span>
-      </div>
-
-      <div className="relative grid grid-cols-4 gap-2">
-        <SummaryStat label="Mode" value={format} />
-        <SummaryStat label="Player" value={`${activePlayerCount}/${totalPlayerCount}`} />
-        <SummaryStat label="Court" value={courts} />
-        <SummaryStat label="Round" value={`${completedRounds}/${totalRounds || 0}`} />
-      </div>
-
-      <div className="relative mt-3.5 pt-2.5 min-h-[30px] flex items-center justify-between gap-2">
-        <div className="absolute inset-x-0 top-0 h-px bg-white/30 pointer-events-none" />
-        <p className="relative z-10 text-[11px] text-white/88 whitespace-nowrap">
-          Hosted with{' '}
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={onOpenFomPlay}
-            className="inline p-0 bg-transparent border-0 font-bold text-white underline-offset-2 hover:underline cursor-pointer"
+            onClick={(event) => {
+              event.stopPropagation();
+              onShareMatch();
+            }}
+            className="tap-target inline-flex h-8 w-8 items-center justify-center rounded-full border border-black/[0.06] bg-white text-primary shadow-[0_2px_7px_rgba(17,24,39,0.035)]"
+            aria-label="Share match"
           >
-            FOM Play
+            <Share2 size={15} strokeWidth={2.2} />
           </button>
-        </p>
-        {!isReadOnly && (
-          <div className="relative z-10 shrink-0 h-8 inline-flex items-center">
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className="h-8 w-8 rounded-full bg-white/12 border border-white/35 text-white inline-flex items-center justify-center tap-target"
-              aria-label="Match settings"
-            >
-              <Settings size={15} />
-            </button>
-          </div>
-        )}
-      </div>
-    </section>
-
-    <section className="-mt-1">
-      <button
-        onClick={onOpenStandings}
-        className={cn(
-          "tap-target w-full h-12 rounded-2xl px-4 flex items-center justify-between border border-white/40 bg-white/8 backdrop-blur-md text-white",
-          infoShadowClass
-        )}
-      >
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="w-7 h-7 rounded-full flex items-center justify-center border border-white/35 bg-white/20">
-            <Trophy size={15} />
-          </span>
-          <span className="text-[13px] font-bold truncate">
-            {isTournamentEnded ? 'View Final Standings' : 'View Live Standings'}
+          <span
+            className={cn(
+              'mt-0.5 inline-flex h-[23px] shrink-0 items-center justify-center rounded-full px-2.5 text-[10px] font-extrabold uppercase leading-none tracking-[0.08em]',
+              statusLabel === 'Live'
+                ? 'bg-[#E65E14] text-white'
+                : 'bg-[#111111] text-white'
+            )}
+          >
+            {statusLabel === 'Live' && <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-white/90" />}
+            <span>{statusLabel}</span>
           </span>
         </div>
-        <ChevronRight size={16} className="opacity-80 shrink-0" />
-      </button>
+      </div>
+
+      <div className="flex min-w-0 items-center gap-2">
+        <h1 className="min-w-0 truncate text-[22px] font-display font-bold leading-[1.16] tracking-[-0.028em] text-on-surface">
+          {matchName || '-'}
+        </h1>
+        {!isReadOnly && (
+          <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-black/[0.035] text-ios-gray/78" aria-hidden="true">
+            <ChevronDown size={15} strokeWidth={2.3} />
+          </span>
+        )}
+      </div>
+      <div className="mt-2 flex flex-col gap-0.5 text-[9.5px] font-extrabold uppercase leading-[1.5] tracking-[0.12em] text-ios-gray/68">
+        {detailLineOne.length > 0 && <p>{detailLineOne.join(' · ')}</p>}
+        {detailLineTwo.length > 0 && <p>{detailLineTwo.join(' · ')}</p>}
+      </div>
+
+      <div className="mt-4.5 flex items-center gap-3">
+        <div className="h-1 max-w-[66%] flex-1 overflow-hidden rounded-full bg-black/[0.045]">
+          <div
+            className="h-full rounded-full bg-[#E65E14]"
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        <span className="shrink-0 text-[10px] font-black uppercase leading-none tracking-[0.15em] text-on-surface/52 tabular-nums">
+          Round {currentRoundLabel} of {totalRounds || 0}
+        </span>
+      </div>
     </section>
 
     {!isReadOnly && needsRegenerateFromRound !== null && (
@@ -148,17 +193,6 @@ export const ActiveMatchSummaryPanel = ({
       </section>
     )}
   </>
-);
-
-const SummaryStat = ({
-  label,
-  value
-}: {
-  label: string;
-  value: string | number;
-}) => (
-  <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
-    <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">{label}</p>
-    <p className="text-[12px] font-semibold text-white truncate">{value}</p>
-  </div>
+    );
+  })()
 );

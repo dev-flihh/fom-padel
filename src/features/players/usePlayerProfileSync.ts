@@ -4,64 +4,7 @@ import { auth, db } from '../../firebase';
 import { PLAYER_STATS_REFRESH_MIN_AGE_MS } from '../history/historyPersistence';
 import { isFirestoreSaverModeEnabled } from '../../services/dbMetrics';
 import { PLAYER_STATS_COLLECTION } from '../../services/firestoreCollections';
-import type { Player, Round, Screen, Tournament, TournamentHistory } from '../../types';
-
-const syncPlayerPhotoInRoster = (players: Player[], uid: string, photoURL: string) => {
-  let changed = false;
-  const next = players.map((player) => {
-    if (player?.id !== uid) return player;
-    const nextAvatar = photoURL || '';
-    if ((player.avatar || '') === nextAvatar) return player;
-    changed = true;
-    return { ...player, avatar: nextAvatar };
-  });
-  return changed ? next : players;
-};
-
-const syncPlayerPhotoInRounds = (rounds: Round[], uid: string, photoURL: string) => {
-  let changed = false;
-  const next = rounds.map((round) => {
-    const nextPlayersBye = syncPlayerPhotoInRoster(Array.isArray(round.playersBye) ? round.playersBye : [], uid, photoURL);
-    let roundChanged = nextPlayersBye !== (round.playersBye || []);
-    const nextMatches = (round.matches || []).map((match) => {
-      const nextTeamAPlayers = syncPlayerPhotoInRoster(match.teamA?.players || [], uid, photoURL) as [Player, Player];
-      const nextTeamBPlayers = syncPlayerPhotoInRoster(match.teamB?.players || [], uid, photoURL) as [Player, Player];
-      const matchChanged = nextTeamAPlayers !== match.teamA.players || nextTeamBPlayers !== match.teamB.players;
-      if (!matchChanged) return match;
-      roundChanged = true;
-      return {
-        ...match,
-        teamA: {
-          ...match.teamA,
-          players: nextTeamAPlayers,
-        },
-        teamB: {
-          ...match.teamB,
-          players: nextTeamBPlayers,
-        },
-      };
-    });
-    if (!roundChanged) return round;
-    changed = true;
-    return {
-      ...round,
-      playersBye: nextPlayersBye,
-      matches: nextMatches,
-    };
-  });
-  return changed ? next : rounds;
-};
-
-const syncPlayerPhotoInTournament = <T extends Tournament | TournamentHistory>(target: T, uid: string, photoURL: string): T => {
-  const nextPlayers = syncPlayerPhotoInRoster(Array.isArray(target.players) ? target.players : [], uid, photoURL);
-  const nextRounds = syncPlayerPhotoInRounds(Array.isArray(target.rounds) ? target.rounds : [], uid, photoURL);
-  if (nextPlayers === target.players && nextRounds === target.rounds) return target;
-  return {
-    ...target,
-    players: nextPlayers,
-    rounds: nextRounds,
-  };
-};
+import type { Player, Screen, Tournament, TournamentHistory } from '../../types';
 
 type RecordDbMetric = (input: {
   flow: string;
@@ -95,11 +38,6 @@ export const usePlayerProfileSync = ({
   isDocumentVisible,
   setUser,
   setAllPlayers,
-  setTournament,
-  setActiveScreenTournament,
-  setSelectedKlasemenTournament,
-  setSelectedHistory,
-  setTournaments,
   recordDbMetric,
 }: UsePlayerProfileSyncParams) => {
   const lastPlayerStatsRefreshRef = useRef<Record<string, number>>({});
@@ -125,41 +63,8 @@ export const usePlayerProfileSync = ({
       });
       return changed ? next : prev;
     });
-
-    setTournament((prev) => syncPlayerPhotoInTournament(prev, uid, photoURL));
-
-    setActiveScreenTournament((prev) => {
-      if (!prev) return prev;
-      return syncPlayerPhotoInTournament(prev, uid, photoURL);
-    });
-
-    setSelectedKlasemenTournament((prev) => {
-      if (!prev) return prev;
-      return syncPlayerPhotoInTournament(prev as Tournament | TournamentHistory, uid, photoURL);
-    });
-
-    setSelectedHistory((prev) => {
-      if (!prev) return prev;
-      return syncPlayerPhotoInTournament(prev, uid, photoURL);
-    });
-
-    setTournaments((prev) => {
-      let changed = false;
-      const next = prev.map((item) => {
-        const synced = syncPlayerPhotoInTournament(item, uid, photoURL);
-        const itemChanged = synced !== item;
-        if (itemChanged) changed = true;
-        return itemChanged ? synced : item;
-      });
-      return changed ? next : prev;
-    });
   }, [
-    setActiveScreenTournament,
     setAllPlayers,
-    setSelectedHistory,
-    setSelectedKlasemenTournament,
-    setTournament,
-    setTournaments,
     user?.photoURL,
     user?.uid,
   ]);

@@ -38,6 +38,7 @@ type RecordDbError = (record: {
 export const useAuthBootstrap = ({
   disabled,
   isSharedViewer,
+  hasRoomLinkTarget,
   sharedTargetScreen,
   hydratedHistoryCacheRef,
   isAuthResolvedRef,
@@ -63,6 +64,7 @@ export const useAuthBootstrap = ({
 }: {
   disabled: boolean;
   isSharedViewer: boolean;
+  hasRoomLinkTarget: boolean;
   sharedTargetScreen: string;
   hydratedHistoryCacheRef: MutableRefObject<string | null>;
   isAuthResolvedRef: MutableRefObject<boolean>;
@@ -124,7 +126,7 @@ export const useAuthBootstrap = ({
           setHasSyncedHistoryThisSession(false);
           setIsHistorySyncing(false);
           setHasResolvedInitialHistoryHydration(false);
-          if (!isSharedViewer) setScreen('dashboard');
+          if (!isSharedViewer && !hasRoomLinkTarget) setScreen('dashboard');
 
           try {
             const rawHistory = localStorage.getItem(getTournamentHistoryStorageKey(firebaseUser.uid));
@@ -322,8 +324,11 @@ export const useAuthBootstrap = ({
           if (!isSharedViewer) {
             setTournament(createFreshTournamentDraft());
           }
-          if (!isSharedViewer) setScreen('login');
-          else setScreen(sharedTargetScreen);
+          if (!isSharedViewer) {
+            if (!hasRoomLinkTarget) setScreen('login');
+          } else {
+            setScreen(sharedTargetScreen);
+          }
           hydratedHistoryCacheRef.current = null;
           setTournaments([]);
           setHasFreshHistoryCache(false);
@@ -350,6 +355,7 @@ export const useAuthBootstrap = ({
     isAuthResolvedRef,
     isFirestoreSaverModeEnabled,
     isSharedViewer,
+    hasRoomLinkTarget,
     normalizePlayerSource,
     recordDbError,
     recordDbMetric,

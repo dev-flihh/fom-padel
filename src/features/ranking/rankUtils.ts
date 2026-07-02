@@ -9,6 +9,31 @@ export type RankInfo = {
   icon: LucideIcon;
 };
 
+export const MMR_DISPLAY_OFFSET = 1000;
+
+export const toRawMmr = (value?: number | string | null) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+
+export const toDisplayMmr = (rawMmr?: number | string | null) => (
+  Math.max(0, Math.round(toRawMmr(rawMmr) + MMR_DISPLAY_OFFSET))
+);
+
+export const formatDisplayMmr = (rawMmr?: number | string | null) => (
+  toDisplayMmr(rawMmr).toLocaleString()
+);
+
+export const formatRankMmrFloor = (rank: Pick<RankInfo, 'min'>) => (
+  rank.min <= 0 ? '0' : formatDisplayMmr(rank.min)
+);
+
+export const formatRankMmrRange = (rank: Pick<RankInfo, 'min' | 'max'>) => (
+  rank.max === Infinity
+    ? `${formatDisplayMmr(rank.min)}+ MMR`
+    : `${formatRankMmrFloor(rank)} - ${formatDisplayMmr(rank.max)} MMR`
+);
+
 export const RANK_TIERS: RankInfo[] = [
   { name: 'Rookie', min: 0, max: 799, color: 'bg-ios-gray/10 text-ios-gray', icon: Circle },
   { name: 'Amateur', min: 800, max: 1699, color: 'bg-orange-400/10 text-orange-600', icon: Zap },

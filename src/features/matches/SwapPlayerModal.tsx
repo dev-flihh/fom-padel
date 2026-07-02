@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { ChevronRight, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { type Player, type Round } from '../../types';
+import { formatDisplayMmr } from '../ranking/rankUtils';
 
 type SwapPlayerRequest = {
   matchId: string;
@@ -98,7 +99,7 @@ export const SwapPlayerModal = ({
                     <div className="font-bold text-sm">{player.name}</div>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-ios-gray font-medium">
-                        {isRegisteredPlayer(player) ? `MMR: ${player.rating}` : 'Manual player · No MMR'}
+                        {isRegisteredPlayer(player) ? `MMR: ${formatDisplayMmr(player.rating)}` : 'Manual player · No MMR'}
                       </span>
                       <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-md", accentTheme.text, accentTheme.bgSoft)}>
                         {playerMatchCounts[player.id] || 0} Match

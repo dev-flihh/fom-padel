@@ -21,7 +21,8 @@ test.describe('Start Match Flow', () => {
       await page.getByRole('button', { name: 'Skip (Random)' }).click();
     }
 
-    await expect(page.locator('img[alt="Active background"]').first()).toBeVisible();
     await expect(page.getByText(/Round 1/i).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Share match' })).toBeVisible();
+    await expect(page.locator('img[alt="Active background"]')).toHaveCount(0);
   });
 });

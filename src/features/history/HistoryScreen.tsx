@@ -1,7 +1,23 @@
-import React, { useMemo } from 'react';
-import { Trophy } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { AppPageHeader } from '../../components/app/AppPageHeader';
+import { cn } from '../../lib/utils';
 import { TournamentHistory } from '../../types';
-import { getCompletedMatchesCount, sortTournamentsByNewest } from './historyUtils';
+import {
+  countUniqueHistoryPlayers,
+  getCompletedMatchesCount,
+  getHistoryFormatTheme,
+  groupTournamentsByMonth,
+  normalizeHistoryFormat,
+  sortTournamentsByNewest,
+  type HistoryFormatFilter
+} from './historyUtils';
+
+const HISTORY_FILTERS: { key: Exclude<HistoryFormatFilter, 'unknown'>; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'mexicano', label: 'Mexicano' },
+  { key: 'americano', label: 'Americano' },
+  { key: 'match-play', label: 'Match Play' }
+];
 
 export const HistoryScreen = ({
   tournaments,
@@ -12,100 +28,133 @@ export const HistoryScreen = ({
   tournaments: TournamentHistory[];
   onOpenTournament: (tournament: TournamentHistory) => void;
   isHistoryLoading: boolean;
-  renderHistoryCard: (tournament: TournamentHistory, onClick: () => void) => React.ReactNode;
+  renderHistoryCard: (
+    tournament: TournamentHistory,
+    onClick: () => void,
+    options: { isLatest: boolean }
+  ) => React.ReactNode;
 }) => {
+  const [activeFilter, setActiveFilter] = useState<Exclude<HistoryFormatFilter, 'unknown'>>('all');
   const sortedTournaments = useMemo(() => sortTournamentsByNewest(tournaments), [tournaments]);
+  const filteredTournaments = useMemo(
+    () => activeFilter === 'all'
+      ? sortedTournaments
+      : sortedTournaments.filter((tournament) => normalizeHistoryFormat(tournament.format) === activeFilter),
+    [activeFilter, sortedTournaments]
+  );
+  const tournamentGroups = useMemo(() => groupTournamentsByMonth(filteredTournaments), [filteredTournaments]);
   const totalCompletedMatches = useMemo(
     () => sortedTournaments.reduce((sum, tournament) => sum + getCompletedMatchesCount(tournament), 0),
     [sortedTournaments]
   );
-  const totalPlayers = useMemo(
-    () => sortedTournaments.reduce((sum, tournament) => sum + Number(tournament.numPlayers || 0), 0),
-    [sortedTournaments]
-  );
+  const totalPlayers = useMemo(() => countUniqueHistoryPlayers(sortedTournaments), [sortedTournaments]);
   const latestEventLabel = sortedTournaments[0]?.date
-    ? sortedTournaments[0].date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+    ? sortedTournaments[0].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null;
+  const latestTournamentId = sortedTournaments[0]?.id || null;
+  const eventCount = sortedTournaments.length;
+  const matchCount = totalCompletedMatches;
+  const playerCount = totalPlayers;
+  const summaryItems = [
+    { label: eventCount === 1 ? 'event' : 'events', value: isHistoryLoading ? '...' : eventCount.toLocaleString('en-US') },
+    { label: matchCount === 1 ? 'match' : 'matches', value: isHistoryLoading ? '...' : matchCount.toLocaleString('en-US') },
+    { label: playerCount === 1 ? 'player' : 'players', value: isHistoryLoading ? '...' : playerCount.toLocaleString('en-US') },
+    { label: 'latest', value: isHistoryLoading ? 'loading' : (latestEventLabel || 'none yet'), labelFirst: true }
+  ];
 
   return (
-    <div className="bg-white min-h-screen pb-32">
-      <main className="max-w-2xl mx-auto px-4 pt-4 sm:pt-6 space-y-4 sm:space-y-5">
-        <section className="overflow-hidden rounded-[28px] sm:rounded-[32px] border border-black/5 bg-white p-4 sm:p-5 shadow-[0_10px_24px_rgba(15,23,42,0.05)]">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold tracking-tight text-primary/80">History</p>
-              <h1 className="mt-1 text-[clamp(24px,7vw,36px)] leading-[1.02] font-display font-black tracking-tight text-on-surface">
-                Match archive.
-              </h1>
-              <p className="mt-1.5 max-w-md text-[13px] sm:text-[14px] leading-relaxed text-ios-gray">
-                Semua event yang sudah selesai terkumpul di sini, jadi lebih gampang buat cek recap, standings, dan detail per ronde.
-              </p>
-            </div>
-            <div className="shrink-0 rounded-[18px] sm:rounded-[20px] border border-black/5 bg-surface px-3 py-2 text-right">
-              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Events</p>
-              <p className="mt-1 text-[20px] sm:text-[24px] leading-none font-display font-black tracking-tight tabular-nums text-on-surface">
-                {isHistoryLoading ? '...' : sortedTournaments.length}
-              </p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-white pb-24">
+      <main className="mx-auto w-full max-w-2xl pb-20 pt-[calc(env(safe-area-inset-top,0px)+34px)]">
+        <AppPageHeader
+          eyebrow="History"
+          title="Match archive"
+          subtitle="Completed events, standings, and round details."
+          metaItems={summaryItems}
+        />
 
-          <div className="mt-3.5 grid grid-cols-3 gap-2">
-            <div className="rounded-[16px] sm:rounded-[20px] border border-black/5 bg-surface px-2.5 sm:px-3 py-2.5 sm:py-3">
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/70">Matches</p>
-              <p className="mt-1 text-[16px] sm:text-[18px] leading-none font-display font-black tracking-tight text-on-surface tabular-nums">
-                {isHistoryLoading ? '...' : totalCompletedMatches}
-              </p>
-            </div>
-            <div className="rounded-[16px] sm:rounded-[20px] border border-black/5 bg-surface px-2.5 sm:px-3 py-2.5 sm:py-3">
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/70">Players</p>
-              <p className="mt-1 text-[16px] sm:text-[18px] leading-none font-display font-black tracking-tight text-on-surface tabular-nums">
-                {isHistoryLoading ? '...' : totalPlayers}
-              </p>
-            </div>
-            <div className="rounded-[16px] sm:rounded-[20px] border border-black/5 bg-surface px-2.5 sm:px-3 py-2.5 sm:py-3">
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ios-gray/70">Latest</p>
-              <p className="mt-1 text-[12px] sm:text-[13px] leading-tight font-semibold tracking-tight text-on-surface">
-                {isHistoryLoading ? 'Loading...' : (latestEventLabel || 'Belum ada')}
-              </p>
-            </div>
+        <section className="mt-4 border-b border-black/[0.055] bg-white px-4 py-4">
+          <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {HISTORY_FILTERS.map((filter) => {
+              const isActive = activeFilter === filter.key;
+              const theme = filter.key === 'all' ? null : getHistoryFormatTheme(filter.label);
+
+              return (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={() => setActiveFilter(filter.key)}
+                  className={cn(
+                    'flex h-10 shrink-0 items-center gap-2 rounded-full px-4 text-[13px] font-semibold leading-none transition-colors',
+                    isActive
+                      ? 'bg-[#111827] text-white'
+                      : 'bg-white text-on-surface ring-1 ring-black/[0.08] active:bg-black/[0.035]'
+                  )}
+                >
+                  {theme && (
+                    <span
+                      className="h-2 w-2 rounded-full"
+                      style={{ backgroundColor: theme.color }}
+                      aria-hidden="true"
+                    />
+                  )}
+                  {filter.label}
+                </button>
+              );
+            })}
           </div>
         </section>
 
-        <section className="space-y-3">
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Archive List</p>
-              <h2 className="mt-1 text-[17px] sm:text-[18px] font-bold tracking-tight text-on-surface">Completed events</h2>
-            </div>
-            {sortedTournaments.length > 0 && (
-              <span className="shrink-0 rounded-full border border-black/5 bg-surface px-2.5 py-1.5 text-[10px] sm:text-[11px] font-semibold tracking-tight text-ios-gray">
-                newest first
-              </span>
-            )}
-          </div>
-
+        <section>
           {isHistoryLoading ? (
-            <div className="rounded-[28px] border border-dashed border-black/8 bg-surface p-10 text-center">
-              <Trophy size={40} className="mx-auto mb-3 text-ios-gray/20" />
-              <h3 className="text-[18px] font-bold tracking-tight text-on-surface">Loading history</h3>
-              <p className="mx-auto mt-2 max-w-sm text-[14px] font-medium leading-relaxed text-ios-gray">
+            <div className="border-b border-black/[0.055] bg-white px-4 py-8">
+              <p className="text-[15px] font-semibold text-on-surface">Loading history</p>
+              <p className="mt-1.5 max-w-xs text-[13px] font-medium leading-relaxed text-ios-gray">
                 Completed events are being synced from the cloud.
               </p>
             </div>
           ) : sortedTournaments.length === 0 ? (
-            <div className="rounded-[28px] border border-dashed border-black/8 bg-surface p-10 text-center">
-              <Trophy size={40} className="mx-auto mb-3 text-ios-gray/20" />
-              <h3 className="text-[18px] font-bold tracking-tight text-on-surface">No history yet</h3>
-              <p className="mx-auto mt-2 max-w-sm text-[14px] font-medium leading-relaxed text-ios-gray">
+            <div className="border-b border-black/[0.055] bg-white px-4 py-8">
+              <p className="text-[15px] font-semibold text-on-surface">No history yet</p>
+              <p className="mt-1.5 max-w-xs text-[13px] font-medium leading-relaxed text-ios-gray">
                 Completed events will show up here once your matches are finalized.
               </p>
             </div>
+          ) : filteredTournaments.length === 0 ? (
+            <div className="border-b border-black/[0.055] bg-white px-4 py-8">
+              <p className="text-[15px] font-semibold text-on-surface">No {HISTORY_FILTERS.find((filter) => filter.key === activeFilter)?.label} events</p>
+              <p className="mt-1.5 max-w-xs text-[13px] font-medium leading-relaxed text-ios-gray">
+                Try another archive filter to see completed events.
+              </p>
+            </div>
           ) : (
-            <div className="space-y-3">
-              {sortedTournaments.map((item) => (
-                <React.Fragment key={item.id}>
-                  {renderHistoryCard(item, () => onOpenTournament(item))}
-                </React.Fragment>
+            <div className="bg-white px-4">
+              {tournamentGroups.map((group) => (
+                <section key={group.id} className="pt-8 first:pt-7">
+                  <div className="mb-4 flex items-center gap-3">
+                    <div className="flex shrink-0 items-baseline gap-2">
+                      <h2 className="font-display text-[28px] font-black uppercase leading-none tracking-[-0.04em] text-on-surface">
+                        {group.monthLabel}
+                      </h2>
+                      <span className="text-[13px] font-black leading-none tracking-[0.08em] text-ios-gray">
+                        {group.yearLabel}
+                      </span>
+                    </div>
+                    <span className="h-px min-w-0 flex-1 bg-black/[0.08]" />
+                    <span className="text-[13px] font-black leading-none text-ios-gray tabular-nums">
+                      {group.tournaments.length.toLocaleString('en-US')}
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-black/[0.055] border-b border-black/[0.055]">
+                    {group.tournaments.map((item) => (
+                      <React.Fragment key={item.id}>
+                        {renderHistoryCard(item, () => onOpenTournament(item), {
+                          isLatest: item.id === latestTournamentId
+                        })}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           )}

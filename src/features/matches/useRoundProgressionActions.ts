@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { auth } from '../../firebase';
 import { normalizeCourtChanges } from '../history/historyPersistence';
 import { formatDurationFromMs } from './matchTimeUtils';
-import { toFirestoreSafe } from '../../services/firestoreSerialization';
+import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
 import type { Match, Player, Tournament, TournamentHistory } from '../../types';
 
 type AddNotification = (
@@ -56,6 +56,10 @@ type Params = {
   rebuildAmericanoFutureRounds: (tournament: Tournament, targetNumRounds: number) => Tournament['rounds'];
 };
 
+type RoundCompletionOptions = {
+  allowIncomplete?: boolean;
+};
+
 export const useRoundProgressionActions = ({
   tournament,
   user,
@@ -77,6 +81,97 @@ export const useRoundProgressionActions = ({
   getActivePlayersFromTournament,
   rebuildAmericanoFutureRounds,
 }: Params) => {
+  const persistActiveRoundUpdate = async (nextTournament: Tournament) => {
+    setTournament(nextTournament);
+    await persistActiveTournamentSnapshot(nextTournament);
+    try {
+      await syncSharedMatchesSnapshot(nextTournament);
+    } catch (err) {
+      console.error('Shared match round status sync error:', err, {
+        authUid: auth.currentUser?.uid || null,
+        userUid: user?.uid || null,
+      });
+    }
+  };
+
+  const handleStartAmericanoRound = async (roundId: number) => {
+    if (tournament.format !== 'Americano') return;
+    const safeRoundId = Math.floor(roundId || 0);
+    const targetRound = tournament.rounds.find((round) => round.id === safeRoundId);
+    if (!targetRound) return;
+
+    const now = Date.now();
+    const nextTournament: Tournament = {
+      ...tournament,
+      rounds: tournament.rounds.map((round) => {
+        if (round.id !== safeRoundId) return round;
+        return {
+          ...round,
+          matches: round.matches.map((match) => (
+            match.status === 'pending'
+              ? {
+                  ...match,
+                  status: 'active' as const,
+                  startedAt: match.startedAt || now,
+                }
+              : match
+          )),
+        };
+      }),
+      endedAt: undefined,
+    };
+
+    await persistActiveRoundUpdate(nextTournament);
+    addNotification('Round Started', `Round ${safeRoundId} is ready for scoring.`, 'match');
+  };
+
+  const handleCompleteAmericanoRound = async (roundId: number, options: RoundCompletionOptions = {}) => {
+    if (tournament.format !== 'Americano') return;
+    const safeRoundId = Math.floor(roundId || 0);
+    const targetRound = tournament.rounds.find((round) => round.id === safeRoundId);
+    if (!targetRound) return;
+
+    const incompleteMatches = targetRound.matches.filter((match) => (
+      (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
+    ));
+    if (incompleteMatches.length > 0) {
+      if (!options.allowIncomplete) {
+        addNotification(
+          'Incomplete Scores',
+          `Round ${safeRoundId} still has ${incompleteMatches.length} incomplete match${incompleteMatches.length > 1 ? 'es' : ''}. Review it before completing.`,
+          'system'
+        );
+        return;
+      }
+      addNotification(
+        'Round Completed With Incomplete Scores',
+        `Round ${safeRoundId} was completed with ${incompleteMatches.length} incomplete matches.`,
+        'system'
+      );
+    }
+
+    const now = Date.now();
+    const nextTournament: Tournament = {
+      ...tournament,
+      rounds: tournament.rounds.map((round) => {
+        if (round.id !== safeRoundId) return round;
+        return {
+          ...round,
+          matches: round.matches.map((match) => ({
+            ...match,
+            status: 'completed' as const,
+            startedAt: match.startedAt || now,
+            duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+          })),
+        };
+      }),
+      endedAt: undefined,
+    };
+
+    await persistActiveRoundUpdate(nextTournament);
+    addNotification('Round Completed', `Round ${safeRoundId} has been completed.`, 'match');
+  };
+
   const handleNextRound = async () => {
     const now = Date.now();
     if (!tournament.rounds) return;
@@ -104,15 +199,12 @@ export const useRoundProgressionActions = ({
         (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
       ));
       if (incompleteMatches.length > 0) {
-        const proceed = window.confirm(
-          `${incompleteMatches.length} matches in the active round have incomplete scores. Continue to the next round now?\n\nYou can still edit this round's scores, then delete the new round and regenerate.`
-        );
-        if (!proceed) return;
         addNotification(
-          'Continue With Incomplete Scores',
-          `Round continued with ${incompleteMatches.length} incomplete matches.`,
+          'Complete Scores First',
+          `${incompleteMatches.length} active match${incompleteMatches.length > 1 ? 'es' : ''} still need complete scores before the next round.`,
           'system'
         );
+        return;
       }
     }
 
@@ -152,7 +244,6 @@ export const useRoundProgressionActions = ({
         endedAt: now,
       };
       setTournament(finalizedTournament);
-      addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
 
       if (user) {
         const historyItem: TournamentHistory = {
@@ -162,6 +253,8 @@ export const useRoundProgressionActions = ({
           format: tournament.format,
           backgroundId: tournament.backgroundId,
           themeColorId: tournament.themeColorId,
+          toxicModeEnabled: Boolean(tournament.toxicModeEnabled),
+          toxicIntensity: tournament.toxicIntensity || 'savage',
           criteria: tournament.criteria,
           scoringType: tournament.scoringType,
           date: new Date(),
@@ -178,7 +271,6 @@ export const useRoundProgressionActions = ({
           location: tournament.location,
           statsVersion: 0,
         };
-        setTournaments((prev) => [historyItem, ...prev]);
 
         try {
           const tournamentSummary = {
@@ -188,6 +280,8 @@ export const useRoundProgressionActions = ({
             format: historyItem.format,
             ...(historyItem.backgroundId ? { backgroundId: historyItem.backgroundId } : {}),
             ...(historyItem.themeColorId ? { themeColorId: historyItem.themeColorId } : {}),
+            ...(historyItem.toxicModeEnabled ? { toxicModeEnabled: true } : {}),
+            ...(historyItem.toxicModeEnabled ? { toxicIntensity: historyItem.toxicIntensity || 'savage' } : {}),
             ...(historyItem.criteria ? { criteria: historyItem.criteria } : {}),
             ...(historyItem.scoringType ? { scoringType: historyItem.scoringType } : {}),
             ...(typeof historyItem.startedAt === 'number' ? { startedAt: historyItem.startedAt } : {}),
@@ -205,7 +299,7 @@ export const useRoundProgressionActions = ({
           };
           await saveTournamentDetailAndSummary(
             historyItem.id,
-            toFirestoreSafe(historyItem),
+            toFirestoreSafe(stripLargeInlineImages(stripTournamentPlayerAvatars(historyItem))),
             tournamentSummary
           );
           recordDbMetric({
@@ -217,6 +311,7 @@ export const useRoundProgressionActions = ({
             collection: 'tournament_details+tournaments',
           });
           watchTournamentStatsSync(historyItem.id);
+          setTournaments((prev) => [historyItem, ...prev]);
         } catch (err) {
           recordDbError({
             flow: 'finalize',
@@ -227,9 +322,25 @@ export const useRoundProgressionActions = ({
           });
           console.error('Error saving tournament:', err);
           markTournamentStatsSyncError(historyItem.id);
+          try {
+            await persistActiveTournamentSnapshot(stripLargeInlineImages(stripTournamentPlayerAvatars(finalizedTournament)));
+          } catch (snapshotErr) {
+            console.error('Finalized tournament recovery snapshot error:', snapshotErr);
+          }
+          addNotification(
+            'History Save Failed',
+            'Final scores are still kept in this active match. Please try Finish Matches again before leaving.',
+            'system',
+            'error'
+          );
+          return;
         }
+      } else {
+        addNotification('Login Required', 'Please log in before finishing matches so history can be saved.', 'system', 'error');
+        return;
       }
 
+      addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
       setSelectedKlasemenTournament(finalizedTournament);
       await clearActiveTournamentSnapshot();
       try {
@@ -455,5 +566,9 @@ export const useRoundProgressionActions = ({
     addNotification('New Round!', `Round ${nextRoundId} has started. Check your match schedule.`, 'match');
   };
 
-  return { handleNextRound };
+  return {
+    handleNextRound,
+    handleStartAmericanoRound,
+    handleCompleteAmericanoRound,
+  };
 };

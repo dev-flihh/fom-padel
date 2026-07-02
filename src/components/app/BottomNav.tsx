@@ -23,7 +23,7 @@ export const BottomNav = ({
       className="fixed inset-x-0 z-50 px-4"
       style={{ bottom: 'calc(var(--app-safe-bottom, 0px) + var(--app-bottom-nav-gap, 14px))' }}
     >
-      <div className="mx-auto w-full max-w-md rounded-full border border-white/70 bg-white/68 backdrop-blur-2xl supports-[backdrop-filter]:bg-white/58 px-2 py-2 shadow-[0_8px_22px_rgba(17,24,39,0.08)]">
+      <div className="mx-auto w-full max-w-md rounded-full bg-white px-2 py-2">
         <div className="flex items-center justify-between gap-1">
           {tabs.map((tab) => {
             const isActive = currentScreen === tab.id;
@@ -35,8 +35,8 @@ export const BottomNav = ({
                 className={cn(
                   "relative h-10 transition-all duration-200 select-none",
                   isActive
-                    ? "flex items-center gap-2 rounded-full border border-primary/12 bg-primary/[0.07] px-3.5 text-primary"
-                    : "w-10 rounded-full flex items-center justify-center bg-ios-gray/[0.06] text-ios-gray"
+                    ? "flex items-center gap-2 rounded-full bg-[#FFF3ED] px-3.5 text-[#E65E14]"
+                    : "w-10 rounded-full flex items-center justify-center bg-transparent text-ios-gray active:bg-[#F7F7FA] active:text-on-surface"
                 )}
                 aria-label={tab.label}
               >

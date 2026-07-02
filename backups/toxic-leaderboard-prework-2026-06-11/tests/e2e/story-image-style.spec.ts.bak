@@ -1,0 +1,153 @@
+import { expect, test } from '@playwright/test';
+
+const countDirectTopHighlights = async (summary: import('@playwright/test').Locator) => (
+  summary.evaluate((element) => (
+    Array.from(element.children).filter((child) => {
+      const classes = Array.from(child.classList);
+      return (
+        classes.includes('pointer-events-none') &&
+        classes.includes('absolute') &&
+        classes.includes('inset-x-0') &&
+        classes.includes('top-0') &&
+        classes.includes('h-px') &&
+        classes.includes('bg-white/55')
+      );
+    }).length
+  ))
+);
+
+const getTimerClassList = async (summary: import('@playwright/test').Locator) => (
+  summary.evaluate((element) => {
+    const timer = Array.from(element.querySelectorAll('span')).find((span) => (
+      /^\d{2}:\d{2}(?::\d{2})?$/.test((span.textContent || '').trim())
+    ));
+    return timer ? Array.from(timer.classList) : [];
+  })
+);
+
+test.describe('Story Image Style', () => {
+  test('standings story header uses the same translucent blur treatment as standings', async ({ page }) => {
+    await page.goto('/app?e2e=standings-6p');
+
+    await expect(page.getByText('Ranking Player')).toBeVisible();
+
+    const visibleSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    const storySummary = page.locator('[aria-hidden="true"] section').first();
+    const storyStat = storySummary.locator('div.grid > div').first();
+
+    await expect(storySummary).toHaveClass(/backdrop-blur-md/);
+    await expect(storySummary).toHaveClass(/bg-white\/10/);
+    await expect(storyStat).toHaveClass(/bg-white\/18/);
+
+    const styles = await Promise.all([
+      visibleSummary.evaluate((element) => window.getComputedStyle(element).backdropFilter),
+      storySummary.evaluate((element) => window.getComputedStyle(element).backdropFilter),
+      storySummary.evaluate((element) => window.getComputedStyle(element).clipPath),
+    ]);
+
+    expect(styles[0]).toContain('blur');
+    expect(styles[1]).toBe(styles[0]);
+    expect(styles[2]).toContain('inset');
+  });
+
+  test('story image logo matches standings header size and spacing', async ({ page }) => {
+    await page.goto('/app?e2e=standings-6p');
+    await expect(page.getByText('Ranking Player')).toBeVisible();
+
+    const visibleLogo = page.locator('.standings-header-logo').first();
+    const visibleHeader = page.locator('.standings-header-inner').first();
+    const visibleSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    const storyShell = page.locator('[aria-hidden="true"] > div > div').first();
+    const storyLogoHeader = page.locator('[aria-hidden="true"] header').first();
+    const storyLogo = storyLogoHeader.locator('img').first();
+    const storySummary = page.locator('[aria-hidden="true"] section').first();
+
+    const [visibleLogoBox, visibleHeaderBox, visibleSummaryBox, shellBox, logoHeaderBox, logoBox, summaryBox] = await Promise.all([
+      visibleLogo.boundingBox(),
+      visibleHeader.boundingBox(),
+      visibleSummary.boundingBox(),
+      storyShell.boundingBox(),
+      storyLogoHeader.boundingBox(),
+      storyLogo.boundingBox(),
+      storySummary.boundingBox(),
+    ]);
+
+    expect(visibleLogoBox).not.toBeNull();
+    expect(visibleHeaderBox).not.toBeNull();
+    expect(visibleSummaryBox).not.toBeNull();
+    expect(shellBox).not.toBeNull();
+    expect(logoHeaderBox).not.toBeNull();
+    expect(logoBox).not.toBeNull();
+    expect(summaryBox).not.toBeNull();
+
+    const visibleHeaderGap = visibleSummaryBox!.y - (visibleHeaderBox!.y + visibleHeaderBox!.height);
+    const topGap = logoHeaderBox!.y - shellBox!.y;
+    const bottomGap = summaryBox!.y - (logoHeaderBox!.y + logoHeaderBox!.height);
+
+    expect(Math.abs(logoBox!.height - visibleLogoBox!.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(logoHeaderBox!.height - visibleHeaderBox!.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(topGap - visibleHeaderGap)).toBeLessThanOrEqual(1);
+    expect(Math.abs(bottomGap - visibleHeaderGap)).toBeLessThanOrEqual(1);
+  });
+
+  test('header card outline stays even on active match, standings, and story image', async ({ page }) => {
+    await page.goto('/app?e2e=share-flow');
+    await expect(page.getByRole('button', { name: /Standings/i })).toBeVisible();
+
+    const activeSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    await expect(activeSummary).toHaveClass(/border-white\/42/);
+    expect(await countDirectTopHighlights(activeSummary)).toBe(0);
+
+    await page.goto('/app?e2e=standings-6p');
+    await expect(page.getByText('Ranking Player')).toBeVisible();
+
+    const standingsSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    const storySummary = page.locator('[aria-hidden="true"] section').first();
+
+    await expect(standingsSummary).toHaveClass(/border-white\/42/);
+    await expect(storySummary).toHaveClass(/border-white\/42/);
+    expect(await countDirectTopHighlights(standingsSummary)).toBe(0);
+    expect(await countDirectTopHighlights(storySummary)).toBe(0);
+  });
+
+  test('header timer is text-only without a chip on active match, standings, and story image', async ({ page }) => {
+    await page.goto('/app?e2e=share-flow');
+    await expect(page.getByRole('button', { name: /Standings/i })).toBeVisible();
+
+    const activeSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    const activeTimerClasses = await getTimerClassList(activeSummary);
+    expect(activeTimerClasses).toEqual(expect.arrayContaining(['tabular-nums', 'text-white/95']));
+    expect(activeTimerClasses).not.toEqual(expect.arrayContaining(['rounded-full']));
+    expect(activeTimerClasses).not.toEqual(expect.arrayContaining(['border']));
+    expect(activeTimerClasses).not.toEqual(expect.arrayContaining(['bg-black/18']));
+
+    await page.goto('/app?e2e=standings-6p');
+    await expect(page.getByText('Ranking Player')).toBeVisible();
+
+    const standingsSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    const storySummary = page.locator('[aria-hidden="true"] section').first();
+    const standingsTimerClasses = await getTimerClassList(standingsSummary);
+    const storyTimerClasses = await getTimerClassList(storySummary);
+
+    for (const classes of [standingsTimerClasses, storyTimerClasses]) {
+      expect(classes).toEqual(expect.arrayContaining(['tabular-nums', 'text-white/95']));
+      expect(classes).not.toEqual(expect.arrayContaining(['rounded-full']));
+      expect(classes).not.toEqual(expect.arrayContaining(['border']));
+      expect(classes).not.toEqual(expect.arrayContaining(['bg-black/18']));
+    }
+  });
+
+  test('shared active match keeps the viewer notice spacing aligned with shared standings', async ({ page }) => {
+    await page.goto('/app?e2e=shared-viewer-flow');
+    await expect(page.getByText('This page is read-only.')).toBeVisible();
+    const activeSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    const activeSummaryTop = await activeSummary.evaluate((element) => element.getBoundingClientRect().top);
+
+    await page.goto('/app?e2e=shared-viewer-flow&view=klasemen');
+    await expect(page.getByText('This page is read-only.')).toBeVisible();
+    const standingsSummary = page.locator('main section h2').first().locator('xpath=ancestor::section[1]');
+    const standingsSummaryTop = await standingsSummary.evaluate((element) => element.getBoundingClientRect().top);
+
+    expect(Math.abs(activeSummaryTop - standingsSummaryTop)).toBeLessThanOrEqual(2);
+  });
+});

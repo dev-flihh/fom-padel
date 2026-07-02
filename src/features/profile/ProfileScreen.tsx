@@ -12,7 +12,7 @@ import { FEEDBACK_SUBMISSIONS_COLLECTION, PLAYER_STATS_COLLECTION, USERS_COLLECT
 import { getPasswordResetActionSettings, getProviderLabel, withTimeout } from '../auth/authUtils';
 import { clearCachedLeaderboardUsers } from '../ranking/leaderboardCache';
 import { RankBadge } from '../ranking/RankBadge';
-import { getRankInfo } from '../ranking/rankUtils';
+import { formatDisplayMmr, getRankInfo, toRawMmr } from '../ranking/rankUtils';
 import { appendCacheBustParam, getStorageObjectPathFromUrl } from './profileImageUtils';
 
 export const ProfileScreen = ({
@@ -510,7 +510,7 @@ export const ProfileScreen = ({
     };
   }, [tournaments, user?.uid, user?.displayName, user?.totalMatches, user?.wins, user?.losses]);
 
-  const currentMmr = Number.isFinite(Number(user?.mmr)) ? Number(user.mmr) : 0;
+  const currentMmr = toRawMmr(user?.mmr);
   const rankInfo = getRankInfo(currentMmr);
   const rankProgress = Math.max(0, Math.min(100, Number.isFinite(rankInfo.progress) ? rankInfo.progress : 100));
   const nextRankDelta = rankInfo.nextRank ? Math.max(0, rankInfo.nextRank.min - currentMmr) : 0;
@@ -811,7 +811,7 @@ export const ProfileScreen = ({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1 text-left">
                 <div className="flex items-center gap-2.5">
-                  <span className="inline-flex rounded-full border border-primary/10 bg-primary/[0.04] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-primary/88">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-primary/90">
                     Player Profile
                   </span>
                   {notificationsEnabled && (
@@ -828,7 +828,7 @@ export const ProfileScreen = ({
                     </button>
                   )}
                 </div>
-                <h2 className="mt-3 text-[30px] leading-[0.98] font-display font-black tracking-[-0.045em] text-on-surface sm:text-[38px]">
+                <h2 className="mt-3 text-[34px] font-display font-bold leading-[1.08] tracking-[-0.02em] text-on-surface sm:text-[36px]">
                   {user?.displayName || 'Padel Player'}
                 </h2>
                 <p className="mt-1.5 text-[14px] font-semibold tracking-tight text-on-surface/66 sm:mt-2">
@@ -923,7 +923,7 @@ export const ProfileScreen = ({
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/80">Current MMR</p>
                 <p className="mt-2 text-[38px] leading-none font-display font-black tracking-[-0.05em] text-on-surface tabular-nums sm:text-[40px]">
-                  {currentMmr.toLocaleString()}
+                  {formatDisplayMmr(currentMmr)}
                 </p>
                 <p className="mt-2 text-[13px] font-medium leading-relaxed text-on-surface/68">
                   {rankInfo.nextRank
@@ -1355,4 +1355,3 @@ export const ProfileScreen = ({
     </div>
   );
 };
-

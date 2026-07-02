@@ -1,0 +1,3844 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 9179b20..b65b7be 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -41,6 +41,7 @@ import { MatchActiveScreen } from './features/matches/MatchActiveScreen';
+ import { useActiveMatchDeletionAction } from './features/matches/useActiveMatchDeletionAction';
+ import { KlasemenScreen } from './features/matches/KlasemenScreen';
+ import { MatchSettingsScreen } from './features/matches/MatchSettingsScreen';
++import { getActivePlayersFromTournament, rebuildAmericanoFutureRounds } from './features/matches/americanoScheduler';
+ import { useMatchMutationActions } from './features/matches/useMatchMutationActions';
+ import { useRoundProgressionActions } from './features/matches/useRoundProgressionActions';
+ import { TournamentHistoryCard } from './features/history/HistoryCards';
+@@ -75,9 +76,32 @@ import { useFriendMatchPickerActions } from './features/friends/useFriendMatchPi
+ import { dedupePlayersById, sortPlayersByName } from './features/matches/matchSetupUtils';
+ import { isLikelyFirebaseUid, MANUAL_PLAYER_ID_PREFIX } from './features/players/playerUtils';
+ import { usePlayerProfileSync } from './features/players/usePlayerProfileSync';
+-import { createFreshTournamentDraft, hasSetupDraftChanges, sanitizeInactivePlayerIds } from './features/tournaments/tournamentDraft';
++import { generateTournamentFromSettings } from './features/tournaments/generateTournament';
++import { createFreshTournamentDraft, hasSetupDraftChanges } from './features/tournaments/tournamentDraft';
+ import { useActiveTournamentLifecycle } from './features/tournaments/useActiveTournamentLifecycle';
+ import { useTournamentSetupActions } from './features/tournaments/useTournamentSetupActions';
++import { RoomListScreen } from './features/rooms/RoomListScreen';
++import { RoomEditorScreen } from './features/rooms/RoomEditorScreen';
++import { RoomDetailScreen } from './features/rooms/RoomDetailScreen';
++import { RoomMatchSetupScreen } from './features/rooms/RoomMatchSetupScreen';
++import { useRooms } from './features/rooms/useRooms';
++import type { FinancePaymentStatus, FinancePlayerType, Room, RoomFinancePrivate, RoomParticipant, RoomParticipantFinance, RoomSettingsSnapshot } from './features/rooms/types';
++import { buildJoinedPlayersFromRoom, buildRoomParticipantFromPlayer, buildTournamentDraftFromRoom } from './features/rooms/roomMappers';
++import { createRoom, getRoomById, removeRoomParticipant, saveRoom, upsertRoomParticipant } from './features/rooms/roomRepository';
++import {
++  buildHostFinanceMatchSnapshot,
++  buildRoomFinancePrivate,
++  buildRoomPublicPricing,
++  calculateParticipantFinances,
++  getRoomPublicPricing,
++} from './features/rooms/roomFinance';
++import {
++  getRoomFinancePrivate,
++  getRoomParticipantFinance,
++  listRoomParticipantFinances,
++  saveRoomFinanceState,
++  saveRoomFinanceStateDelta,
++} from './features/rooms/roomFinanceRepository';
+ import {
+   SHARED_MATCHES_COLLECTION,
+   TOURNAMENT_DETAILS_COLLECTION,
+@@ -108,266 +132,179 @@ const getScoreToneClass = (score: number) => {
+   return 'text-on-surface';
+ };
+ 
++type RoomShareDeliveryResult = 'copied' | 'shared' | 'manual' | 'failed';
++
++const getRoomShareBaseUrl = () => {
++  const envPublicUrl = ((import.meta as any).env?.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
++  if (envPublicUrl) {
++    const normalizedPublicUrl = envPublicUrl.startsWith('http://') || envPublicUrl.startsWith('https://')
++      ? envPublicUrl
++      : `https://${envPublicUrl}`;
++    const shareBaseUrl = new URL(normalizedPublicUrl);
++    shareBaseUrl.pathname = '/app';
++    return shareBaseUrl;
++  }
+ 
+-const ADMIN_EMAILS = ['falih.hrmn@gmail.com'];
+-
+-const isAdminEmail = (email?: string | null) => (
+-  ADMIN_EMAILS.includes((email || '').trim().toLowerCase())
+-);
++  return new URL('/app', window.location.origin);
++};
+ 
+-// Keep notification flows behind a single switch so we can restore them later
+-// without rewriting the app surface.
+-const NOTIFICATIONS_ENABLED = false;
++const buildRoomShareUrl = (roomId: string) => {
++  try {
++    const shareUrl = getRoomShareBaseUrl();
++    shareUrl.searchParams.set('room', roomId);
+ 
+-const normalizePlayerSource = (player: Player, currentUid?: string | null): Player => {
+-  const id = (player?.id || '').trim();
+-  if (!id) return player;
+-  if (player.source === 'fom' || player.source === 'manual') return player;
++    const isLocalHost = ['localhost', '127.0.0.1'].includes(shareUrl.hostname);
++    const envNetworkHost = ((import.meta as any).env?.VITE_SHARE_NETWORK_HOST as string | undefined)?.trim() || '';
++    let savedNetworkHost = '';
++    try {
++      savedNetworkHost = localStorage.getItem('fom_share_network_host') || '';
++    } catch {
++      savedNetworkHost = '';
++    }
++    const networkHost = (envNetworkHost || savedNetworkHost).trim();
+ 
+-  const inferredSource: Player['source'] =
+-    id.startsWith(MANUAL_PLAYER_ID_PREFIX)
+-      ? 'manual'
+-      : (currentUid && id === currentUid) || isLikelyFirebaseUid(id)
+-        ? 'fom'
+-        : 'manual';
++    if (isLocalHost && networkHost) {
++      shareUrl.hostname = networkHost;
++      shareUrl.protocol = 'http:';
++    }
+ 
+-  return { ...player, source: inferredSource };
++    return shareUrl.toString();
++  } catch {
++    return `${window.location.origin}/app?room=${encodeURIComponent(roomId)}`;
++  }
+ };
+ 
+-const calculateMMRChange = (isWin: boolean, scoreDiff: number, isUnderdog: boolean, isFavorite: boolean) => {
+-  let change = 0;
+-  if (isWin) {
+-    change = scoreDiff >= 10 ? 40 : 25;
+-    if (isUnderdog) change += 15;
+-  } else {
+-    change = scoreDiff >= 10 ? -35 : -20;
+-    if (isFavorite) change -= 15;
++const formatRoomShareDateTime = (scheduledFor: number) => {
++  try {
++    const date = new Date(scheduledFor);
++    const dateLabel = date.toLocaleDateString('en-US', {
++      weekday: 'short',
++      month: 'short',
++      day: 'numeric',
++    });
++    const timeLabel = date.toLocaleTimeString('en-US', {
++      hour: 'numeric',
++      minute: '2-digit',
++    });
++    return `${dateLabel} ${timeLabel}`;
++  } catch {
++    return 'Date TBA';
+   }
+-  return change;
+ };
+ 
+-const getActivePlayersFromTournament = (tournament: Tournament) => {
+-  const inactiveIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
+-  const inactiveSet = new Set(inactiveIds);
+-  return (tournament.players || []).filter((player) => !inactiveSet.has(player.id));
++const buildRoomShareText = (room: Room, roomUrl: string) => {
++  const title = String(room.title || 'FOM Room').trim();
++  const location = [room.settings.venueName, room.settings.location]
++    .filter(Boolean)
++    .join(' · ')
++    .trim();
++
++  return [
++    title,
++    `⏰ ${formatRoomShareDateTime(room.scheduledFor)}`,
++    `📍 ${(location || 'Location TBA').toUpperCase()}`,
++    '',
++    `RSVP: ${roomUrl}`,
++  ].join('\n');
+ };
+ 
+-const rebuildAmericanoFutureRounds = (
+-  tournament: Tournament,
+-  targetNumRounds: number
+-): Round[] => {
+-  const safeTarget = Math.max(1, Math.floor(targetNumRounds || 1));
+-  const currentRoundIndex = tournament.rounds.findIndex((round) => (
+-    (round.matches || []).some((match) => match.status === 'active')
+-  ));
+-  const lockedRoundCount = currentRoundIndex === -1
+-    ? Math.min(tournament.rounds.length, safeTarget)
+-    : Math.min(currentRoundIndex + 1, safeTarget);
+-
+-  const nextRounds: Round[] = tournament.rounds.slice(0, lockedRoundCount).map((round) => ({
+-    ...round,
+-    playersBye: [...(round.playersBye || [])],
+-    matches: round.matches.map((match) => ({
+-      ...match,
+-      teamA: { ...match.teamA, players: [...match.teamA.players] },
+-      teamB: { ...match.teamB, players: [...match.teamB.players] }
+-    }))
+-  }));
+-
+-  const activePlayers = getActivePlayersFromTournament(tournament);
+-  const playerMatchCounts: Record<string, number> = {};
+-  const partnerCounts: Record<string, Record<string, number>> = {};
+-  const opponentCounts: Record<string, Record<string, number>> = {};
+-  const lastPartnerByPlayer: Record<string, string | null> = {};
+-
+-  activePlayers.forEach((player) => {
+-    playerMatchCounts[player.id] = 0;
+-    partnerCounts[player.id] = {};
+-    opponentCounts[player.id] = {};
+-    lastPartnerByPlayer[player.id] = null;
+-  });
+-
+-  const getPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
+-    if (map[a.id] === undefined || map[b.id] === undefined) return 0;
+-    return map[a.id]?.[b.id] || 0;
+-  };
+-
+-  const incrementPairCount = (map: Record<string, Record<string, number>>, a: Player, b: Player) => {
+-    if (map[a.id] === undefined || map[b.id] === undefined) return;
+-    map[a.id][b.id] = (map[a.id][b.id] || 0) + 1;
+-    map[b.id][a.id] = (map[b.id][a.id] || 0) + 1;
+-  };
+-
+-  nextRounds.forEach((round) => {
+-    round.matches.forEach((match) => {
+-      const [p1, p2] = match.teamA.players;
+-      const [p3, p4] = match.teamB.players;
+-      if (!p1 || !p2 || !p3 || !p4) return;
+-
+-      [p1, p2, p3, p4].forEach((player) => {
+-        if (playerMatchCounts[player.id] === undefined) return;
+-        playerMatchCounts[player.id] = (playerMatchCounts[player.id] || 0) + 1;
+-      });
+-
+-      incrementPairCount(partnerCounts, p1, p2);
+-      incrementPairCount(partnerCounts, p3, p4);
+-      incrementPairCount(opponentCounts, p1, p3);
+-      incrementPairCount(opponentCounts, p1, p4);
+-      incrementPairCount(opponentCounts, p2, p3);
+-      incrementPairCount(opponentCounts, p2, p4);
++const sortRoomListBySchedule = (rooms: Room[]) => (
++  [...rooms].sort((a, b) => Number(a.scheduledFor || 0) - Number(b.scheduledFor || 0))
++);
+ 
+-      if (playerMatchCounts[p1.id] !== undefined && playerMatchCounts[p2.id] !== undefined) {
+-        lastPartnerByPlayer[p1.id] = p2.id;
+-        lastPartnerByPlayer[p2.id] = p1.id;
+-      }
+-      if (playerMatchCounts[p3.id] !== undefined && playerMatchCounts[p4.id] !== undefined) {
+-        lastPartnerByPlayer[p3.id] = p4.id;
+-        lastPartnerByPlayer[p4.id] = p3.id;
+-      }
+-    });
++const mergeRoomIntoList = (rooms: Room[], room?: Room | null) => {
++  if (!room?.id) return rooms;
++  const byId = new Map<string, Room>();
++  rooms.forEach((item) => {
++    if (!item?.id) return;
++    byId.set(item.id, item);
+   });
++  byId.set(room.id, room);
++  return sortRoomListBySchedule(Array.from(byId.values()));
++};
+ 
+-  const listCombinationsOf3 = (arr: Player[]) => {
+-    const combos: Player[][] = [];
+-    for (let i = 0; i < arr.length; i++) {
+-      for (let j = i + 1; j < arr.length; j++) {
+-        for (let k = j + 1; k < arr.length; k++) {
+-          combos.push([arr[i], arr[j], arr[k]]);
+-        }
+-      }
+-    }
+-    return combos;
+-  };
++const hasJoinedRoomParticipant = (room: Room, uid?: string | null) => (
++  Boolean(uid) &&
++  (room.participants || []).some((participant) => (
++    participant.status === 'joined' &&
++    (participant.uid === uid || participant.id === uid || participant.playerId === uid)
++  ))
++);
+ 
+-  const evaluateSplitPenalty = (group: Player[]) => {
+-    const splits: [number, number, number, number][] = [
+-      [0, 1, 2, 3],
+-      [0, 2, 1, 3],
+-      [0, 3, 1, 2]
+-    ];
+-    let best = {
+-      penalty: Number.POSITIVE_INFINITY,
+-      teamA: [group[0], group[1]] as [Player, Player],
+-      teamB: [group[2], group[3]] as [Player, Player]
+-    };
++const shareRoomInvite = async ({
++  text,
++}: {
++  text: string;
++}): Promise<RoomShareDeliveryResult> => {
++  try {
++    const sharePayload = { text };
++    if (navigator.share && (!navigator.canShare || navigator.canShare(sharePayload))) {
++      await navigator.share(sharePayload);
++      return 'shared';
++    }
++  } catch {
++    // fallback below
++  }
+ 
+-    for (const [a1, a2, b1, b2] of splits) {
+-      const teamA: [Player, Player] = [group[a1], group[a2]];
+-      const teamB: [Player, Player] = [group[b1], group[b2]];
+-
+-      const partnerPenaltyA =
+-        getPairCount(partnerCounts, teamA[0], teamA[1]) * 100 +
+-        (lastPartnerByPlayer[teamA[0].id] === teamA[1].id ? 180 : 0);
+-      const partnerPenaltyB =
+-        getPairCount(partnerCounts, teamB[0], teamB[1]) * 100 +
+-        (lastPartnerByPlayer[teamB[0].id] === teamB[1].id ? 180 : 0);
+-
+-      const opponentPenalty =
+-        getPairCount(opponentCounts, teamA[0], teamB[0]) * 12 +
+-        getPairCount(opponentCounts, teamA[0], teamB[1]) * 12 +
+-        getPairCount(opponentCounts, teamA[1], teamB[0]) * 12 +
+-        getPairCount(opponentCounts, teamA[1], teamB[1]) * 12;
+-
+-      const penalty = partnerPenaltyA + partnerPenaltyB + opponentPenalty;
+-      if (penalty < best.penalty) {
+-        best = { penalty, teamA, teamB };
+-      }
++  try {
++    if (navigator.clipboard?.writeText) {
++      await navigator.clipboard.writeText(text);
++      return 'copied';
+     }
++  } catch {
++    // fallback below
++  }
+ 
+-    return best;
+-  };
++  try {
++    const ta = document.createElement('textarea');
++    ta.value = text;
++    ta.style.position = 'fixed';
++    ta.style.top = '-9999px';
++    ta.style.left = '-9999px';
++    ta.style.pointerEvents = 'none';
++    document.body.appendChild(ta);
++    ta.focus();
++    ta.select();
++    ta.setSelectionRange(0, text.length);
++    const copied = document.execCommand('copy');
++    document.body.removeChild(ta);
++    if (copied) return 'copied';
++  } catch {
++    // fallback below
++  }
+ 
+-  const playersPerRound = Math.min(Math.floor(activePlayers.length / 4) * 4, tournament.courts * 4);
+-  while (nextRounds.length < safeTarget) {
+-    const roundId = nextRounds.length + 1;
+-    const sortedPlayers = [...activePlayers].sort((a, b) => {
+-      const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+-      return diff !== 0 ? diff : (Math.random() - 0.5);
+-    });
+-    const playersInRound = sortedPlayers.slice(0, playersPerRound);
+-    const playersBye = sortedPlayers.slice(playersPerRound);
+-    const roundMatches: Match[] = [];
+-
+-    if (playersPerRound > 0) {
+-      const remaining = [...playersInRound];
+-      for (let m = 0; m < playersPerRound / 4; m++) {
+-        if (remaining.length < 4) break;
+-        remaining.sort((a, b) => {
+-          const diff = (playerMatchCounts[a.id] || 0) - (playerMatchCounts[b.id] || 0);
+-          return diff !== 0 ? diff : (Math.random() - 0.5);
+-        });
++  try {
++    window.prompt('Copy this room invite:', text);
++    return 'manual';
++  } catch {
++    return 'failed';
++  }
++};
+ 
+-        const seed = remaining[0];
+-        const candidates = remaining.slice(1);
+-        const trios = listCombinationsOf3(candidates);
+-        let bestGroup: Player[] = [seed, ...candidates.slice(0, 3)];
+-        let bestPenalty = Number.POSITIVE_INFINITY;
+-
+-        trios.forEach((trio) => {
+-          const group = [seed, ...trio];
+-          const pairwisePenalty = group.reduce((sum, playerA, i) => {
+-            for (let j = i + 1; j < group.length; j++) {
+-              const playerB = group[j];
+-              const interactions =
+-                getPairCount(partnerCounts, playerA, playerB) * 16 +
+-                getPairCount(opponentCounts, playerA, playerB) * 6;
+-              sum += interactions;
+-              if (
+-                lastPartnerByPlayer[playerA.id] === playerB.id ||
+-                lastPartnerByPlayer[playerB.id] === playerA.id
+-              ) {
+-                sum += 30;
+-              }
+-            }
+-            return sum;
+-          }, 0);
+ 
+-          if (pairwisePenalty < bestPenalty) {
+-            bestPenalty = pairwisePenalty;
+-            bestGroup = group;
+-          }
+-        });
++const ADMIN_EMAILS = ['falih.hrmn@gmail.com'];
+ 
+-        const { teamA, teamB } = evaluateSplitPenalty(bestGroup);
+-        const [p1, p2] = teamA;
+-        const [p3, p4] = teamB;
+-        roundMatches.push({
+-          id: `r${roundId}-m${m + 1}`,
+-          court: m + 1,
+-          roundId,
+-          status: 'pending',
+-          teamA: { players: [p1, p2], score: 0 },
+-          teamB: { players: [p3, p4], score: 0 }
+-        });
++const isAdminEmail = (email?: string | null) => (
++  ADMIN_EMAILS.includes((email || '').trim().toLowerCase())
++);
+ 
+-        [p1, p2, p3, p4].forEach((player) => {
+-          playerMatchCounts[player.id] = (playerMatchCounts[player.id] || 0) + 1;
+-        });
+-        incrementPairCount(partnerCounts, p1, p2);
+-        incrementPairCount(partnerCounts, p3, p4);
+-        incrementPairCount(opponentCounts, p1, p3);
+-        incrementPairCount(opponentCounts, p1, p4);
+-        incrementPairCount(opponentCounts, p2, p3);
+-        incrementPairCount(opponentCounts, p2, p4);
+-        lastPartnerByPlayer[p1.id] = p2.id;
+-        lastPartnerByPlayer[p2.id] = p1.id;
+-        lastPartnerByPlayer[p3.id] = p4.id;
+-        lastPartnerByPlayer[p4.id] = p3.id;
+-
+-        const groupIds = new Set(bestGroup.map((player) => player.id));
+-        const nextRemaining = remaining.filter((player) => !groupIds.has(player.id));
+-        remaining.splice(0, remaining.length, ...nextRemaining);
+-      }
+-    }
++// Keep notification flows behind a single switch so we can restore them later
++// without rewriting the app surface.
++const NOTIFICATIONS_ENABLED = false;
+ 
+-    nextRounds.push({
+-      id: roundId,
+-      matches: roundMatches,
+-      playersBye
+-    });
+-  }
++const normalizePlayerSource = (player: Player, currentUid?: string | null): Player => {
++  const id = (player?.id || '').trim();
++  if (!id) return player;
++  if (player.source === 'fom' || player.source === 'manual') return player;
+ 
+-  return nextRounds;
++  const inferredSource: Player['source'] =
++    id.startsWith(MANUAL_PLAYER_ID_PREFIX)
++      ? 'manual'
++      : (currentUid && id === currentUid) || isLikelyFirebaseUid(id)
++        ? 'fom'
++        : 'manual';
++
++  return { ...player, source: inferredSource };
+ };
+ 
+ const { recordDbMetric, recordDbError } = createDbMetricsRecorder(trackFirestoreRoute);
+@@ -461,7 +398,12 @@ export default function App() {
+     };
+   }, [initialE2EScenario]);
+   const e2eBackgroundPlayers = useMemo<Player[]>(() => {
+-    if (initialE2EScenario !== 'background-flow' && initialE2EScenario !== 'start-match-flow') return [];
++    if (
++      initialE2EScenario !== 'background-flow' &&
++      initialE2EScenario !== 'start-match-flow' &&
++      initialE2EScenario !== 'share-flow' &&
++      initialE2EScenario !== 'shared-viewer-flow'
++    ) return [];
+     return Array.from({ length: 4 }).map((_, idx) => ({
+       id: `e2e-bg-p${idx + 1}`,
+       name: `BG Player ${idx + 1}`,
+@@ -489,6 +431,116 @@ export default function App() {
+       location: 'Jakarta Selatan'
+     };
+   }, [e2eBackgroundPlayers, initialE2EScenario]);
++  const e2eShareTournament = useMemo<Tournament | null>(() => {
++    if (initialE2EScenario !== 'share-flow' && initialE2EScenario !== 'shared-viewer-flow') return null;
++    const startedAt = Date.now() - (18 * 60 * 1000);
++    return {
++      id: 'e2e-share-flow',
++      name: 'E2E Share Flow',
++      format: 'Match Play',
++      themeColorId: 'orange',
++      criteria: 'Matches Won',
++      scoringType: 'Advantage',
++      startedAt,
++      courts: 1,
++      totalPoints: 0,
++      players: e2eBackgroundPlayers,
++      inactivePlayerIds: [],
++      rounds: [
++        {
++          id: 1,
++          matches: [
++            {
++              id: 'e2e-share-r1-m1',
++              court: 1,
++              roundId: 1,
++              status: 'active',
++              startedAt,
++              duration: '18:00',
++              teamA: { players: [e2eBackgroundPlayers[0], e2eBackgroundPlayers[1]], score: 4, sets: [4] },
++              teamB: { players: [e2eBackgroundPlayers[2], e2eBackgroundPlayers[3]], score: 3, sets: [3] }
++            }
++          ],
++          playersBye: []
++        }
++      ],
++      numRounds: 3,
++      venueName: 'E2E Court',
++      location: 'Jakarta Selatan'
++    };
++  }, [e2eBackgroundPlayers, initialE2EScenario]);
++  const e2ePublicRooms = useMemo<Room[]>(() => {
++    if (!initialE2EScenario) return [];
++    const buildFutureRoomTime = (daysFromNow: number, hour: number, minute: number) => {
++      const date = new Date(Date.now() + (daysFromNow * 24 * 60 * 60 * 1000));
++      date.setHours(hour, minute, 0, 0);
++      if (date.getTime() <= Date.now()) date.setDate(date.getDate() + 1);
++      return date.getTime();
++    };
++    return [
++      {
++        id: 'e2e-room-saturday',
++        hostUid: 'e2e-user',
++        hostDisplayName: 'E2E User',
++        title: 'Padel Sabtu Sore',
++        description: 'Public padel room for weekend players.',
++        status: 'scheduled',
++        visibility: 'public',
++        scheduledFor: buildFutureRoomTime(1, 15, 0),
++        settings: {
++          name: 'Padel Sabtu Sore',
++          format: 'Americano',
++          criteria: 'Matches Won',
++          courts: 2,
++          totalPoints: 21,
++          numRounds: 4,
++          durationMinutes: 120,
++          venueName: 'FOM Court Senayan',
++          location: 'Jaksel'
++        },
++        participants: [
++          { id: 'e2e-room-saturday-p1', displayName: 'Falih Harman', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-saturday-p2', displayName: 'Naya', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-saturday-p3', displayName: 'Bima', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-saturday-p4', displayName: 'Raka', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-saturday-p5', displayName: 'Dian', source: 'fom', status: 'joined' }
++        ],
++        minPlayers: 4,
++        maxPlayers: 8
++      },
++      {
++        id: 'e2e-room-friday',
++        hostUid: 'e2e-host-2',
++        hostDisplayName: 'Padel Yard',
++        title: 'Friday Night Padel',
++        description: 'Friendly public room after office hours.',
++        status: 'scheduled',
++        visibility: 'public',
++        scheduledFor: buildFutureRoomTime(2, 19, 0),
++        settings: {
++          name: 'Friday Night Padel',
++          format: 'Mexicano',
++          criteria: 'Matches Won',
++          courts: 2,
++          totalPoints: 21,
++          numRounds: 4,
++          durationMinutes: 90,
++          venueName: 'Padel Yard BSD',
++          location: 'Tangerang'
++        },
++        participants: [
++          { id: 'e2e-room-friday-p1', displayName: 'Mika', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-friday-p2', displayName: 'Sasha', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-friday-p3', displayName: 'Reno', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-friday-p4', displayName: 'Tara', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-friday-p5', displayName: 'Arga', source: 'fom', status: 'joined' },
++          { id: 'e2e-room-friday-p6', displayName: 'Dito', source: 'fom', status: 'joined' }
++        ],
++        minPlayers: 4,
++        maxPlayers: 8
++      }
++    ];
++  }, [initialE2EScenario]);
+   const e2eProfileHistory = useMemo<TournamentHistory[]>(() => {
+     if (initialE2EScenario !== 'profile-flow' && initialE2EScenario !== 'standings-6p') return [];
+     const currentUid = 'e2e-user';
+@@ -685,16 +737,29 @@ export default function App() {
+   const [draftMatchBackgroundId, setDraftMatchBackgroundId] = useState<string | null>(null);
+   const [activeSaveState, setActiveSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
+   const [needsRegenerateFromRound, setNeedsRegenerateFromRound] = useState<number | null>(null);
++  const [isRoomSaving, setIsRoomSaving] = useState(false);
++  const [roomEditorMode, setRoomEditorMode] = useState<'create' | 'edit'>('create');
++  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
++  const [selectedRoomFinance, setSelectedRoomFinance] = useState<RoomFinancePrivate | null>(null);
++  const [selectedRoomParticipantFinances, setSelectedRoomParticipantFinances] = useState<RoomParticipantFinance[]>([]);
++  const [isRoomFinanceSaving, setIsRoomFinanceSaving] = useState(false);
++  const [isRoomParticipantSaving, setIsRoomParticipantSaving] = useState(false);
++  const [isRoomStarting, setIsRoomStarting] = useState(false);
++  const [isRoomSetupSaving, setIsRoomSetupSaving] = useState(false);
+   const [isDocumentVisible, setIsDocumentVisible] = useState(() => (
+     typeof document === 'undefined' ? true : document.visibilityState === 'visible'
+   ));
+   const isAuthResolvedRef = useRef(false);
++  const roomLinkHydrationRef = useRef('');
+   const sharedLinkDiscoveryKeyRef = useRef('');
+   const hydratedHistoryCacheRef = useRef<string | null>(null);
+   const historySyncInFlightRef = useRef(false);
+   const lastFriendPickerSummaryRef = useRef('');
+   const hasForcedAppShellQuery = isAppShellQuery(new URLSearchParams(window.location.search));
+   const isAppShellRoute = hasForcedAppShellQuery || topLevelRoute === 'app';
++  const initialRoomLinkId = useMemo(() => (
++    new URLSearchParams(window.location.search).get('room')
++  ), []);
+   const publicRoute = (topLevelRoute === 'app' || topLevelRoute === 'blog' ? 'home' : topLevelRoute) as PublicTopLevelRoute;
+   const isArchivedMarketingRoute = !isAppShellRoute && marketingBasePath === ARCHIVE_BASE_PATH;
+   const {
+@@ -744,6 +809,7 @@ export default function App() {
+   } = useShareActions({
+     userUid: user?.uid,
+     tournament,
++    skipSharePersistence: initialE2EScenario === 'share-flow',
+     isSharedViewer,
+     sharedMatchId,
+     setSharedMatchId,
+@@ -766,6 +832,8 @@ export default function App() {
+     handleUpdateCourts,
+     handleUpdateMatchPlayScore,
+     handleSwapPlayer,
++    handleReplaceManualPlayer,
++    handleSaveRosterChanges,
+   } = useMatchMutationActions({
+     tournament,
+     needsRegenerateFromRound,
+@@ -775,7 +843,11 @@ export default function App() {
+     addNotification,
+     rebuildAmericanoFutureRounds,
+   });
+-  const { handleNextRound } = useRoundProgressionActions({
++  const {
++    handleNextRound,
++    handleStartAmericanoRound,
++    handleCompleteAmericanoRound,
++  } = useRoundProgressionActions({
+     tournament,
+     user,
+     needsRegenerateFromRound,
+@@ -799,7 +871,7 @@ export default function App() {
+   const {
+     handleGenerateTournament,
+     handleSkipMatchBackground,
+-    handleAddPlayerDuringActiveMatch,
++    handleAddPlayerDuringActiveMatch: addPlayerDuringActiveMatch,
+   } = useTournamentSetupActions({
+     tournament,
+     setTournament,
+@@ -887,6 +959,984 @@ export default function App() {
+     usersCollection: USERS_COLLECTION,
+     userFriendsCollection: USER_FRIENDS_COLLECTION,
+   });
++  const {
++    hostedRooms,
++    publicRooms,
++    loading: isRoomsLoading,
++    refresh: refreshRooms,
++  } = useRooms({
++    userUid: user?.uid,
++    enabled: isLoggedIn && isAppShellRoute && !initialE2EScenario,
++  });
++  const visibleHostedRooms = useMemo(() => {
++    if (initialE2EScenario) return [];
++    const shouldMergeSelectedRoom = Boolean(
++      selectedRoom &&
++      user?.uid &&
++      selectedRoom.hostUid === user.uid
++    );
++    return mergeRoomIntoList(hostedRooms, shouldMergeSelectedRoom ? selectedRoom : null);
++  }, [hostedRooms, initialE2EScenario, selectedRoom, user?.uid]);
++  const visiblePublicRooms = useMemo(() => {
++    if (initialE2EScenario) return e2ePublicRooms;
++    const shouldMergeSelectedRoom = Boolean(
++      selectedRoom &&
++      (
++        selectedRoom.visibility === 'public' ||
++        hasJoinedRoomParticipant(selectedRoom, user?.uid)
++      )
++    );
++    return mergeRoomIntoList(publicRooms, shouldMergeSelectedRoom ? selectedRoom : null);
++  }, [e2ePublicRooms, initialE2EScenario, publicRooms, selectedRoom, user?.uid]);
++  const visibleRoomsLoading = initialE2EScenario ? false : isRoomsLoading;
++
++  const refreshRoomFinance = async (room: Room, options?: { save?: boolean }) => {
++    const pricing = getRoomPublicPricing(room);
++    if (!pricing.enabled) {
++      setSelectedRoomFinance(null);
++      setSelectedRoomParticipantFinances([]);
++      return;
++    }
++
++    const currentUserUid = String(user?.uid || '').trim();
++    const isHost = currentUserUid && room.hostUid === currentUserUid;
++
++    if (!isHost) {
++      setSelectedRoomFinance(null);
++      if (!currentUserUid) {
++        setSelectedRoomParticipantFinances([]);
++        return;
++      }
++      try {
++        const ownFinance = await getRoomParticipantFinance(room.id, currentUserUid);
++        setSelectedRoomParticipantFinances(ownFinance ? [ownFinance] : []);
++      } catch (err) {
++        console.error('Room participant finance fetch error:', err);
++        setSelectedRoomParticipantFinances([]);
++      }
++      return;
++    }
++
++    if (initialE2EScenario && selectedRoomFinance) {
++      const calculatedAt = Date.now();
++      const nextPrivateFinance = {
++        ...selectedRoomFinance,
++        lastCalculatedAt: calculatedAt,
++      };
++      const participantFinances = calculateParticipantFinances({
++        settings: nextPrivateFinance,
++        participants: room.participants || [],
++        existingFinances: selectedRoomParticipantFinances,
++        calculatedAt,
++      });
++      setSelectedRoomFinance(nextPrivateFinance);
++      setSelectedRoomParticipantFinances(participantFinances);
++      return;
++    }
++
++    try {
++      const privateFinance = await getRoomFinancePrivate(room.id);
++      if (!privateFinance) {
++        setSelectedRoomFinance(null);
++        setSelectedRoomParticipantFinances([]);
++        return;
++      }
++
++      const existingFinances = await listRoomParticipantFinances(room.id);
++      const calculatedAt = Date.now();
++      const nextPrivateFinance = {
++        ...privateFinance,
++        lastCalculatedAt: calculatedAt,
++      };
++      const participantFinances = calculateParticipantFinances({
++        settings: nextPrivateFinance,
++        participants: room.participants || [],
++        existingFinances,
++        calculatedAt,
++      });
++      const hostSnapshot = room.status === 'scheduled'
++        ? undefined
++        : buildHostFinanceMatchSnapshot({
++            room,
++            settings: nextPrivateFinance,
++            participantFinances,
++            completedAt: typeof room.completedAt === 'number'
++              ? room.completedAt
++              : room.status === 'completed'
++                ? calculatedAt
++                : undefined,
++          });
++
++      if (options?.save === true) {
++        await saveRoomFinanceStateDelta({
++          roomId: room.id,
++          privateFinance: nextPrivateFinance,
++          participantFinances,
++          previousParticipantFinances: existingFinances,
++          hostSnapshot,
++        });
++      }
++
++      setSelectedRoomFinance(nextPrivateFinance);
++      setSelectedRoomParticipantFinances(participantFinances);
++    } catch (err) {
++      console.error('Room finance fetch error:', err);
++      setSelectedRoomFinance(null);
++      setSelectedRoomParticipantFinances([]);
++    }
++  };
++
++  const handleAddPlayerDuringActiveMatch = (newPlayer: Player) => {
++    addPlayerDuringActiveMatch(newPlayer);
++
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    const pricing = room ? getRoomPublicPricing(room) : null;
++    if (
++      !room ||
++      !currentUserUid ||
++      room.hostUid !== currentUserUid ||
++      room.status !== 'in_progress' ||
++      !pricing?.enabled
++    ) {
++      return;
++    }
++
++    void (async () => {
++      try {
++        const participant = buildRoomParticipantFromPlayer(newPlayer, {
++          status: 'joined',
++          joinedAt: Date.now(),
++        });
++        const nextParticipants = [
++          ...(room.participants || []).filter((item) => item.id !== participant.id),
++          participant,
++        ];
++        const nextRoom = {
++          ...room,
++          participants: nextParticipants,
++        };
++
++        await saveRoom(room.id, { participants: nextParticipants });
++        setSelectedRoom(nextRoom);
++        await refreshRoomFinance(nextRoom, { save: true });
++        await refreshRooms();
++      } catch (err) {
++        console.error('Active room participant finance sync error:', err);
++      }
++    })();
++  };
++
++  const handleCreateRoom = async ({
++    title,
++    description,
++    visibility,
++    scheduledFor,
++    format,
++    criteria,
++    scoringType,
++    courts,
++    numRounds,
++    durationMinutes,
++    maxPlayers,
++    venueName,
++    location,
++    feeEnabled,
++    feeAmount,
++    courtCostPerCourt,
++    ballCost,
++    publicPrice,
++    includeHostInFriendSplit,
++    invitedParticipants,
++  }: {
++    title: string;
++    description: string;
++    visibility: 'private' | 'friends' | 'public';
++    scheduledFor: number;
++    format: Tournament['format'];
++    criteria: Tournament['criteria'];
++    scoringType?: Tournament['scoringType'];
++    courts: number;
++    numRounds: number;
++    durationMinutes: number;
++    maxPlayers: number;
++    venueName: string;
++    location: string;
++    feeEnabled: boolean;
++    feeAmount: number;
++    courtCostPerCourt: number;
++    ballCost: number;
++    publicPrice: number;
++    includeHostInFriendSplit: boolean;
++    invitedParticipants: RoomParticipant[];
++  }) => {
++    const hostUid = String(user?.uid || '').trim();
++    if (!hostUid) {
++      addNotification('Login Required', 'Please log in first to create a room.', 'system');
++      throw new Error('Login required to create a room.');
++    }
++
++    setIsRoomSaving(true);
++    try {
++      const hostParticipant: RoomParticipant = {
++        id: hostUid,
++        uid: hostUid,
++        playerId: hostUid,
++        displayName: user?.displayName || 'Host',
++        avatar: user?.photoURL || '',
++        initials: (user?.displayName || 'Host')
++          .split(' ')
++          .filter(Boolean)
++          .map((part: string) => part[0])
++          .join('')
++          .slice(0, 2)
++          .toUpperCase() || 'HO',
++        rating: Number(user?.mmr || 0),
++        source: 'host',
++        status: 'joined',
++        joinedAt: Date.now(),
++      };
++      const roomDraft: Omit<Room, 'id' | 'createdAt' | 'updatedAt'> = {
++        hostUid,
++        hostDisplayName: user?.displayName || 'Host',
++        title,
++        description,
++        status: 'scheduled',
++        visibility,
++        scheduledFor,
++        settings: {
++          name: title,
++          format,
++          criteria,
++          scoringType: format === 'Match Play' ? scoringType : undefined,
++          courts,
++          totalPoints: format === 'Match Play' ? 0 : 21,
++          numRounds,
++          durationMinutes,
++          venueName,
++          location,
++        },
++        participants: [hostParticipant, ...(invitedParticipants || [])],
++        minPlayers: 4,
++        maxPlayers,
++        pricing: buildRoomPublicPricing({
++          enabled: feeEnabled,
++          publicPrice: publicPrice || feeAmount,
++        }),
++        feeEnabled,
++        feeAmount: feeEnabled ? (publicPrice || feeAmount) : 0,
++      };
++
++      if (initialE2EScenario) {
++        await new Promise((resolve) => setTimeout(resolve, 350));
++        const createdRoom = {
++          ...roomDraft,
++          id: `e2e-created-room-${Date.now()}`,
++        };
++        addNotification('Room Created', `${title} has been scheduled successfully.`, 'system');
++        return createdRoom;
++      }
++
++      const roomId = await createRoom(roomDraft);
++      if (feeEnabled) {
++        try {
++          const privateFinance = buildRoomFinancePrivate({
++            roomId,
++            hostUid,
++            enabled: feeEnabled,
++            courtCostPerCourt,
++            courtCount: roomDraft.settings.courts,
++            ballCost,
++            publicPrice: publicPrice || feeAmount,
++            includeHostInFriendSplit,
++          });
++          const participantFinances = calculateParticipantFinances({
++            settings: privateFinance,
++            participants: roomDraft.participants,
++          });
++          await saveRoomFinanceState({
++            roomId,
++            privateFinance,
++            participantFinances,
++          });
++        } catch (financeErr) {
++          console.error('Create room finance setup error:', financeErr);
++          addNotification('Pricing Setup Pending', 'The room was created, but payment tracking could not be initialized yet.', 'system', 'error');
++        }
++      }
++      let createdRoom: Room = { ...roomDraft, id: roomId };
++      try {
++        await refreshRooms();
++        createdRoom = await getRoomById(roomId) || createdRoom;
++        if (feeEnabled) {
++          await refreshRoomFinance(createdRoom, { save: false });
++        }
++      } catch (postCreateErr) {
++        console.error('Create room post-save refresh error:', postCreateErr);
++      }
++      addNotification('Room Created', `${title} has been scheduled successfully.`, 'system');
++      return createdRoom;
++    } catch (err) {
++      console.error('Create room error:', err);
++      addNotification('Create Room Failed', 'There was a problem creating the room. Please try again.', 'system', 'error');
++      throw err;
++    } finally {
++      setIsRoomSaving(false);
++    }
++  };
++
++  const syncSelectedRoomById = async (roomId: string) => {
++    const freshRoom = await getRoomById(roomId);
++    if (freshRoom) {
++      setSelectedRoom(freshRoom);
++    }
++  };
++
++  useEffect(() => {
++    if (!selectedRoom || screen !== 'room-detail') {
++      setSelectedRoomFinance(null);
++      setSelectedRoomParticipantFinances([]);
++      return;
++    }
++    void refreshRoomFinance(selectedRoom);
++  }, [screen, selectedRoom?.id, selectedRoom?.participants?.length, selectedRoom?.status, user?.uid]);
++
++  const handleJoinRoom = async () => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid) {
++      addNotification('Login Required', 'Please log in first to join a room.', 'system');
++      return;
++    }
++    if (room.hostUid === currentUserUid) return;
++
++    setIsRoomParticipantSaving(true);
++    try {
++      await upsertRoomParticipant(room.id, {
++        id: currentUserUid,
++        uid: currentUserUid,
++        playerId: currentUserUid,
++        displayName: user?.displayName || 'Player',
++        avatar: user?.photoURL || '',
++        initials: (user?.displayName || 'Player')
++          .split(' ')
++          .filter(Boolean)
++          .map((part: string) => part[0])
++          .join('')
++          .slice(0, 2)
++          .toUpperCase() || 'PL',
++        rating: Number(user?.mmr || 0),
++        source: 'fom',
++        status: 'joined',
++        joinedAt: Date.now(),
++      });
++      await Promise.all([
++        refreshRooms(),
++        syncSelectedRoomById(room.id),
++      ]);
++      addNotification('Joined Room', `You joined ${room.title}.`, 'system');
++    } catch (err) {
++      console.error('Join room error:', err);
++      addNotification('Join Failed', 'There was a problem joining this room.', 'system', 'error');
++    } finally {
++      setIsRoomParticipantSaving(false);
++    }
++  };
++
++  const handleLeaveRoom = async () => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid) {
++      addNotification('Login Required', 'Please log in first to leave a room.', 'system');
++      return;
++    }
++    if (room.hostUid === currentUserUid) return;
++
++    setIsRoomParticipantSaving(true);
++    try {
++      await removeRoomParticipant(room.id, currentUserUid);
++      await Promise.all([
++        refreshRooms(),
++        syncSelectedRoomById(room.id),
++      ]);
++      addNotification('Left Room', `You left ${room.title}.`, 'system');
++    } catch (err) {
++      console.error('Leave room error:', err);
++      addNotification('Leave Failed', 'There was a problem leaving this room.', 'system', 'error');
++    } finally {
++      setIsRoomParticipantSaving(false);
++    }
++  };
++
++  const handleUpdateRoomFromDetail = async ({
++    title,
++    description,
++    visibility,
++    scheduledFor,
++    venueName,
++    location,
++    maxPlayers,
++    pricingEnabled,
++    courtCount,
++    courtCostPerCourt,
++    ballCost,
++    publicPrice,
++    includeHostInFriendSplit,
++  }: {
++    title: string;
++    description: string;
++    visibility: Room['visibility'];
++    scheduledFor: number;
++    venueName: string;
++    location: string;
++    maxPlayers: number;
++    pricingEnabled: boolean;
++    courtCount: number;
++    courtCostPerCourt: number;
++    ballCost: number;
++    publicPrice: number;
++    includeHostInFriendSplit: boolean;
++  }) => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
++      addNotification('Host Only', 'Only the room host can edit this room.', 'system', 'error');
++      return;
++    }
++
++    const nextSettings: RoomSettingsSnapshot = {
++      ...room.settings,
++      name: title,
++      courts: Math.max(1, courtCount),
++      venueName,
++      location,
++    };
++    const nextPricing = buildRoomPublicPricing({
++      enabled: pricingEnabled,
++      publicPrice,
++    });
++    const nextRoom: Room = {
++      ...room,
++      title,
++      description,
++      visibility,
++      scheduledFor,
++      settings: nextSettings,
++      maxPlayers: Math.max(4, maxPlayers),
++      pricing: nextPricing,
++      feeEnabled: pricingEnabled,
++      feeAmount: pricingEnabled ? publicPrice : 0,
++    };
++
++    setIsRoomSaving(true);
++    try {
++      if (!initialE2EScenario) {
++        await saveRoom(room.id, {
++          title: nextRoom.title,
++          description: nextRoom.description,
++          visibility: nextRoom.visibility,
++          scheduledFor: nextRoom.scheduledFor,
++          settings: nextRoom.settings,
++          maxPlayers: nextRoom.maxPlayers,
++          pricing: nextRoom.pricing,
++          feeEnabled: nextRoom.feeEnabled,
++          feeAmount: nextRoom.feeAmount,
++        });
++      }
++
++      if (pricingEnabled) {
++        const calculatedAt = Date.now();
++        const existingFinances = initialE2EScenario
++          ? selectedRoomParticipantFinances
++          : await listRoomParticipantFinances(room.id);
++        const privateFinance = buildRoomFinancePrivate({
++          roomId: room.id,
++          hostUid: currentUserUid,
++          enabled: true,
++          courtCostPerCourt,
++          courtCount,
++          ballCost,
++          publicPrice,
++          includeHostInFriendSplit,
++          calculatedAt,
++        });
++        const participantFinances = calculateParticipantFinances({
++          settings: privateFinance,
++          participants: nextRoom.participants || [],
++          existingFinances,
++          calculatedAt,
++        });
++        const hostSnapshot = nextRoom.status === 'scheduled'
++          ? undefined
++          : buildHostFinanceMatchSnapshot({
++              room: nextRoom,
++              settings: privateFinance,
++              participantFinances,
++              completedAt: typeof nextRoom.completedAt === 'number'
++                ? nextRoom.completedAt
++                : nextRoom.status === 'completed'
++                  ? calculatedAt
++                  : undefined,
++            });
++
++        if (!initialE2EScenario) {
++          await saveRoomFinanceState({
++            roomId: room.id,
++            privateFinance,
++            participantFinances,
++            hostSnapshot,
++          });
++        }
++        setSelectedRoomFinance(privateFinance);
++        setSelectedRoomParticipantFinances(participantFinances);
++      } else {
++        setSelectedRoomFinance(null);
++        setSelectedRoomParticipantFinances([]);
++      }
++
++      setSelectedRoom(nextRoom);
++      if (!initialE2EScenario) {
++        await refreshRooms();
++      }
++      addNotification('Room Updated', `${title} has been updated.`, 'system', 'success');
++    } catch (err) {
++      console.error('Update room error:', err);
++      addNotification('Update Failed', 'There was a problem updating this room.', 'system', 'error');
++    } finally {
++      setIsRoomSaving(false);
++    }
++  };
++
++  const handleAddRoomParticipant = async (participant: RoomParticipant) => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
++      addNotification('Host Only', 'Only the room host can add players.', 'system', 'error');
++      return;
++    }
++
++    const joinedCount = (room.participants || []).filter((item) => item.status === 'joined').length;
++    if (room.maxPlayers && joinedCount >= room.maxPlayers && !(room.participants || []).some((item) => item.id === participant.id)) {
++      addNotification('Room Full', 'Increase player slots before adding more players.', 'system', 'error');
++      return;
++    }
++
++    const nextParticipant: RoomParticipant = {
++      ...participant,
++      status: 'joined',
++      joinedAt: participant.joinedAt || Date.now(),
++    };
++    const nextParticipants = [
++      ...(room.participants || []).filter((item) => item.id !== nextParticipant.id),
++      nextParticipant,
++    ];
++    const nextRoom = {
++      ...room,
++      participants: nextParticipants,
++    };
++
++    setIsRoomParticipantSaving(true);
++    try {
++      if (!initialE2EScenario) {
++        await upsertRoomParticipant(room.id, nextParticipant);
++      }
++      setSelectedRoom(nextRoom);
++      await refreshRoomFinance(nextRoom, { save: true });
++      if (!initialE2EScenario) {
++        await refreshRooms();
++      }
++      addNotification('Player Added', `${nextParticipant.displayName} joined this room.`, 'system', 'success');
++    } catch (err) {
++      console.error('Add room participant error:', err);
++      addNotification('Add Player Failed', 'There was a problem adding this player.', 'system', 'error');
++    } finally {
++      setIsRoomParticipantSaving(false);
++    }
++  };
++
++  const handleRemoveRoomParticipant = async (participantId: string) => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
++      addNotification('Host Only', 'Only the room host can remove players.', 'system', 'error');
++      return;
++    }
++    if (participantId === currentUserUid || (room.participants || []).some((item) => item.id === participantId && item.source === 'host')) {
++      addNotification('Host Locked', 'The host cannot be removed from the room.', 'system', 'error');
++      return;
++    }
++
++    const removedParticipant = (room.participants || []).find((item) => item.id === participantId);
++    const nextRoom = {
++      ...room,
++      participants: (room.participants || []).filter((item) => item.id !== participantId),
++    };
++
++    setIsRoomParticipantSaving(true);
++    try {
++      if (!initialE2EScenario) {
++        await removeRoomParticipant(room.id, participantId);
++      }
++      setSelectedRoom(nextRoom);
++      await refreshRoomFinance(nextRoom, { save: true });
++      if (!initialE2EScenario) {
++        await refreshRooms();
++      }
++      addNotification('Player Removed', `${removedParticipant?.displayName || 'Player'} was removed from this room.`, 'system', 'success');
++    } catch (err) {
++      console.error('Remove room participant error:', err);
++      addNotification('Remove Failed', 'There was a problem removing this player.', 'system', 'error');
++    } finally {
++      setIsRoomParticipantSaving(false);
++    }
++  };
++
++  const handleUpdateRoomParticipantFinance = async (
++    participantId: string,
++    patch: {
++      playerType?: FinancePlayerType;
++      paymentStatus?: FinancePaymentStatus;
++    }
++  ) => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
++      addNotification('Host Only', 'Only the room host can update payment tracking.', 'system', 'error');
++      return;
++    }
++
++    const privateFinance = selectedRoomFinance || await getRoomFinancePrivate(room.id);
++    if (!privateFinance) {
++      addNotification('Pricing Missing', 'Set pricing before updating payment tracking.', 'system', 'error');
++      return;
++    }
++
++    setIsRoomFinanceSaving(true);
++    try {
++      const existingFinances = selectedRoomParticipantFinances.length > 0
++        ? selectedRoomParticipantFinances
++        : await listRoomParticipantFinances(room.id);
++      const calculatedAt = Date.now();
++      const baseFinances = calculateParticipantFinances({
++        settings: privateFinance,
++        participants: room.participants || [],
++        existingFinances,
++        calculatedAt,
++      });
++      const patchedFinances = baseFinances.map((finance) => {
++        if (finance.participantId !== participantId) return finance;
++        const paymentStatus = patch.paymentStatus || finance.paymentStatus;
++        return {
++          ...finance,
++          ...patch,
++          paymentStatus,
++          paidAt: paymentStatus === 'paid' ? (finance.paidAt || calculatedAt) : finance.paidAt,
++          markedPaidBy: paymentStatus === 'paid' ? currentUserUid : finance.markedPaidBy,
++        };
++      });
++      const nextPrivateFinance = {
++        ...privateFinance,
++        lastCalculatedAt: calculatedAt,
++      };
++      const nextParticipantFinances = calculateParticipantFinances({
++        settings: nextPrivateFinance,
++        participants: room.participants || [],
++        existingFinances: patchedFinances,
++        calculatedAt,
++      });
++      const hostSnapshot = room.status === 'scheduled'
++        ? undefined
++        : buildHostFinanceMatchSnapshot({
++            room,
++            settings: nextPrivateFinance,
++            participantFinances: nextParticipantFinances,
++            completedAt: typeof room.completedAt === 'number'
++              ? room.completedAt
++              : room.status === 'completed'
++                ? calculatedAt
++                : undefined,
++          });
++
++      await saveRoomFinanceStateDelta({
++        roomId: room.id,
++        privateFinance: nextPrivateFinance,
++        participantFinances: nextParticipantFinances,
++        previousParticipantFinances: existingFinances,
++        hostSnapshot,
++      });
++
++      setSelectedRoomFinance(nextPrivateFinance);
++      setSelectedRoomParticipantFinances(nextParticipantFinances);
++    } catch (err) {
++      console.error('Update room participant finance error:', err);
++      addNotification('Payment Update Failed', 'There was a problem updating payment tracking.', 'system', 'error');
++    } finally {
++      setIsRoomFinanceSaving(false);
++    }
++  };
++
++  const handleSaveRoomParticipantChanges = async ({
++    participants,
++    participantFinances,
++  }: {
++    participants: RoomParticipant[];
++    participantFinances: RoomParticipantFinance[];
++  }) => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid || room.hostUid !== currentUserUid) {
++      addNotification('Host Only', 'Only the room host can save participant changes.', 'system', 'error');
++      throw new Error('Only host can save participant changes.');
++    }
++
++    const joinedCount = (participants || []).filter((participant) => participant.status === 'joined').length;
++    if (room.maxPlayers && joinedCount > room.maxPlayers) {
++      addNotification('Room Full', 'Reduce players or increase player slots before saving.', 'system', 'error');
++      throw new Error('Room exceeds max players.');
++    }
++
++    const nextRoom: Room = {
++      ...room,
++      participants,
++    };
++    const pricing = getRoomPublicPricing(room);
++
++    setIsRoomParticipantSaving(true);
++    setIsRoomFinanceSaving(true);
++    try {
++      let nextPrivateFinance = selectedRoomFinance;
++      let nextParticipantFinances = participantFinances;
++
++      if (pricing.enabled) {
++        const privateFinance = selectedRoomFinance || await getRoomFinancePrivate(room.id);
++        if (!privateFinance) {
++          addNotification('Pricing Missing', 'Set pricing before saving participant payment changes.', 'system', 'error');
++          throw new Error('Pricing private finance is missing.');
++        }
++
++        const calculatedAt = Date.now();
++        nextPrivateFinance = {
++          ...privateFinance,
++          lastCalculatedAt: calculatedAt,
++        };
++        nextParticipantFinances = calculateParticipantFinances({
++          settings: nextPrivateFinance,
++          participants,
++          existingFinances: participantFinances,
++          calculatedAt,
++        });
++        const hostSnapshot = room.status === 'scheduled'
++          ? undefined
++          : buildHostFinanceMatchSnapshot({
++              room: nextRoom,
++              settings: nextPrivateFinance,
++              participantFinances: nextParticipantFinances,
++              completedAt: typeof nextRoom.completedAt === 'number'
++                ? nextRoom.completedAt
++                : nextRoom.status === 'completed'
++                  ? calculatedAt
++                  : undefined,
++            });
++
++        if (!initialE2EScenario) {
++          await saveRoomFinanceStateDelta({
++            roomId: room.id,
++            roomPatch: { participants },
++            privateFinance: nextPrivateFinance,
++            participantFinances: nextParticipantFinances,
++            previousParticipantFinances: selectedRoomParticipantFinances,
++            hostSnapshot,
++          });
++        }
++      } else if (!initialE2EScenario) {
++        await saveRoom(room.id, { participants });
++      }
++
++      setSelectedRoom(nextRoom);
++      setSelectedRoomFinance(nextPrivateFinance);
++      setSelectedRoomParticipantFinances(nextParticipantFinances);
++      if (!initialE2EScenario) {
++        await refreshRooms();
++      }
++      addNotification('Participants Saved', 'Participant and payment changes have been saved.', 'system', 'success');
++    } catch (err) {
++      console.error('Save room participant changes error:', err);
++      addNotification('Save Failed', 'There was a problem saving participant changes.', 'system', 'error');
++      throw err;
++    } finally {
++      setIsRoomParticipantSaving(false);
++      setIsRoomFinanceSaving(false);
++    }
++  };
++
++  const handleStartRoom = async () => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid) {
++      addNotification('Login Required', 'Please log in first to start a room.', 'system');
++      return;
++    }
++    if (room.hostUid !== currentUserUid) {
++      addNotification('Host Only', 'Only the room host can start this room.', 'system', 'error');
++      return;
++    }
++    if (!room.matchSetupConfiguredAt) {
++      addNotification('Setup Required', 'Configure the match setup before starting this room.', 'system', 'error');
++      setScreen('room-setup');
++      return;
++    }
++
++    const joinedPlayers = buildJoinedPlayersFromRoom(room.participants || []);
++    const minPlayers = Math.max(4, Number(room.minPlayers || 4));
++    if (joinedPlayers.length < minPlayers) {
++      addNotification('Not Enough Players', `This room needs at least ${minPlayers} joined players before it can start.`, 'system', 'error');
++      return;
++    }
++
++    setIsRoomStarting(true);
++    try {
++      const tournamentDraft = buildTournamentDraftFromRoom({
++        baseTournament: createFreshTournamentDraft(),
++        players: joinedPlayers,
++        settings: room.settings,
++      });
++      const launchedTournament = generateTournamentFromSettings(tournamentDraft);
++
++      setSharedMatchId(null);
++      setTournament(launchedTournament);
++      setDraftMatchBackgroundId(room.settings.backgroundId || null);
++      setNeedsRegenerateFromRound(null);
++      setSelectedKlasemenTournament(null);
++      setActiveScreenTournament(null);
++      setActiveBackScreen('dashboard');
++
++      await persistActiveTournamentSnapshot(launchedTournament);
++      await saveRoom(room.id, {
++        status: 'in_progress',
++        launchedTournamentId: launchedTournament.id,
++        launchPayload: {
++          roomId: room.id,
++          launchedAt: Date.now(),
++          launchedBy: currentUserUid,
++          tournamentDraft: launchedTournament,
++        },
++      });
++      await Promise.all([
++        refreshRooms(),
++        syncSelectedRoomById(room.id),
++      ]);
++
++      setScreen('active');
++      addNotification('Room Started', `${room.title} is now live.`, 'system');
++    } catch (err) {
++      console.error('Start room error:', err);
++      addNotification('Start Room Failed', 'There was a problem starting this room.', 'system', 'error');
++    } finally {
++      setIsRoomStarting(false);
++    }
++  };
++
++  const handleSaveRoomMatchSetup = async (settings: RoomSettingsSnapshot) => {
++    const room = selectedRoom;
++    const currentUserUid = String(user?.uid || '').trim();
++    if (!room || !currentUserUid) {
++      addNotification('Login Required', 'Please log in first to configure this room.', 'system');
++      return;
++    }
++    if (room.hostUid !== currentUserUid) {
++      addNotification('Host Only', 'Only the room host can configure match setup.', 'system', 'error');
++      return;
++    }
++
++    setIsRoomSetupSaving(true);
++    try {
++      const nextRoomPatch = {
++        settings,
++        matchSetupConfiguredAt: Date.now(),
++      };
++
++      if (initialE2EScenario) {
++        await new Promise((resolve) => setTimeout(resolve, 300));
++        setSelectedRoom((prev) => prev ? { ...prev, ...nextRoomPatch } : prev);
++        addNotification('Setup Saved', 'Match setup has been saved for this room.', 'system', 'success');
++        setScreen('room-detail');
++        return;
++      }
++
++      await saveRoom(room.id, nextRoomPatch);
++      const existingFinance = await getRoomFinancePrivate(room.id);
++      if (existingFinance?.enabled) {
++        const nextRoom = {
++          ...room,
++          ...nextRoomPatch,
++        };
++        const nextPrivateFinance = buildRoomFinancePrivate({
++          roomId: room.id,
++          hostUid: currentUserUid,
++          enabled: true,
++          courtCostPerCourt: existingFinance.courtCostPerCourt,
++          courtCount: settings.courts,
++          ballCost: existingFinance.ballCost,
++          publicPrice: existingFinance.publicPrice,
++          includeHostInFriendSplit: existingFinance.includeHostInFriendSplit,
++        });
++        const existingFinances = await listRoomParticipantFinances(room.id);
++        const participantFinances = calculateParticipantFinances({
++          settings: nextPrivateFinance,
++          participants: room.participants || [],
++          existingFinances,
++        });
++        const hostSnapshot = room.status === 'scheduled'
++          ? undefined
++          : buildHostFinanceMatchSnapshot({
++              room: nextRoom,
++              settings: nextPrivateFinance,
++              participantFinances,
++              completedAt: typeof room.completedAt === 'number' ? room.completedAt : undefined,
++            });
++        await saveRoomFinanceState({
++          roomId: room.id,
++          privateFinance: nextPrivateFinance,
++          participantFinances,
++          hostSnapshot,
++        });
++      }
++      await Promise.all([
++        refreshRooms(),
++        syncSelectedRoomById(room.id),
++      ]);
++      addNotification('Setup Saved', 'Match setup has been saved for this room.', 'system', 'success');
++      setScreen('room-detail');
++    } catch (err) {
++      console.error('Save room setup error:', err);
++      addNotification('Setup Save Failed', 'There was a problem saving this match setup.', 'system', 'error');
++    } finally {
++      setIsRoomSetupSaving(false);
++    }
++  };
++
++  const handleShareRoom = async (room: Room) => {
++    try {
++      const roomUrl = buildRoomShareUrl(room.id);
++      const shareText = buildRoomShareText(room, roomUrl);
++      const shareResult = await shareRoomInvite({
++        text: shareText,
++      });
++
++      if (shareResult === 'copied') {
++        showShareFeedbackToast('success', 'Room invite copied.');
++        return;
++      }
++      if (shareResult === 'shared' || shareResult === 'manual') {
++        showShareFeedbackToast('ready', 'Room invite is ready to share.');
++        return;
++      }
++      showShareFeedbackToast('failed', 'Unable to share this room link right now.');
++    } catch (err) {
++      console.error('Share room error:', err);
++      showShareFeedbackToast('failed', 'Unable to share this room link right now.');
++    }
++  };
+ 
+   const navigateTopLevel = (nextRoute: TopLevelRoute) => {
+     const nextPath = getTopLevelPath(nextRoute, nextRoute === 'app' || nextRoute === 'blog' ? '' : marketingBasePath);
+@@ -1022,7 +2072,51 @@ export default function App() {
+       setTournament(e2eBackgroundTournament);
+       setDraftMatchBackgroundId(null);
+       setMatchSettingsWizardStep(0);
+-      setScreen('dashboard');
++      setScreen(new URLSearchParams(window.location.search).get('screen') === 'rooms' ? 'rooms' : 'dashboard');
++      return;
++    }
++
++    if (initialE2EScenario === 'share-flow' && e2eShareTournament) {
++      setIsSharedViewer(false);
++      setSharedMatchId('e2eshare');
++      setLinkedShareIds(['e2eshare']);
++      setIsSharedDataReady(true);
++      setUser({ uid: 'e2e-user', displayName: 'E2E User', mmr: 1500 });
++      setIsLoggedIn(true);
++      setIsAuthChecked(true);
++      setTournaments([]);
++      setSelectedHistory(null);
++      setSelectedKlasemenTournament(null);
++      setAllPlayers(e2eBackgroundPlayers);
++      setTournament(e2eShareTournament);
++      setActiveScreenTournament(null);
++      setActiveBackScreen('dashboard');
++      setKlasemenBackScreen('active');
++      setScreen('active');
++      return;
++    }
++
++    if (initialE2EScenario === 'shared-viewer-flow' && e2eShareTournament) {
++      const sharedView = new URLSearchParams(window.location.search).get('view') === 'klasemen'
++        ? 'klasemen'
++        : 'active';
++      setIsSharedViewer(true);
++      setSharedMatchId(null);
++      setLinkedShareIds([]);
++      setIsSharedDataReady(true);
++      setUser(null);
++      setIsLoggedIn(false);
++      setIsAuthChecked(true);
++      setTournaments([]);
++      setSelectedHistory(null);
++      setSelectedKlasemenTournament(null);
++      setAllPlayers(e2eBackgroundPlayers);
++      setTournament(e2eShareTournament);
++      setActiveScreenTournament(null);
++      setActiveBackScreen('dashboard');
++      setKlasemenBackScreen('active');
++      setSharedTargetScreen(sharedView);
++      setScreen(sharedView);
+       return;
+     }
+ 
+@@ -1102,6 +2196,7 @@ export default function App() {
+     e2eBackgroundPlayers,
+     e2eBackgroundTournament,
+     e2eFinishedHistory,
++    e2eShareTournament,
+     initialE2EScenario,
+     isSharedViewer,
+     sharedTargetScreen
+@@ -1110,6 +2205,7 @@ export default function App() {
+   useAuthBootstrap({
+     disabled: Boolean(initialE2EScenario),
+     isSharedViewer,
++    hasRoomLinkTarget: Boolean(initialRoomLinkId),
+     sharedTargetScreen,
+     hydratedHistoryCacheRef,
+     isAuthResolvedRef,
+@@ -1134,6 +2230,47 @@ export default function App() {
+     setHasResolvedInitialHistoryHydration,
+   });
+ 
++  useEffect(() => {
++    const roomId = String(initialRoomLinkId || '').trim();
++    if (!roomId || initialE2EScenario || !isAppShellRoute || !isAuthChecked) return;
++    if (roomLinkHydrationRef.current === roomId) return;
++    roomLinkHydrationRef.current = roomId;
++
++    let cancelled = false;
++    const hydrateRoomLink = async () => {
++      try {
++        const linkedRoom = await getRoomById(roomId);
++        if (cancelled) return;
++        if (!linkedRoom) {
++          addNotification('Room Not Found', 'This room link is no longer available.', 'system', 'error');
++          return;
++        }
++        setSelectedRoom(linkedRoom);
++        setScreen('room-detail');
++      } catch (err) {
++        if (cancelled) return;
++        console.error('Open room link error:', err);
++        addNotification('Room Link Failed', 'There was a problem opening this room link.', 'system', 'error');
++      }
++    };
++
++    void hydrateRoomLink();
++    return () => {
++      cancelled = true;
++    };
++  }, [
++    addNotification,
++    initialE2EScenario,
++    initialRoomLinkId,
++    isAppShellRoute,
++    isAuthChecked,
++  ]);
++
++  useEffect(() => {
++    if (!initialRoomLinkId || !isLoggedIn || !selectedRoom || screen !== 'login') return;
++    setScreen('room-detail');
++  }, [initialRoomLinkId, isLoggedIn, screen, selectedRoom]);
++
+   useAppShellNavigation({
+     isAppShellRoute,
+     isLoggedIn,
+@@ -1232,10 +2369,12 @@ export default function App() {
+         currentUser={null}
+         onUpdateScore={() => { }}
+         onNextRound={() => { }}
++        onStartAmericanoRound={() => { }}
++        onCompleteAmericanoRound={() => { }}
+         onUpdateRounds={() => false}
+         onUpdateCourts={() => false}
+-        onUpdateActivePlayers={() => { }}
+         onAddManualPlayer={() => { }}
++        onSaveRosterChanges={() => { }}
+         onDeleteRoundsFrom={() => { }}
+         onDeleteMatch={() => { }}
+         needsRegenerateFromRound={null}
+@@ -1296,10 +2435,6 @@ export default function App() {
+               setMatchSettingsWizardStep(0);
+               setScreen('settings');
+             }}
+-            onOpenRankingForMe={() => {
+-              setRankingFocusRequestId((prev) => prev + 1);
+-              setScreen('leaderboard');
+-            }}
+             tournament={tournament}
+             onContinueMatch={() => {
+               setActiveScreenTournament(null);
+@@ -1314,19 +2449,21 @@ export default function App() {
+               setHistoryBackScreen('dashboard');
+               setScreen('history');
+             }}
++            onOpenRooms={() => setScreen('rooms')}
++            onOpenRoom={(room) => {
++              setSelectedRoom(room);
++              setScreen('room-detail');
++            }}
+             onOpenHistoryMatch={(t) => handleOpenHistoryTournament(t, 'dashboard')}
+             notificationsEnabled={NOTIFICATIONS_ENABLED}
+             unreadCount={unreadNotificationsCount}
+             tournaments={tournaments}
++            hostedRooms={visibleHostedRooms}
++            publicRooms={visiblePublicRooms}
+             user={user}
+             isHistoryLoading={isHistoryLoadingForUi}
++            isRoomsLoading={visibleRoomsLoading}
+             renderLogo={(className) => <AppLogo className={className} />}
+-            renderHistoryCard={(item, onClick) => (
+-              <TournamentHistoryCard
+-                tournament={item}
+-                onClick={onClick}
+-              />
+-            )}
+           />
+         )}
+         {screen === 'leaderboard' && (
+@@ -1370,6 +2507,7 @@ export default function App() {
+               setActiveBackScreen('dashboard');
+               setScreen(historyBackScreen);
+             }}
++            onShareStandings={() => handleShareStandings(selectedHistory)}
+             onViewFinalStandings={handleOpenHistoryFinalStandings}
+             onViewMatchDetails={handleOpenHistoryMatchDetails}
+           />
+@@ -1379,10 +2517,11 @@ export default function App() {
+             tournaments={tournaments}
+             onOpenTournament={(t) => handleOpenHistoryTournament(t, 'history')}
+             isHistoryLoading={isHistoryLoadingForUi}
+-            renderHistoryCard={(item, onClick) => (
++            renderHistoryCard={(item, onClick, options) => (
+               <TournamentHistoryCard
+                 tournament={item}
+                 onClick={onClick}
++                isLatest={options.isLatest}
+               />
+             )}
+           />
+@@ -1467,10 +2606,12 @@ export default function App() {
+             currentUser={user}
+             onUpdateScore={handleUpdateScore}
+             onNextRound={handleNextRound}
++            onStartAmericanoRound={handleStartAmericanoRound}
++            onCompleteAmericanoRound={handleCompleteAmericanoRound}
+             onUpdateRounds={handleUpdateRounds}
+             onUpdateCourts={handleUpdateCourts}
+-            onUpdateActivePlayers={handleUpdateActivePlayers}
+             onAddManualPlayer={handleAddPlayerDuringActiveMatch}
++            onSaveRosterChanges={handleSaveRosterChanges}
+             onDeleteRoundsFrom={handleDeleteRoundsFrom}
+             onDeleteMatch={handleDeleteActiveMatch}
+             needsRegenerateFromRound={needsRegenerateFromRound}
+@@ -1574,6 +2715,76 @@ export default function App() {
+             }}
+           />
+         )}
++        {screen === 'rooms' && (
++          <RoomListScreen
++            hostedRooms={visibleHostedRooms}
++            publicRooms={visiblePublicRooms}
++            currentUserUid={user?.uid}
++            isLoading={visibleRoomsLoading}
++            onCreateRoom={() => {
++              setRoomEditorMode('create');
++              setScreen('room-editor');
++            }}
++            onOpenRoom={(room) => {
++              setSelectedRoom(room);
++              setScreen('room-detail');
++            }}
++          />
++        )}
++        {screen === 'room-editor' && (
++          <RoomEditorScreen
++            mode={roomEditorMode}
++            editingRoom={roomEditorMode === 'edit' ? selectedRoom : null}
++            roomFinance={roomEditorMode === 'edit' ? selectedRoomFinance : null}
++            isSaving={isRoomSaving}
++            currentUser={user}
++            onBack={() => setScreen(roomEditorMode === 'edit' ? 'room-detail' : 'rooms')}
++            onSave={handleCreateRoom}
++            onUpdate={handleUpdateRoomFromDetail}
++            onOpenCreatedRoom={(room) => {
++              setSelectedRoom(room);
++              setScreen('room-detail');
++            }}
++            onOpenUpdatedRoom={() => {
++              setScreen('room-detail');
++            }}
++          />
++        )}
++        {screen === 'room-detail' && selectedRoom && (
++          <RoomDetailScreen
++            room={selectedRoom}
++            currentUserUid={user?.uid}
++            currentUserPhotoURL={user?.photoURL || ''}
++            roomFinance={selectedRoomFinance}
++            participantFinances={selectedRoomParticipantFinances}
++            isSavingFinance={isRoomFinanceSaving}
++            isSavingParticipation={isRoomParticipantSaving}
++            isStartingRoom={isRoomStarting}
++            onJoin={handleJoinRoom}
++            onLoginToJoin={() => setScreen('login')}
++            onLeave={handleLeaveRoom}
++            onStartRoom={handleStartRoom}
++            onConfigureSetup={() => setScreen('room-setup')}
++            onEditRoom={() => {
++              setRoomEditorMode('edit');
++              setScreen('room-editor');
++            }}
++            onAddParticipant={handleAddRoomParticipant}
++            onRemoveParticipant={handleRemoveRoomParticipant}
++            onUpdateParticipantFinance={handleUpdateRoomParticipantFinance}
++            onSaveParticipantChanges={handleSaveRoomParticipantChanges}
++            onShare={() => handleShareRoom(selectedRoom)}
++            onBack={() => setScreen('rooms')}
++          />
++        )}
++        {screen === 'room-setup' && selectedRoom && (
++          <RoomMatchSetupScreen
++            room={selectedRoom}
++            isSaving={isRoomSetupSaving}
++            onBack={() => setScreen('room-detail')}
++            onSave={handleSaveRoomMatchSetup}
++          />
++        )}
+       </div>
+ 
+       {showBottomNav && (
+@@ -1585,7 +2796,7 @@ export default function App() {
+       )}
+ 
+       <AnimatePresence>
+-        {NOTIFICATIONS_ENABLED && notificationToasts.length > 0 && (
++        {notificationToasts.length > 0 && (
+           <div
+             className="fixed left-1/2 -translate-x-1/2 z-[145] w-[min(92vw,420px)] space-y-2"
+             style={{ bottom: notificationToastOffset }}
+diff --git a/src/constants.ts b/src/constants.ts
+index 0b6a48b..91a043c 100644
+--- a/src/constants.ts
++++ b/src/constants.ts
+@@ -94,5 +94,6 @@ export const INITIAL_TOURNAMENT: Tournament = {
+   inactivePlayerIds: [],
+   courtChanges: [],
+   rounds: [],
+-  numRounds: 8
++  numRounds: 8,
++  durationMinutes: 120
+ };
+diff --git a/src/features/matches/KlasemenScreen.tsx b/src/features/matches/KlasemenScreen.tsx
+index 9db77d2..d4affb1 100644
+--- a/src/features/matches/KlasemenScreen.tsx
++++ b/src/features/matches/KlasemenScreen.tsx
+@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
+ import { toBlob as htmlToImageBlob } from 'html-to-image';
+ import { ChevronRight, Instagram, RefreshCw, Share2, X, Zap } from 'lucide-react';
+ import { InstallAppButton } from '../../components/app/InstallAppButton';
++import { SharedViewerFomPlayCta } from '../../components/app/SharedViewerFomPlayCta';
+ import { cn } from '../../lib/utils';
+-import { type Match, type Player, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
++import { type Friend, type Match, type Player, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
+ import { getMatchThemeColor } from '../tournaments/matchTheme';
+ import { resolveMatchBackground } from './matchBackgrounds';
+ import { formatDurationFromMs, getTournamentElapsedMs } from './matchTimeUtils';
++import { useMatchSettingsFriends } from './useMatchSettingsFriends';
+ 
+ export const KlasemenScreen = ({
+   tournament,
+@@ -32,12 +34,14 @@ export const KlasemenScreen = ({
+   const [isStoryImageBusy, setIsStoryImageBusy] = useState(false);
+   const [storyImageError, setStoryImageError] = useState('');
+   const [storyImageUrl, setStoryImageUrl] = useState('');
++  const [storyExportPageIndex, setStoryExportPageIndex] = useState(0);
+   const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
+   const shareMenuRef = useRef<HTMLDivElement | null>(null);
+   const storyImageUrlRef = useRef<string | null>(null);
+   const storyExportRef = useRef<HTMLDivElement | null>(null);
+   const currentUserUid = String(currentUser?.uid || '').trim();
+   const currentUserPhotoURL = typeof currentUser?.photoURL === 'string' ? currentUser.photoURL : '';
++  const { friends } = useMatchSettingsFriends(currentUserUid);
+ 
+   useEffect(() => {
+     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+@@ -136,6 +140,7 @@ export const KlasemenScreen = ({
+   const locationLabel = (tournament.location || '').trim();
+   const placeLabel = [venueLabel, locationLabel].filter(Boolean).join(' | ');
+   const locationDateLabel = placeLabel ? `${placeLabel} | ${dateLabel}` : dateLabel;
++  const showSharedTrialCta = Boolean(isSharedViewer && !currentUserUid);
+   const totalElapsed = formatDurationFromMs(
+     getTournamentElapsedMs(
+       tournamentRounds,
+@@ -143,6 +148,7 @@ export const KlasemenScreen = ({
+       'endedAt' in tournament ? tournament.endedAt : undefined
+     )
+   );
++  const compactFormatLabel = tournament.format === 'Match Play' ? 'Match' : tournament.format;
+ 
+   const standingsThemeColor = getMatchThemeColor(tournament.format, tournament.themeColorId);
+   const infoTheme = standingsThemeColor;
+@@ -157,12 +163,24 @@ export const KlasemenScreen = ({
+ 
+   const sortedPlayers = useMemo(() => {
+     const playerRegistry = new Map<string, Player>();
++    const friendById = new Map<string, Friend>(
++      friends
++        .filter((friend) => String(friend?.uid || '').trim())
++        .map((friend) => [String(friend.uid).trim(), friend])
++    );
+     const registerPlayer = (player: Player | undefined) => {
+       if (!player) return;
+       const isCurrentUserPlayer = Boolean(currentUserUid) && player.id === currentUserUid;
++      const friendProfile = friendById.get(player.id);
++      const liveName = isCurrentUserPlayer
++        ? (currentUser?.displayName || currentUser?.email?.split('@')[0] || '')
++        : (friendProfile?.displayName || '');
++      const liveAvatar = isCurrentUserPlayer
++        ? currentUserPhotoURL
++        : (friendProfile?.photoURL || '');
+       const normalizedPlayer = isCurrentUserPlayer
+-        ? { ...player, avatar: currentUserPhotoURL || player.avatar || '' }
+-        : player;
++        ? { ...player, name: liveName || player.name, avatar: liveAvatar || player.avatar || '' }
++        : { ...player, name: liveName || player.name, avatar: liveAvatar || player.avatar || '' };
+       const existing = playerRegistry.get(player.id);
+       if (!existing) {
+         playerRegistry.set(player.id, normalizedPlayer);
+@@ -252,9 +270,30 @@ export const KlasemenScreen = ({
+       });
+     });
+ 
+-    Object.values(playerStatsMap).forEach((stats) => {
+-      stats.matches = stats.w + stats.l + stats.d;
+-    });
++    const hasCountableRoundScores = tournamentRounds.some((round) => (
++      (round.matches || []).some((match) => (
++        match.status === 'completed' ||
++        Number(match.teamA?.score || 0) > 0 ||
++        Number(match.teamB?.score || 0) > 0
++      ))
++    ));
++
++    if (!hasCountableRoundScores) {
++      playerRegistry.forEach((player) => {
++        const stats = playerStatsMap[player.id];
++        if (!stats) return;
++        stats.matches = Number(player.stats?.matches || 0);
++        stats.w = Number(player.stats?.won || 0);
++        stats.l = Number(player.stats?.lost || 0);
++        stats.d = Number(player.stats?.draw || 0);
++        stats.pointsDiff = Number(player.stats?.diff || 0);
++        stats.totalPoints = Number((player as Player & { totalPoints?: number }).totalPoints || 0);
++      });
++    } else {
++      Object.values(playerStatsMap).forEach((stats) => {
++        stats.matches = stats.w + stats.l + stats.d;
++      });
++    }
+ 
+     return Object.values(playerStatsMap).sort((a, b) => {
+       if (b.w !== a.w) return b.w - a.w;
+@@ -262,45 +301,57 @@ export const KlasemenScreen = ({
+       if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+       return a.name.localeCompare(b.name, 'id-ID');
+     });
+-  }, [currentUserPhotoURL, currentUserUid, tournamentPlayers, tournamentRounds]);
++  }, [currentUser?.displayName, currentUser?.email, currentUserPhotoURL, currentUserUid, friends, tournamentPlayers, tournamentRounds]);
+ 
+   const storyShowAvatars = true;
+-  const storyPlayerLimit = sortedPlayers.length > 10 ? 10 : sortedPlayers.length;
+-  const storyPlayers = sortedPlayers.slice(0, storyPlayerLimit);
++  const storyPlayersPerImage = 10;
++  const storyPlayerPages = useMemo(() => {
++    if (sortedPlayers.length === 0) return [[]];
++    const pages = [];
++    for (let index = 0; index < sortedPlayers.length; index += storyPlayersPerImage) {
++      pages.push(sortedPlayers.slice(index, index + storyPlayersPerImage));
++    }
++    return pages;
++  }, [sortedPlayers]);
++  const storyPageCount = storyPlayerPages.length;
++  const activeStoryPageIndex = Math.min(storyExportPageIndex, storyPageCount - 1);
++  const storyPlayers = storyPlayerPages[activeStoryPageIndex] || [];
+   const storyCompactRows = storyPlayers.length >= 9;
+   const storyDenseRows = storyCompactRows || sortedPlayers.length > 12;
+-  const storyHiddenPlayerCount = Math.max(0, sortedPlayers.length - storyPlayers.length);
+-  void storyHiddenPlayerCount;
++  const storyRankOffset = activeStoryPageIndex * storyPlayersPerImage;
+   const storyUsesCompactRankingCard = storyPlayers.length > 0 && storyPlayers.length < 8;
+   const storyExportShellClass = cn(
+     'relative z-10 flex h-full flex-col px-4 text-white',
+-    storyCompactRows ? 'pb-2.5 pt-3' : 'pb-3 pt-4'
++    storyCompactRows ? 'pb-2 pt-3' : 'pb-3 pt-3'
+   );
+   const storyExportLogoHeaderClass = cn(
+     'flex shrink-0 items-center justify-center',
+-    storyCompactRows ? 'mb-2 h-7' : 'mb-4 h-8'
++    'mb-3 h-10'
+   );
+-  const storyExportLogoClass = cn('w-auto object-contain', storyCompactRows ? 'h-7' : 'h-8');
++  const storyExportLogoClass = 'h-7 w-auto object-contain';
+   const storySummaryCardClass = cn(
+-    'mt-0 isolate shrink-0 overflow-hidden rounded-[16px] border border-white/32 bg-white/12 shadow-[0_10px_20px_rgba(15,23,42,0.07)] backdrop-blur-xl',
+-    storyCompactRows ? 'px-3 py-1.5' : 'px-3 py-2'
++    'relative mt-0 isolate shrink-0 overflow-hidden rounded-[22px] border border-white/42 bg-white/10 shadow-[0_14px_30px_rgba(15,23,42,0.10)] backdrop-blur-md',
++    storyCompactRows ? 'px-3 py-2' : 'px-3.5 py-2.5'
+   );
+-  const storySummaryCardStyle = { clipPath: 'inset(0 round 16px)' } as const;
++  const storySummaryCardStyle = {
++    clipPath: 'inset(0 round 22px)',
++    WebkitClipPath: 'inset(0 round 22px)'
++  };
+   const storySummaryStatClass = cn(
+-    'rounded-[10px] border border-white/18 bg-white/18 px-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]',
++    'rounded-[11px] border border-white/26 bg-white/18 px-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]',
+     storyCompactRows ? 'py-0.5' : 'py-1'
+   );
+-  const storyTitleClass = cn('truncate font-semibold leading-[1.04] text-white', storyCompactRows ? 'text-[14.5px]' : 'text-[15.5px]');
+-  const storySubtitleClass = cn('mt-0.5 truncate font-medium leading-[1.15] text-white/76', storyCompactRows ? 'text-[8px]' : 'text-[8.5px]');
+-  const storyTimerClass = cn('shrink-0 font-semibold leading-none tabular-nums text-white/90', storyCompactRows ? 'text-[10.5px]' : 'text-[11px]');
+-  const storyStatLabelClass = 'text-[7px] font-semibold uppercase leading-none text-white/56';
+-  const storyStatValueClass = cn('truncate text-[9.5px] font-semibold leading-none text-white', storyCompactRows ? 'mt-0.5' : 'mt-1');
++  const storyTitleClass = cn('truncate font-black leading-[1.04] tracking-tight text-white', storyCompactRows ? 'text-[14.5px]' : 'text-[15.5px]');
++  const storySubtitleClass = cn('mt-0.5 truncate font-semibold leading-[1.15] text-white/82', storyCompactRows ? 'text-[8px]' : 'text-[8.5px]');
++  const storyTimerClass = cn('shrink-0 font-black leading-none tabular-nums text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]', storyCompactRows ? 'text-[10.5px]' : 'text-[11px]');
++  const storyStatLabelClass = 'text-[7px] font-bold uppercase leading-none tracking-wider text-white/66';
++  const storyStatValueClass = cn('truncate text-[9.5px] font-bold leading-none text-white', storyCompactRows ? 'mt-0.5' : 'mt-1');
+   const storyRankingCardClass = cn(
+-    'mt-1.5 flex min-h-0 flex-col overflow-hidden rounded-[17px] border border-white/45 bg-white/78 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)] backdrop-blur-sm',
++    'mt-1.5 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/52 bg-white/95 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)]',
+     storyUsesCompactRankingCard ? 'shrink-0' : 'flex-1'
+   );
+-  const storyRankingHeaderClass = 'grid shrink-0 grid-cols-[minmax(0,1fr)_42px_42px_42px] gap-1.5 px-2.5 pb-1.5 text-[7.5px] font-semibold uppercase leading-none text-on-surface/54';
+-  const storyBaseRowClass = 'grid grid-cols-[minmax(0,1fr)_42px_42px_42px] items-center gap-1.5 rounded-[12px] border border-white/45 bg-white/96';
++  const storyRankingHeaderClass = 'grid shrink-0 grid-cols-[minmax(0,1fr)_42px_42px_42px] gap-1.5 border-b border-black/[0.06] px-1.5 pb-1.5 text-[7.5px] font-black uppercase leading-none text-on-surface/48';
++  const storyBaseRowClass = 'grid grid-cols-[minmax(0,1fr)_42px_42px_42px] items-center gap-1.5 border-b border-black/[0.055] bg-transparent last:border-b-0';
+   const storyPlayerHeaderGridClass = cn(
+     'grid items-center gap-2',
+     storyShowAvatars ? 'grid-cols-[28px_32px_minmax(0,1fr)]' : 'grid-cols-[28px_minmax(0,1fr)]'
+@@ -328,28 +379,38 @@ export const KlasemenScreen = ({
+   const storyRowClass = cn(
+     storyBaseRowClass,
+     storyPlayers.length === 9
+-      ? 'min-h-[38px] px-2 py-0.5'
++      ? 'min-h-[38px] px-1.5 py-0.5'
+       : storyCompactRows
+-        ? 'min-h-[34px] px-2 py-0.5'
++        ? 'min-h-[34px] px-1.5 py-0.5'
+         : storyShowAvatars
+-          ? 'min-h-[48px] px-2.5 py-1.5'
++          ? 'min-h-[48px] px-1.5 py-1.5'
+           : storyDenseRows
+-            ? 'min-h-[39px] px-2.5 py-1.5'
+-            : 'min-h-[43px] px-2.5 py-1.5'
++            ? 'min-h-[39px] px-1.5 py-1.5'
++            : 'min-h-[43px] px-1.5 py-1.5'
+   );
+   const storyRankBadgeClass = cn(
+-    'flex shrink-0 items-center justify-center rounded-full font-black leading-none tabular-nums',
++    'flex shrink-0 items-center justify-center rounded-full border font-black leading-none tabular-nums',
+     storyCompactRows ? 'h-5 w-5 text-[8px]' : storyDenseRows ? 'h-6 w-6 text-[9px]' : 'h-7 w-7 text-[10px]'
+   );
+   const storyAvatarClass = cn(
+     'shrink-0 overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10 flex items-center justify-center',
+     storyCompactRows ? 'h-6 w-6' : 'h-8 w-8'
+   );
+-  const getStoryRankBadgeClass = (index: number) => {
+-    if (index === 0) return 'bg-[linear-gradient(135deg,#fff4c7_0%,#f7d66b_55%,#e9b93e_100%)] text-[#8b5e00] border border-[#f4cf67]/90 shadow-[0_6px_16px_rgba(233,185,62,0.35)]';
+-    if (index === 1) return 'bg-[linear-gradient(135deg,#f9fbff_0%,#dde6f5_52%,#c7d0e0_100%)] text-[#5b6472] border border-[#d6dde8]/90 shadow-[0_6px_16px_rgba(148,163,184,0.28)]';
+-    if (index === 2) return 'bg-[linear-gradient(135deg,#ffe6d8_0%,#e8b08e_52%,#c8835a_100%)] text-[#8a4d2e] border border-[#dfaa8b]/90 shadow-[0_6px_16px_rgba(200,131,90,0.28)]';
+-    return 'bg-ios-gray/10 text-ios-gray border border-transparent';
++  const getStoryRankBadgeClass = (rankIndex: number) => {
++    if (rankIndex === 0) return 'bg-[#fff8dc] text-[#9a6a00] border-[#e8c84f]/80 ring-1 ring-[#f8e6a2]/70 shadow-[0_3px_10px_rgba(232,200,79,0.22)]';
++    if (rankIndex === 1) return 'bg-[#f7f9fc] text-[#687382] border-[#cdd5df]/90 ring-1 ring-[#e5e9ef]/80 shadow-[0_3px_10px_rgba(148,163,184,0.18)]';
++    if (rankIndex === 2) return 'bg-[#fff1e8] text-[#9a5a35] border-[#daa17d]/80 ring-1 ring-[#f0c8af]/70 shadow-[0_3px_10px_rgba(200,131,90,0.18)]';
++    return 'bg-ios-gray/10 text-ios-gray border-transparent';
++  };
++  const getStandingsRankBadgeClass = (rankIndex: number) => {
++    if (rankIndex === 0) return 'bg-[#fff8dc] text-[#9a6a00] border-[#e8c84f]/80 ring-1 ring-[#f8e6a2]/70 shadow-[0_3px_10px_rgba(232,200,79,0.22)]';
++    if (rankIndex === 1) return 'bg-[#f7f9fc] text-[#687382] border-[#cdd5df]/90 ring-1 ring-[#e5e9ef]/80 shadow-[0_3px_10px_rgba(148,163,184,0.18)]';
++    if (rankIndex === 2) return 'bg-[#fff1e8] text-[#9a5a35] border-[#daa17d]/80 ring-1 ring-[#f0c8af]/70 shadow-[0_3px_10px_rgba(200,131,90,0.18)]';
++    return 'bg-ios-gray/10 text-ios-gray border-transparent';
++  };
++  const getStandingsRowClass = (rankIndex: number) => {
++    if (rankIndex <= 2) return 'border-b border-black/[0.055] px-0';
++    return 'border-b border-black/[0.055] px-0 last:border-b-0';
+   };
+   const storyTitleDate = useMemo(() => {
+     const sourceDate =
+@@ -365,14 +426,14 @@ export const KlasemenScreen = ({
+   const buildStorySavedTitle = () => (
+     `${(tournament.name || 'FOM Play Klasemen').trim()} ${storyTitleDate}`
+   );
+-  const buildStoryFileName = (title: string) => {
++  const buildStoryFileName = (title: string, pageIndex = 0, pageCount = 1) => {
+     const fileSafeTitle = title
+       .toLowerCase()
+       .replace(/\//g, '-')
+       .replace(/[^a-z0-9]+/g, '-')
+       .replace(/^-+|-+$/g, '')
+       .slice(0, 72) || 'fom-play-klasemen';
+-    return `${fileSafeTitle}.png`;
++    return pageCount > 1 ? `${fileSafeTitle}-${pageIndex + 1}-of-${pageCount}.png` : `${fileSafeTitle}.png`;
+   };
+   const syncStoryVariantBeforeExport = async () => {
+     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+@@ -395,6 +456,16 @@ export const KlasemenScreen = ({
+     if (!blob) throw new Error('Unable to export story image.');
+     return blob;
+   };
++  const renderStoryImageBlobs = async () => {
++    const blobs: Blob[] = [];
++    for (let pageIndex = 0; pageIndex < storyPageCount; pageIndex += 1) {
++      setStoryExportPageIndex(pageIndex);
++      await syncStoryVariantBeforeExport();
++      blobs.push(await renderStoryImageBlob());
++    }
++    setStoryExportPageIndex(0);
++    return blobs;
++  };
+   const downloadStoryBlob = (blob: Blob, fileName: string) => {
+     const url = URL.createObjectURL(blob);
+     const link = document.createElement('a');
+@@ -416,25 +487,29 @@ export const KlasemenScreen = ({
+     setStoryImageError('');
+     setIsStoryImageBusy(true);
+     try {
+-      await syncStoryVariantBeforeExport();
+       const storySavedTitle = buildStorySavedTitle();
+-      const storyFileName = buildStoryFileName(storySavedTitle);
+-      const blob = await renderStoryImageBlob();
+-      showStoryBlobInPreview(blob);
++      const blobs = await renderStoryImageBlobs();
++      const firstBlob = blobs[0];
++      if (!firstBlob) throw new Error('Unable to export story image.');
++      showStoryBlobInPreview(firstBlob);
+       setIsStoryPreviewOpen(true);
+-      const file = new File([blob], storyFileName, { type: 'image/png' });
++      const files = blobs.map((blob, pageIndex) => (
++        new File([blob], buildStoryFileName(storySavedTitle, pageIndex, blobs.length), { type: 'image/png' })
++      ));
+       const sharePayload = {
+-        files: [file],
++        files,
+         title: storySavedTitle,
+         text: 'Klasemen dari FOM Play'
+       };
+ 
+       if (navigator.share && (!navigator.canShare || navigator.canShare(sharePayload))) {
+         await navigator.share(sharePayload);
+-        onShareFeedback('success', 'Gambar klasemen berhasil dibagikan.');
++        onShareFeedback('success', files.length > 1 ? `${files.length} gambar klasemen berhasil dibagikan.` : 'Gambar klasemen berhasil dibagikan.');
+       } else {
+-        downloadStoryBlob(blob, storyFileName);
+-        onShareFeedback('ready', 'Gambar klasemen berhasil dibuat dan diunduh.');
++        blobs.forEach((blob, pageIndex) => {
++          downloadStoryBlob(blob, buildStoryFileName(storySavedTitle, pageIndex, blobs.length));
++        });
++        onShareFeedback('ready', blobs.length > 1 ? `${blobs.length} gambar klasemen berhasil dibuat dan diunduh.` : 'Gambar klasemen berhasil dibuat dan diunduh.');
+       }
+     } catch (err) {
+       console.error('Story image export failed:', err);
+@@ -464,11 +539,11 @@ export const KlasemenScreen = ({
+ 
+       <header
+         className="relative z-20 bg-transparent border-b border-transparent"
+-        style={{ paddingTop: 'calc(var(--app-safe-top, 0px) + 16px)' }}
++        style={{ paddingTop: 'calc(var(--app-safe-top, 0px) + 12px)' }}
+       >
+-        <div className="max-w-lg mx-auto h-11 px-5 relative flex items-center justify-between">
++        <div className="standings-header-inner max-w-lg mx-auto h-10 px-5 relative flex items-center justify-between">
+           <div className="shrink-0">
+-            <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
++            <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white rounded-full", infoTheme.accentSolid, infoTheme.accentSolidShadow)}>
+               {!isTournamentEnded && (
+                 <span className="relative flex h-2.5 w-2.5">
+                   <span className="absolute inline-flex h-full w-full rounded-full bg-white/55 animate-ping" />
+@@ -481,71 +556,70 @@ export const KlasemenScreen = ({
+             </span>
+           </div>
+           <div className="absolute left-1/2 -translate-x-1/2 flex justify-center items-center pointer-events-none">
+-            <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className="h-8 w-auto object-contain" />
++            <img src="/fom-long-logotype-white.png" alt="Friends of Motion" className="standings-header-logo h-7 w-auto object-contain" />
+           </div>
+-          <div className="shrink-0 flex items-center gap-3">
+-            <InstallAppButton compact variant="minimum" className="text-white" />
+-            {isSharedViewer ? (
+-              <span className="text-[10px] font-bold uppercase tracking-widest text-white/90">View Only</span>
+-            ) : (
+-              <div ref={shareMenuRef} className="relative">
+-                <button
+-                  onClick={() => setIsShareMenuOpen((open) => !open)}
+-                  className="tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white"
+-                  aria-expanded={isShareMenuOpen}
+-                  aria-haspopup="menu"
++          <div className="standings-header-actions shrink-0 flex items-center gap-3">
++            <InstallAppButton compact variant="minimum" className="standings-header-install text-white" />
++            <div ref={shareMenuRef} className="relative">
++              <button
++                onClick={() => setIsShareMenuOpen((open) => !open)}
++                className="standings-header-share tap-target h-8 px-0 inline-flex items-center gap-1.5 border-0 bg-transparent text-white"
++                aria-expanded={isShareMenuOpen}
++                aria-haspopup="menu"
++                aria-label="Share standings"
++              >
++                <Share2 size={16} />
++                <span className="standings-header-share-label text-[12px] font-semibold">Share</span>
++              </button>
++              {isShareMenuOpen && (
++                <div
++                  className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-2xl border border-white/28 bg-white/92 p-1.5 text-on-surface shadow-[0_16px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl"
++                  role="menu"
+                 >
+-                  <Share2 size={16} />
+-                  <span className="text-[12px] font-semibold">Share</span>
+-                </button>
+-                {isShareMenuOpen && (
+-                  <div
+-                    className="absolute right-0 top-[calc(100%+10px)] z-50 w-44 overflow-hidden rounded-2xl border border-white/28 bg-white/92 p-1.5 text-on-surface shadow-[0_16px_40px_rgba(15,23,42,0.22)] backdrop-blur-xl"
+-                    role="menu"
++                  <button
++                    type="button"
++                    onClick={() => {
++                      setIsShareMenuOpen(false);
++                      onShare(tournament);
++                    }}
++                    className="tap-target flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-bold text-on-surface"
++                    role="menuitem"
+                   >
+-                    <button
+-                      type="button"
+-                      onClick={() => {
+-                        setIsShareMenuOpen(false);
+-                        onShare(tournament);
+-                      }}
+-                      className="tap-target flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-bold text-on-surface"
+-                      role="menuitem"
+-                    >
+-                      <Share2 size={15} className="text-ios-gray" />
+-                      Share Link
+-                    </button>
+-                    <button
+-                      type="button"
+-                      onClick={() => {
+-                        setIsShareMenuOpen(false);
+-                        void handleStoryAction();
+-                      }}
+-                      disabled={isStoryImageBusy}
+-                      className="tap-target flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-bold text-on-surface disabled:opacity-60"
+-                      role="menuitem"
+-                    >
+-                      {isStoryImageBusy ? <RefreshCw size={15} className="animate-spin text-primary" /> : <Instagram size={15} className="text-primary" />}
+-                      {isStoryImageBusy ? 'Preparing' : 'Story Image'}
+-                    </button>
+-                  </div>
+-                )}
+-              </div>
+-            )}
++                    <Share2 size={15} className="text-ios-gray" />
++                    Share Link
++                  </button>
++                  <button
++                    type="button"
++                    onClick={() => {
++                      setIsShareMenuOpen(false);
++                      void handleStoryAction();
++                    }}
++                    disabled={isStoryImageBusy}
++                    className="tap-target flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[13px] font-bold text-on-surface disabled:opacity-60"
++                    role="menuitem"
++                  >
++                    {isStoryImageBusy ? <RefreshCw size={15} className="animate-spin text-primary" /> : <Instagram size={15} className="text-primary" />}
++                    {isStoryImageBusy ? 'Preparing' : 'Story Image'}
++                  </button>
++                </div>
++              )}
++            </div>
+           </div>
+         </div>
+       </header>
+ 
+       <main
+-        className="relative z-10 px-5 space-y-6 max-w-lg mx-auto"
++        className="standings-main relative z-10 px-5 space-y-4 max-w-lg mx-auto"
+         style={{
+-          paddingTop: '16px',
+-          paddingBottom: 'calc(var(--app-safe-bottom, 0px) + 16px)'
++          paddingTop: '12px',
++          paddingBottom: showSharedTrialCta
++            ? 'calc(var(--app-safe-bottom, 0px) + 104px)'
++            : 'calc(var(--app-safe-bottom, 0px) + 16px)'
+         }}
+       >
+         {isSharedViewer && (
+           <p className="px-1 text-[10px] font-medium leading-tight text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
+-            Standings viewer mode is active. This page is read-only.
++            This page is read-only.
+           </p>
+         )}
+ 
+@@ -562,48 +636,41 @@ export const KlasemenScreen = ({
+           </section>
+         )}
+ 
+-        <section className={cn('relative overflow-hidden rounded-2xl p-4 border border-white/40 bg-white/8 backdrop-blur-md', infoTheme.shadow)}>
+-          <div className="relative flex items-baseline justify-between gap-3 mb-3">
++        <section className={cn('relative overflow-hidden rounded-[22px] border border-white/42 bg-white/10 p-3.5 backdrop-blur-md', infoTheme.shadow)}>
++          <div className="relative mb-2.5 flex items-start justify-between gap-3">
+             <div className="min-w-0">
+-              <h2 className="text-[18px] font-black tracking-tight text-white truncate">{tournament.name || '-'}</h2>
+-              <p className="mt-1 text-[11px] text-white/85 truncate">{locationDateLabel}</p>
++              <h2 className="truncate text-[17px] font-black leading-tight tracking-tight text-white">{tournament.name || '-'}</h2>
++              <p className="mt-0.5 truncate text-[10.5px] font-semibold text-white/82">{locationDateLabel}</p>
+             </div>
+-            <span className="shrink-0 text-[16px] leading-none font-display font-bold tabular-nums text-white/95 drop-shadow-[0_1px_1px_rgba(0,0,0,0.14)]">
++            <span className="shrink-0 text-[13px] font-black leading-none tabular-nums text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.45)]">
+               {totalElapsed}
+             </span>
+           </div>
+ 
+-          <div className="relative grid grid-cols-4 gap-2">
+-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Mode</p>
+-              <p className="text-[12px] font-semibold text-white truncate">{tournament.format}</p>
++          <div className="relative grid grid-cols-4 gap-1.5">
++            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
++              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Mode</p>
++              <p className="mt-1 truncate text-[10px] font-bold leading-none text-white">
++                <span className="standings-format-full">{tournament.format}</span>
++                <span className="standings-format-short">{compactFormatLabel}</span>
++              </p>
+             </div>
+-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Player</p>
+-              <p className="text-[12px] font-semibold text-white">{sortedPlayers.length}</p>
++            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
++              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Player</p>
++              <p className="mt-1 text-[10px] font-bold leading-none text-white tabular-nums">{sortedPlayers.length}</p>
+             </div>
+-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Court</p>
+-              <p className="text-[12px] font-semibold text-white">{courtsCount}</p>
++            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
++              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Court</p>
++              <p className="mt-1 text-[10px] font-bold leading-none text-white tabular-nums">{courtsCount}</p>
+             </div>
+-            <div className="rounded-xl bg-white/20 border border-white/35 px-2.5 py-2">
+-              <p className="text-[9px] font-bold uppercase tracking-wider text-white/80">Round</p>
+-              <p className="text-[12px] font-semibold text-white">{displayedRoundCount}/{totalRounds || 0}</p>
++            <div className="rounded-[11px] border border-white/26 bg-white/18 px-1.5 py-1.5">
++              <p className="text-[8px] font-bold uppercase leading-none tracking-wider text-white/66">Round</p>
++              <p className="mt-1 text-[10px] font-bold leading-none text-white tabular-nums">{displayedRoundCount}/{totalRounds || 0}</p>
+             </div>
+           </div>
+ 
+-          <div className="relative mt-2.5 pt-2 flex items-center justify-between text-[10px] font-semibold text-white/78 tabular-nums">
+-            <span>Match {progressedMatches}/{totalMatches}</span>
+-            <span>Progress {completionPercent}%</span>
+-          </div>
+-          <div className="relative mt-1.5">
+-            <div className="h-1.5 rounded-full bg-white/25 overflow-hidden">
+-              <div className="h-full rounded-full bg-white/90 transition-all duration-300" style={{ width: `${completionPercent}%` }} />
+-            </div>
+-          </div>
+-          <div className="relative mt-3.5 pt-2.5 min-h-[30px] flex items-center justify-start gap-2">
+-            <div className="absolute inset-x-0 top-0 h-px bg-white/30 pointer-events-none" />
+-            <p className="relative z-10 text-[11px] text-white/88 whitespace-nowrap">
++          <div className="relative mt-2.5 flex min-h-[34px] items-center justify-between gap-2 border-t border-white/24 pt-2">
++            <p className="min-w-0 truncate text-[10.5px] font-semibold text-white/84">
+               Hosted with{' '}
+               <button
+                 type="button"
+@@ -613,74 +680,87 @@ export const KlasemenScreen = ({
+                 FOM Play
+               </button>
+             </p>
+-          </div>
+-        </section>
+-
+-        <section className="-mt-1">
+-          <button
+-            onClick={onOpenActive}
+-            className={cn(
+-              "tap-target w-full h-12 rounded-2xl px-4 flex items-center justify-between border border-white/40 bg-white/8 backdrop-blur-md text-white",
+-              infoTheme.shadow
+-            )}
+-          >
+-            <div className="flex items-center gap-2.5 min-w-0">
+-              <span className="w-7 h-7 rounded-full flex items-center justify-center border border-white/35 bg-white/20">
+-                <Zap size={15} />
+-              </span>
+-              <span className="text-[13px] font-bold truncate">
+-                {isTournamentEnded ? 'View Round Details' : 'View Active Match'}
++            <button
++              onClick={onOpenActive}
++              className={cn('tap-target inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border bg-white/18 px-3 text-[11px] font-extrabold text-white backdrop-blur-md', infoTheme.accentBorder)}
++            >
++              <span className={cn('flex h-5 w-5 items-center justify-center rounded-full bg-white/90', infoTheme.accent)}>
++                <Zap size={12} />
+               </span>
+-            </div>
+-            <ChevronRight size={16} className="opacity-80 shrink-0" />
+-          </button>
++              <span>{isTournamentEnded ? 'Rounds' : 'Active'}</span>
++              <ChevronRight size={13} className="opacity-80" />
++            </button>
++          </div>
+         </section>
+ 
+         <section className="space-y-2">
+-          <div className="flex items-center justify-between px-1">
++          <div className="flex items-center justify-between gap-3 px-1">
+             <h3 className="text-[12px] font-bold uppercase tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.35)]">Ranking Player</h3>
++            <span className={cn('shrink-0 rounded-full border bg-white/82 px-2.5 py-1 text-[9.5px] font-extrabold uppercase tracking-wide shadow-[0_4px_14px_rgba(15,23,42,0.08)] backdrop-blur-md', infoTheme.accentBorder, infoTheme.accent)}>
++              W &gt; Diff &gt; Pts
++            </span>
+           </div>
+-          <p className="px-1 text-[10px] font-semibold text-white/92 drop-shadow-[0_1px_2px_rgba(0,0,0,0.32)]">Order: Wins (W) - Diff - Points.</p>
+ 
+-          <div className="rounded-2xl bg-white/78 backdrop-blur-sm border border-white/45 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)]">
+-            <div className="grid grid-cols-[1fr_48px_44px] gap-2 px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-on-surface/55">
++          <div className="overflow-hidden rounded-2xl border border-white/48 bg-white/84 p-2 shadow-[0_8px_24px_rgba(15,23,42,0.08)] backdrop-blur-md">
++            <div className="standings-compact-grid grid grid-cols-[minmax(0,1fr)_70px_40px_40px] gap-2 border-b border-black/[0.06] px-0 pb-1.5 text-[9px] font-black uppercase leading-none tracking-wider text-on-surface/48">
+               <span>Player</span>
+-              <span className="text-right">Diff</span>
+-              <span className="text-right">Points</span>
++              <div className="standings-compact-meta grid grid-cols-4 text-center">
++                <span>W</span>
++                <span>L</span>
++                <span>D</span>
++                <span>M</span>
++              </div>
++              <span className="text-center">Diff</span>
++              <span className="text-center">Pts</span>
+             </div>
+-            <div className="space-y-1.5">
++            <div className="space-y-0.5 pt-0.5">
+               {sortedPlayers.map((player, i) => (
+-                <div key={player.id} className="bg-white/88 p-3 rounded-[14px] border border-white/45 grid grid-cols-[1fr_48px_44px] gap-2 items-center">
+-                  <div className="min-w-0 flex items-center gap-2.5">
+-                    <div className={cn('w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-black shrink-0', i < 3 ? cn(infoTheme.accentBg, infoTheme.accent) : 'bg-ios-gray/10 text-ios-gray')}>
++                <div
++                  key={player.id}
++                  className={cn(
++                    'standings-compact-grid standings-compact-row grid grid-cols-[minmax(0,1fr)_70px_40px_40px] items-center gap-2 py-2.5',
++                    getStandingsRowClass(i)
++                  )}
++                >
++                  <div className="standings-compact-player min-w-0 flex items-center gap-2">
++                    <div className={cn(
++                      'standings-compact-rank flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-black leading-none tabular-nums',
++                      i === 0 && 'standings-medal-badge standings-medal-gold',
++                      i === 1 && 'standings-medal-badge standings-medal-silver',
++                      i === 2 && 'standings-medal-badge standings-medal-bronze',
++                      getStandingsRankBadgeClass(i)
++                    )}>
+                       {i + 1}
+                     </div>
+-                    <div className="w-10 h-10 rounded-full bg-ios-gray/10 border border-ios-gray/10 overflow-hidden flex items-center justify-center shrink-0">
++                    <div className="standings-compact-avatar flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10">
+                       {player.avatar ? (
+-                        <img className="w-full h-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
++                        <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+                       ) : (
+-                        <span className="text-[11px] font-bold text-ios-gray">{player.initials}</span>
++                        <span className="text-[10px] font-bold text-ios-gray">{player.initials}</span>
+                       )}
+                     </div>
+                     <div className="min-w-0 flex-1">
+-                      <p className="font-bold text-[13px] text-on-surface truncate">{player.name}</p>
+-                      <p className="mt-0.5 text-[10px] font-semibold text-ios-gray/85 truncate">
+-                        W {player.w} · L {player.l} · D {player.d} · M {player.matches}
+-                      </p>
++                      <p className="standings-compact-player-name truncate text-[13px] font-semibold leading-tight text-on-surface">{player.name}</p>
+                     </div>
+                   </div>
+-                  <div className="text-right">
+-                    <p className={cn('text-[14px] font-display font-black leading-none tabular-nums', player.pointsDiff > 0 ? infoTheme.accent : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
++                  <div className="standings-compact-meta grid grid-cols-4 text-center text-[10.5px] font-bold leading-none text-ios-gray/82 tabular-nums">
++                    <span>{player.w}</span>
++                    <span>{player.l}</span>
++                    <span>{player.d}</span>
++                    <span>{player.matches}</span>
++                  </div>
++                  <div className="text-center">
++                    <p className={cn('text-[13px] font-display font-black leading-none tabular-nums', player.pointsDiff > 0 ? infoTheme.accent : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
+                       {player.pointsDiff > 0 ? `+${player.pointsDiff}` : player.pointsDiff}
+                     </p>
+                   </div>
+-                  <div className="text-right">
++                  <div className="text-center">
+                     <p className="text-[13px] font-bold leading-none text-on-surface tabular-nums">{player.totalPoints}</p>
+                   </div>
+                 </div>
+               ))}
+               {sortedPlayers.length === 0 && (
+-                <div className="bg-white/95 p-4 rounded-[14px] border border-ios-gray/10 text-center text-[12px] font-semibold text-ios-gray">
++                <div className="rounded-[14px] border border-ios-gray/10 bg-white/95 p-4 text-center text-[12px] font-semibold text-ios-gray">
+                   Player data is not available yet.
+                 </div>
+               )}
+@@ -696,10 +776,12 @@ export const KlasemenScreen = ({
+         </section>
+       </main>
+ 
++      {showSharedTrialCta && <SharedViewerFomPlayCta />}
++
+       <div
+         aria-hidden="true"
+-        className="pointer-events-none fixed -z-10 opacity-0"
+-        style={{ left: '-10000px', top: 0, width: 360, height: 640 }}
++        className="pointer-events-none fixed left-0 top-0 z-0 opacity-0"
++        style={{ width: 360, height: 640 }}
+       >
+         <div
+           ref={storyExportRef}
+@@ -774,9 +856,12 @@ export const KlasemenScreen = ({
+                     <div className="min-w-0 flex items-center gap-2">
+                       <div className={cn(
+                         storyRankBadgeClass,
+-                        getStoryRankBadgeClass(i)
++                        storyRankOffset + i === 0 && 'standings-medal-badge standings-medal-gold',
++                        storyRankOffset + i === 1 && 'standings-medal-badge standings-medal-silver',
++                        storyRankOffset + i === 2 && 'standings-medal-badge standings-medal-bronze',
++                        getStoryRankBadgeClass(storyRankOffset + i)
+                       )}>
+-                        {i + 1}
++                        {storyRankOffset + i + 1}
+                       </div>
+                       {storyShowAvatars && (
+                         <div className={storyAvatarClass}>
+@@ -817,6 +902,12 @@ export const KlasemenScreen = ({
+                 <span className={storyFooterTextClass}>fomplay.asia/app</span>
+                 <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
+                 <span className={storyFooterTextClass}>@fo.motion</span>
++                {storyPageCount > 1 && (
++                  <>
++                    <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
++                    <span className={storyFooterTextClass}>{activeStoryPageIndex + 1}/{storyPageCount}</span>
++                  </>
++                )}
+               </div>
+             </footer>
+           </div>
+@@ -927,9 +1018,12 @@ export const KlasemenScreen = ({
+                         <div className="min-w-0 flex items-center gap-2">
+                           <div className={cn(
+                             storyRankBadgeClass,
+-                            getStoryRankBadgeClass(i)
++                            storyRankOffset + i === 0 && 'standings-medal-badge standings-medal-gold',
++                            storyRankOffset + i === 1 && 'standings-medal-badge standings-medal-silver',
++                            storyRankOffset + i === 2 && 'standings-medal-badge standings-medal-bronze',
++                            getStoryRankBadgeClass(storyRankOffset + i)
+                           )}>
+-                            {i + 1}
++                            {storyRankOffset + i + 1}
+                           </div>
+                           {storyShowAvatars && (
+                             <div className={storyAvatarClass}>
+@@ -970,6 +1064,12 @@ export const KlasemenScreen = ({
+                     <span className={storyFooterTextClass}>fomplay.asia/app</span>
+                     <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
+                     <span className={storyFooterTextClass}>@fo.motion</span>
++                    {storyPageCount > 1 && (
++                      <>
++                        <span className={cn(storyFooterTextClass, 'text-white/38')}>|</span>
++                        <span className={storyFooterTextClass}>{activeStoryPageIndex + 1}/{storyPageCount}</span>
++                      </>
++                    )}
+                   </div>
+                 </footer>
+               </div>
+diff --git a/src/features/matches/MatchActiveScreen.tsx b/src/features/matches/MatchActiveScreen.tsx
+index 675566e..a88740b 100644
+--- a/src/features/matches/MatchActiveScreen.tsx
++++ b/src/features/matches/MatchActiveScreen.tsx
+@@ -1,7 +1,8 @@
+ import { Fragment, useEffect, useMemo, useState } from 'react';
+ import { AnimatePresence } from 'motion/react';
++import { SharedViewerFomPlayCta } from '../../components/app/SharedViewerFomPlayCta';
+ import { cn } from '../../lib/utils';
+-import { type Player, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
++import { type Friend, type Player, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
+ import { getDisplayInitials } from '../ranking/leaderboardUtils';
+ import { resolveMatchBackground } from './matchBackgrounds';
+ import { formatDurationFromMs, getTournamentElapsedMs } from './matchTimeUtils';
+@@ -15,6 +16,7 @@ import { ActiveMatchSummaryPanel } from './ActiveMatchSummaryPanel';
+ import { ActivePlayersEditorModal } from './ActivePlayersEditorModal';
+ import { AddPlayerModal } from './AddPlayerModal';
+ import { NoActiveMatchScreen } from './NoActiveMatchScreen';
++import { ReplaceManualPlayerModal } from './ReplaceManualPlayerModal';
+ import { RoundResetSelectorModal } from './RoundResetSelectorModal';
+ import { ScoreEditorModal } from './ScoreEditorModal';
+ import { SwapPlayerModal } from './SwapPlayerModal';
+@@ -23,6 +25,7 @@ import { useModalBottomOffset, useNowMs } from './useActiveMatchUiState';
+ import { isFomRegisteredPlayer } from '../players/playerUtils';
+ import { getMatchThemeColor } from '../tournaments/matchTheme';
+ import { sanitizeInactivePlayerIds } from '../tournaments/tournamentDraft';
++import { useMatchSettingsFriends } from './useMatchSettingsFriends';
+ 
+ type MatchActiveScreenProps = {
+   onBack: () => void;
+@@ -31,10 +34,12 @@ type MatchActiveScreenProps = {
+   currentUser?: any;
+   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void;
+   onNextRound: () => void | Promise<void>;
++  onStartAmericanoRound: (roundId: number) => void | Promise<void>;
++  onCompleteAmericanoRound: (roundId: number) => void | Promise<void>;
+   onUpdateRounds: (numRounds: number) => boolean;
+   onUpdateCourts: (numCourts: number) => boolean;
+-  onUpdateActivePlayers: (activePlayerIds: string[]) => void;
+   onAddManualPlayer: (player: Player) => void;
++  onSaveRosterChanges: (activePlayerIds: string[], replacements: Array<{ manualPlayerId: string; newPlayer: Player }>) => void;
+   onDeleteRoundsFrom: (roundId: number) => void;
+   onDeleteMatch: () => void | Promise<void>;
+   needsRegenerateFromRound: number | null;
+@@ -55,10 +60,12 @@ export const MatchActiveScreen = ({
+   currentUser,
+   onUpdateScore,
+   onNextRound,
++  onStartAmericanoRound,
++  onCompleteAmericanoRound,
+   onUpdateRounds,
+   onUpdateCourts,
+-  onUpdateActivePlayers,
+   onAddManualPlayer,
++  onSaveRosterChanges,
+   onDeleteRoundsFrom,
+   onDeleteMatch,
+   needsRegenerateFromRound,
+@@ -82,6 +89,8 @@ export const MatchActiveScreen = ({
+   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
+   const [isActivePlayersEditorOpen, setIsActivePlayersEditorOpen] = useState(false);
+   const [isAddPlayerModalOpen, setIsAddPlayerModalOpen] = useState(false);
++  const [manualPlayerToReplace, setManualPlayerToReplace] = useState<Player | null>(null);
++  const [pendingManualReplacements, setPendingManualReplacements] = useState<Record<string, Player>>({});
+   const [isRoundResetSelectorOpen, setIsRoundResetSelectorOpen] = useState(false);
+   const [draftActivePlayerIds, setDraftActivePlayerIds] = useState<Set<string>>(new Set());
+   const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
+@@ -89,8 +98,29 @@ export const MatchActiveScreen = ({
+   const modalBottomOffset = useModalBottomOffset();
+   const currentUserUid = String(currentUser?.uid || '').trim();
+   const currentUserPhotoURL = typeof currentUser?.photoURL === 'string' ? currentUser.photoURL : '';
++  const { friends, loadingFriends } = useMatchSettingsFriends(currentUserUid);
+   void saveState;
+ 
++  const buildPlayerFromFriend = (friend: Friend): Player => {
++    const initials = friend.displayName
++      .split(' ')
++      .filter(Boolean)
++      .map((namePart) => namePart[0])
++      .join('')
++      .slice(0, 2)
++      .toUpperCase() || 'FR';
++
++    return {
++      id: friend.uid,
++      name: friend.displayName,
++      rating: friend.mmr || 0,
++      source: 'fom',
++      avatar: friend.photoURL || '',
++      initials,
++      stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 },
++    };
++  };
++
+   const scoringMatch = useMemo(() => {
+     if (!scoringMatchId) return null;
+     for (const round of tournament.rounds) {
+@@ -130,6 +160,10 @@ export const MatchActiveScreen = ({
+       .filter((playerId) => !inactivePlayerIdSet.has(playerId)),
+     [tournament.players, inactivePlayerIdSet]
+   );
++  const draftPlayers = useMemo(
++    () => tournament.players.map((player) => pendingManualReplacements[player.id] || player),
++    [tournament.players, pendingManualReplacements]
++  );
+   const tournamentPlayerById = useMemo(() => {
+     const registry = new Map<string, Player>();
+     tournament.players.forEach((player) => {
+@@ -137,18 +171,35 @@ export const MatchActiveScreen = ({
+     });
+     return registry;
+   }, [tournament.players]);
++  const friendById = useMemo(() => {
++    const registry = new Map<string, Friend>();
++    friends.forEach((friend) => {
++      const friendUid = String(friend?.uid || '').trim();
++      if (friendUid) registry.set(friendUid, friend);
++    });
++    return registry;
++  }, [friends]);
+ 
+   const getPlayerDisplay = (player: Player) => {
+     const registeredPlayer = tournamentPlayerById.get(player.id);
++    const friendProfile = friendById.get(player.id);
+     const isCurrentUserPlayer = Boolean(currentUserUid) && player.id === currentUserUid;
++    const liveName = isCurrentUserPlayer
++      ? (currentUser?.displayName || currentUser?.email?.split('@')[0] || '')
++      : (friendProfile?.displayName || '');
++    const liveAvatar = isCurrentUserPlayer
++      ? currentUserPhotoURL
++      : (friendProfile?.photoURL || '');
+     const resolvedAvatar = isCurrentUserPlayer
+-      ? (currentUserPhotoURL || player.avatar || registeredPlayer?.avatar)
+-      : (player.avatar || registeredPlayer?.avatar);
++      ? (liveAvatar || registeredPlayer?.avatar || player.avatar)
++      : (liveAvatar || registeredPlayer?.avatar || player.avatar);
++    const resolvedName = liveName || player.name || registeredPlayer?.name || 'Player';
+     return {
+       ...registeredPlayer,
+       ...player,
++      name: resolvedName,
+       avatar: resolvedAvatar,
+-      initials: player.initials || registeredPlayer?.initials || getDisplayInitials(player.name || registeredPlayer?.name)
++      initials: player.initials || registeredPlayer?.initials || getDisplayInitials(resolvedName)
+     } as Player;
+   };
+ 
+@@ -200,7 +251,7 @@ export const MatchActiveScreen = ({
+     activeRoundMatchCount > 0 &&
+     activeRoundReadyScoreCount === activeRoundMatchCount
+   );
+-  const nextRoundCtaLabel = isLastRound ? 'Finish Matches' : 'Next Round';
++  const nextRoundCtaLabel = isLastRound ? 'Finish & Save History' : 'Next Round';
+   const totalElapsed = formatDurationFromMs(
+     getTournamentElapsedMs(
+       tournament.rounds,
+@@ -236,32 +287,36 @@ export const MatchActiveScreen = ({
+   const completedRounds = tournament.rounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
+   const totalRounds = Math.max(tournament.numRounds || 0, tournament.rounds.length);
+   const isTournamentEnded = totalRounds > 0 && completedRounds >= totalRounds;
+-  const shouldShowNextRoundCta = !isReadOnly && !isTournamentEnded;
++  const shouldShowNextRoundCta = !isReadOnly && !isTournamentEnded && tournament.format !== 'Americano';
+   const statsSyncBadge = getStatsSyncBadge({
+     isTournamentEnded,
+     isSharedViewer,
+     statsSyncState
+   });
++  const showSharedTrialCta = isSharedViewer && !currentUserUid;
+   const stickyCtaBottomOffsetPx = 10;
+   const stickyCtaHeightPx = 84;
+   const stickyCtaGapPx = 14;
+   const stickyCtaBottomStyle = `calc(var(--app-safe-bottom, 0px) + ${stickyCtaBottomOffsetPx}px)`;
+   const stickyCtaPaddingBottomStyle = shouldShowNextRoundCta
+     ? `calc(var(--app-safe-bottom, 0px) + ${stickyCtaBottomOffsetPx + stickyCtaHeightPx + stickyCtaGapPx}px)`
++    : showSharedTrialCta
++      ? 'calc(var(--app-safe-bottom, 0px) + 104px)'
+     : '24px';
+   const roundIdsForReset = useMemo(
+     () => tournament.rounds.map((round) => round.id).filter((roundId) => roundId > 1).sort((a, b) => b - a),
+     [tournament.rounds]
+   );
+-  const hasDraftActivePlayersChanges = useMemo(() => {
+-    const nextActiveIds = tournament.players
++  const hasDraftRosterChanges = useMemo(() => {
++    const nextActiveIds = draftPlayers
+       .map((player) => player.id)
+       .filter((playerId) => draftActivePlayerIds.has(playerId));
+-    return (
++    const hasActivePlayerChanges = (
+       nextActiveIds.length !== currentActivePlayerIds.length ||
+       nextActiveIds.some((playerId, idx) => playerId !== currentActivePlayerIds[idx])
+     );
+-  }, [tournament.players, draftActivePlayerIds, currentActivePlayerIds]);
++    return hasActivePlayerChanges || Object.keys(pendingManualReplacements).length > 0;
++  }, [draftPlayers, draftActivePlayerIds, currentActivePlayerIds, pendingManualReplacements]);
+   const infoTheme = {
+     shadow: matchThemeColor.shadow
+   };
+@@ -378,6 +433,7 @@ export const MatchActiveScreen = ({
+   const handleOpenActivePlayersEditor = () => {
+     setIsActionMenuOpen(false);
+     setDraftActivePlayerIds(new Set(currentActivePlayerIds));
++    setPendingManualReplacements({});
+     setIsActivePlayersEditorOpen(true);
+   };
+ 
+@@ -417,11 +473,11 @@ export const MatchActiveScreen = ({
+   };
+ 
+   const handleSaveActivePlayers = () => {
+-    const nextActiveIds = tournament.players
++    const nextActiveIds = draftPlayers
+       .map((player) => player.id)
+       .filter((playerId) => draftActivePlayerIds.has(playerId));
+ 
+-    if (!hasDraftActivePlayersChanges) {
++    if (!hasDraftRosterChanges) {
+       setIsActivePlayersEditorOpen(false);
+       return;
+     }
+@@ -429,7 +485,14 @@ export const MatchActiveScreen = ({
+     const shouldSave = window.confirm('Changes will apply starting from the next round. Save?');
+     if (!shouldSave) return;
+ 
+-    onUpdateActivePlayers(nextActiveIds);
++    onSaveRosterChanges(
++      nextActiveIds,
++      (Object.entries(pendingManualReplacements) as Array<[string, Player]>).map(([manualPlayerId, newPlayer]) => ({
++        manualPlayerId,
++        newPlayer,
++      }))
++    );
++    setPendingManualReplacements({});
+     setIsActivePlayersEditorOpen(false);
+   };
+ 
+@@ -443,6 +506,27 @@ export const MatchActiveScreen = ({
+     setIsAddPlayerModalOpen(false);
+   };
+ 
++  const handleOpenReplaceManualPlayer = (player: Player) => {
++    setManualPlayerToReplace(player);
++  };
++
++  const handleReplaceManualPlayerFromFriend = (friend: Friend) => {
++    if (!manualPlayerToReplace) return;
++    const replacementPlayer = buildPlayerFromFriend(friend);
++    setPendingManualReplacements((prev) => ({
++      ...prev,
++      [manualPlayerToReplace.id]: replacementPlayer,
++    }));
++    setDraftActivePlayerIds((prev) => {
++      if (!prev.has(manualPlayerToReplace.id)) return prev;
++      const next = new Set(prev);
++      next.delete(manualPlayerToReplace.id);
++      next.add(replacementPlayer.id);
++      return next;
++    });
++    setManualPlayerToReplace(null);
++  };
++
+   const handleProceedToNextRound = () => {
+     void onNextRound();
+   };
+@@ -471,9 +555,9 @@ export const MatchActiveScreen = ({
+       />
+ 
+       <main
+-        className="relative z-10 px-5 space-y-6 max-w-lg mx-auto"
++        className="standings-main relative z-10 px-5 space-y-4 max-w-lg mx-auto"
+         style={{
+-          paddingTop: '16px',
++          paddingTop: '12px',
+           paddingBottom: stickyCtaPaddingBottomStyle
+         }}
+       >
+@@ -481,6 +565,8 @@ export const MatchActiveScreen = ({
+           isSharedViewer={isSharedViewer}
+           statsSyncBadge={statsSyncBadge}
+           infoShadowClass={infoTheme.shadow}
++          navIconClass={accentTheme.text}
++          navBorderClass={accentTheme.borderSoft}
+           matchName={tournament.name || '-'}
+           locationDateLabel={locationDateLabel}
+           totalElapsed={totalElapsed}
+@@ -491,7 +577,6 @@ export const MatchActiveScreen = ({
+           completedRounds={completedRounds}
+           totalRounds={totalRounds}
+           isReadOnly={isReadOnly}
+-          isTournamentEnded={isTournamentEnded}
+           needsRegenerateFromRound={needsRegenerateFromRound}
+           onOpenFomPlay={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}
+           onOpenSettings={() => setIsActionMenuOpen(true)}
+@@ -512,11 +597,14 @@ export const MatchActiveScreen = ({
+                 isCollapsed={isCollapsed}
+                 isReadOnly={isReadOnly}
+                 roundDuration={roundDuration}
++                totalPoints={tournament.totalPoints}
+                 accentTheme={accentTheme}
+                 scoreToneClass={accentTheme.text}
+                 renderPlayerAvatar={renderPlayerAvatar}
+                 onToggleRound={toggleRound}
+                 onOpenScoreEditor={setScoringMatchId}
++                onStartRound={onStartAmericanoRound}
++                onCompleteRound={onCompleteAmericanoRound}
+                 onOpenSwapPlayer={setSwappingPlayer}
+               />
+             </Fragment>
+@@ -537,6 +625,8 @@ export const MatchActiveScreen = ({
+         onNext={handleProceedToNextRound}
+       />
+ 
++      {showSharedTrialCta && <SharedViewerFomPlayCta />}
++
+       <ActiveMatchActionMenu
+         isOpen={isActionMenuOpen && !isReadOnly}
+         modalBottomOffset={modalBottomOffset}
+@@ -561,14 +651,18 @@ export const MatchActiveScreen = ({
+       <ActivePlayersEditorModal
+         isOpen={isActivePlayersEditorOpen}
+         modalBottomOffset={modalBottomOffset}
+-        players={tournament.players}
++        players={draftPlayers}
+         draftActivePlayerIds={draftActivePlayerIds}
+-        hasChanges={hasDraftActivePlayersChanges}
++        hasChanges={hasDraftRosterChanges}
+         renderPlayerAvatar={renderPlayerAvatar}
+         isManualPlayer={(player) => !isFomRegisteredPlayer(player)}
+-        onClose={() => setIsActivePlayersEditorOpen(false)}
++        onClose={() => {
++          setPendingManualReplacements({});
++          setIsActivePlayersEditorOpen(false);
++        }}
+         onOpenAddPlayer={() => setIsAddPlayerModalOpen(true)}
+-        onSelectAll={() => setDraftActivePlayerIds(new Set(tournament.players.map((player) => player.id)))}
++        onReplaceManualPlayer={handleOpenReplaceManualPlayer}
++        onSelectAll={() => setDraftActivePlayerIds(new Set(draftPlayers.map((player) => player.id)))}
+         onClearAll={() => setDraftActivePlayerIds(new Set())}
+         onTogglePlayer={toggleDraftActivePlayer}
+         onSave={handleSaveActivePlayers}
+@@ -637,6 +731,19 @@ export const MatchActiveScreen = ({
+         }}
+       />
+ 
++      <ReplaceManualPlayerModal
++        isOpen={Boolean(manualPlayerToReplace) && !isReadOnly}
++        modalBottomOffset={modalBottomOffset}
++        manualPlayer={manualPlayerToReplace}
++        friends={friends}
++        tournamentPlayers={tournament.players}
++        loadingFriends={loadingFriends}
++        accentTheme={accentTheme}
++        renderPlayerAvatar={renderPlayerAvatar}
++        onClose={() => setManualPlayerToReplace(null)}
++        onSelectFriend={handleReplaceManualPlayerFromFriend}
++      />
++
+       <ScoreEditorModal
+         match={scoringMatch}
+         format={tournament.format}
+diff --git a/src/features/matches/useMatchMutationActions.ts b/src/features/matches/useMatchMutationActions.ts
+index 68bd776..877263d 100644
+--- a/src/features/matches/useMatchMutationActions.ts
++++ b/src/features/matches/useMatchMutationActions.ts
+@@ -20,6 +20,11 @@ type Params = {
+   rebuildAmericanoFutureRounds: (baseTournament: Tournament, totalRounds: number) => Tournament['rounds'];
+ };
+ 
++type ManualPlayerReplacement = {
++  manualPlayerId: string;
++  newPlayer: Player;
++};
++
+ export const useMatchMutationActions = ({
+   tournament,
+   needsRegenerateFromRound,
+@@ -29,6 +34,56 @@ export const useMatchMutationActions = ({
+   addNotification,
+   rebuildAmericanoFutureRounds,
+ }: Params) => {
++  const applyManualPlayerReplacement = (
++    baseTournament: Tournament,
++    replacement: ManualPlayerReplacement
++  ): Tournament => {
++    const safeManualPlayerId = String(replacement.manualPlayerId || '').trim();
++    if (!safeManualPlayerId) return baseTournament;
++
++    const manualPlayer = (baseTournament.players || []).find((player) => player.id === safeManualPlayerId);
++    if (!manualPlayer) return baseTournament;
++    if (manualPlayer.id === replacement.newPlayer.id) return baseTournament;
++
++    const hasExistingRegisteredPlayer = (baseTournament.players || []).some((player) => (
++      player.id === replacement.newPlayer.id && player.id !== safeManualPlayerId
++    ));
++    if (hasExistingRegisteredPlayer) return baseTournament;
++
++    const replacePlayerRef = (player: Player) => (
++      player.id === safeManualPlayerId
++        ? { ...replacement.newPlayer }
++        : player
++    );
++
++    const nextPlayers = baseTournament.players.map(replacePlayerRef);
++    return {
++      ...baseTournament,
++      players: nextPlayers,
++      inactivePlayerIds: sanitizeInactivePlayerIds(
++        nextPlayers,
++        (baseTournament.inactivePlayerIds || []).map((playerId) => (
++          playerId === safeManualPlayerId ? replacement.newPlayer.id : playerId
++        ))
++      ),
++      rounds: baseTournament.rounds.map((round) => ({
++        ...round,
++        playersBye: (round.playersBye || []).map(replacePlayerRef),
++        matches: round.matches.map((match) => ({
++          ...match,
++          teamA: {
++            ...match.teamA,
++            players: match.teamA.players.map(replacePlayerRef),
++          },
++          teamB: {
++            ...match.teamB,
++            players: match.teamB.players.map(replacePlayerRef),
++          },
++        })),
++      })),
++    };
++  };
++
+   const handleDeleteRoundsFrom = (roundId: number) => {
+     const safeRoundId = Math.max(2, Math.floor(roundId || 0));
+     const now = Date.now();
+@@ -420,6 +475,92 @@ export const useMatchMutationActions = ({
+     addNotification('Player Replaced', 'The player has been replaced on the active court.', 'system');
+   };
+ 
++  const handleReplaceManualPlayer = (manualPlayerId: string, newPlayer: Player) => {
++    const manualPlayer = (tournament.players || []).find((player) => player.id === String(manualPlayerId || '').trim());
++    if (!manualPlayer) return;
++    const nextTournament = applyManualPlayerReplacement(tournament, { manualPlayerId, newPlayer });
++    if (nextTournament === tournament) {
++      addNotification(
++        'Player Sudah Ada',
++        `${newPlayer.name} is already part of this match.`,
++        'system'
++      );
++      return;
++    }
++
++    setTournament(nextTournament);
++    void persistActiveTournamentSnapshot(nextTournament);
++    addNotification(
++      'Manual Player Replaced',
++      `${manualPlayer.name} is now linked to ${newPlayer.name} for this active match.`,
++      'system'
++    );
++  };
++
++  const handleSaveRosterChanges = (
++    activePlayerIds: string[],
++    replacements: ManualPlayerReplacement[]
++  ) => {
++    const normalizedReplacements = Array.isArray(replacements)
++      ? replacements.filter((replacement) => (
++          replacement &&
++          typeof replacement.manualPlayerId === 'string' &&
++          replacement.manualPlayerId.trim() &&
++          replacement.newPlayer &&
++          typeof replacement.newPlayer.id === 'string' &&
++          replacement.newPlayer.id.trim()
++        ))
++      : [];
++
++    let nextTournament = tournament;
++    normalizedReplacements.forEach((replacement) => {
++      nextTournament = applyManualPlayerReplacement(nextTournament, replacement);
++    });
++
++    const knownIds = new Set((nextTournament.players || []).map((player) => player.id));
++    const requestedActiveIds = Array.from(new Set(activePlayerIds.filter((id) => knownIds.has(id))));
++    const requestedActiveSet = new Set(requestedActiveIds);
++    const nextInactivePlayerIds = (nextTournament.players || [])
++      .map((player) => player.id)
++      .filter((playerId) => !requestedActiveSet.has(playerId));
++    const sanitizedInactive = sanitizeInactivePlayerIds(nextTournament.players || [], nextInactivePlayerIds);
++
++    const persistedTournament: Tournament = (
++      nextTournament.format === 'Americano' && nextTournament.rounds.length > 0
++        ? {
++            ...nextTournament,
++            inactivePlayerIds: sanitizedInactive,
++            rounds: rebuildAmericanoFutureRounds(
++              { ...nextTournament, inactivePlayerIds: sanitizedInactive },
++              nextTournament.numRounds
++            ),
++          }
++        : {
++            ...nextTournament,
++            inactivePlayerIds: sanitizedInactive,
++          }
++    );
++
++    const currentInactivePlayerIds = sanitizeInactivePlayerIds(tournament.players || [], tournament.inactivePlayerIds);
++    const hasReplacementChanges = normalizedReplacements.length > 0;
++    const hasActivePlayerChanges = (
++      sanitizedInactive.length !== currentInactivePlayerIds.length ||
++      sanitizedInactive.some((playerId, idx) => playerId !== currentInactivePlayerIds[idx])
++    );
++
++    if (!hasReplacementChanges && !hasActivePlayerChanges) return;
++
++    setTournament(persistedTournament);
++    void persistActiveTournamentSnapshot(persistedTournament);
++    addNotification(
++      'Roster Updated',
++      hasReplacementChanges
++        ? 'Manual player replacements and active player changes have been saved.'
++        : 'Changes are saved and will apply starting from the next round.',
++      'system'
++    );
++  };
++
+   return {
+     handleDeleteRoundsFrom,
+     handleUpdateScore,
+@@ -428,5 +569,7 @@ export const useMatchMutationActions = ({
+     handleUpdateCourts,
+     handleUpdateMatchPlayScore,
+     handleSwapPlayer,
++    handleReplaceManualPlayer,
++    handleSaveRosterChanges,
+   };
+ };
+diff --git a/src/features/matches/useRoundProgressionActions.ts b/src/features/matches/useRoundProgressionActions.ts
+index e3bebdf..0812dac 100644
+--- a/src/features/matches/useRoundProgressionActions.ts
++++ b/src/features/matches/useRoundProgressionActions.ts
+@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
+ import { auth } from '../../firebase';
+ import { normalizeCourtChanges } from '../history/historyPersistence';
+ import { formatDurationFromMs } from './matchTimeUtils';
+-import { toFirestoreSafe } from '../../services/firestoreSerialization';
++import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
+ import type { Match, Player, Tournament, TournamentHistory } from '../../types';
+ 
+ type AddNotification = (
+@@ -77,6 +77,93 @@ export const useRoundProgressionActions = ({
+   getActivePlayersFromTournament,
+   rebuildAmericanoFutureRounds,
+ }: Params) => {
++  const persistActiveRoundUpdate = async (nextTournament: Tournament) => {
++    setTournament(nextTournament);
++    await persistActiveTournamentSnapshot(nextTournament);
++    try {
++      await syncSharedMatchesSnapshot(nextTournament);
++    } catch (err) {
++      console.error('Shared match round status sync error:', err, {
++        authUid: auth.currentUser?.uid || null,
++        userUid: user?.uid || null,
++      });
++    }
++  };
++
++  const handleStartAmericanoRound = async (roundId: number) => {
++    if (tournament.format !== 'Americano') return;
++    const safeRoundId = Math.floor(roundId || 0);
++    const targetRound = tournament.rounds.find((round) => round.id === safeRoundId);
++    if (!targetRound) return;
++
++    const now = Date.now();
++    const nextTournament: Tournament = {
++      ...tournament,
++      rounds: tournament.rounds.map((round) => {
++        if (round.id !== safeRoundId) return round;
++        return {
++          ...round,
++          matches: round.matches.map((match) => (
++            match.status === 'pending'
++              ? {
++                  ...match,
++                  status: 'active' as const,
++                  startedAt: match.startedAt || now,
++                }
++              : match
++          )),
++        };
++      }),
++      endedAt: undefined,
++    };
++
++    await persistActiveRoundUpdate(nextTournament);
++    addNotification('Round Started', `Round ${safeRoundId} is ready for scoring.`, 'match');
++  };
++
++  const handleCompleteAmericanoRound = async (roundId: number) => {
++    if (tournament.format !== 'Americano') return;
++    const safeRoundId = Math.floor(roundId || 0);
++    const targetRound = tournament.rounds.find((round) => round.id === safeRoundId);
++    if (!targetRound) return;
++
++    const incompleteMatches = targetRound.matches.filter((match) => (
++      (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
++    ));
++    if (incompleteMatches.length > 0) {
++      const proceed = window.confirm(
++        `${incompleteMatches.length} matches in Round ${safeRoundId} have incomplete scores. Complete this round anyway?`
++      );
++      if (!proceed) return;
++      addNotification(
++        'Round Completed With Incomplete Scores',
++        `Round ${safeRoundId} was completed with ${incompleteMatches.length} incomplete matches.`,
++        'system'
++      );
++    }
++
++    const now = Date.now();
++    const nextTournament: Tournament = {
++      ...tournament,
++      rounds: tournament.rounds.map((round) => {
++        if (round.id !== safeRoundId) return round;
++        return {
++          ...round,
++          matches: round.matches.map((match) => ({
++            ...match,
++            status: 'completed' as const,
++            startedAt: match.startedAt || now,
++            duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
++          })),
++        };
++      }),
++      endedAt: undefined,
++    };
++
++    await persistActiveRoundUpdate(nextTournament);
++    addNotification('Round Completed', `Round ${safeRoundId} has been completed.`, 'match');
++  };
++
+   const handleNextRound = async () => {
+     const now = Date.now();
+     if (!tournament.rounds) return;
+@@ -152,7 +239,6 @@ export const useRoundProgressionActions = ({
+         endedAt: now,
+       };
+       setTournament(finalizedTournament);
+-      addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
+ 
+       if (user) {
+         const historyItem: TournamentHistory = {
+@@ -178,7 +264,6 @@ export const useRoundProgressionActions = ({
+           location: tournament.location,
+           statsVersion: 0,
+         };
+-        setTournaments((prev) => [historyItem, ...prev]);
+ 
+         try {
+           const tournamentSummary = {
+@@ -205,7 +290,7 @@ export const useRoundProgressionActions = ({
+           };
+           await saveTournamentDetailAndSummary(
+             historyItem.id,
+-            toFirestoreSafe(historyItem),
++            toFirestoreSafe(stripLargeInlineImages(stripTournamentPlayerAvatars(historyItem))),
+             tournamentSummary
+           );
+           recordDbMetric({
+@@ -217,6 +302,7 @@ export const useRoundProgressionActions = ({
+             collection: 'tournament_details+tournaments',
+           });
+           watchTournamentStatsSync(historyItem.id);
++          setTournaments((prev) => [historyItem, ...prev]);
+         } catch (err) {
+           recordDbError({
+             flow: 'finalize',
+@@ -227,9 +313,25 @@ export const useRoundProgressionActions = ({
+           });
+           console.error('Error saving tournament:', err);
+           markTournamentStatsSyncError(historyItem.id);
++          try {
++            await persistActiveTournamentSnapshot(stripLargeInlineImages(stripTournamentPlayerAvatars(finalizedTournament)));
++          } catch (snapshotErr) {
++            console.error('Finalized tournament recovery snapshot error:', snapshotErr);
++          }
++          addNotification(
++            'History Save Failed',
++            'Final scores are still kept in this active match. Please try Finish Matches again before leaving.',
++            'system',
++            'error'
++          );
++          return;
+         }
++      } else {
++        addNotification('Login Required', 'Please log in before finishing matches so history can be saved.', 'system', 'error');
++        return;
+       }
+ 
++      addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
+       setSelectedKlasemenTournament(finalizedTournament);
+       await clearActiveTournamentSnapshot();
+       try {
+@@ -455,5 +557,9 @@ export const useRoundProgressionActions = ({
+     addNotification('New Round!', `Round ${nextRoundId} has started. Check your match schedule.`, 'match');
+   };
+ 
+-  return { handleNextRound };
++  return {
++    handleNextRound,
++    handleStartAmericanoRound,
++    handleCompleteAmericanoRound,
++  };
+ };
+diff --git a/src/features/ranking/LeaderboardScreen.tsx b/src/features/ranking/LeaderboardScreen.tsx
+index 5fa4261..d97e990 100644
+--- a/src/features/ranking/LeaderboardScreen.tsx
++++ b/src/features/ranking/LeaderboardScreen.tsx
+@@ -1,9 +1,10 @@
+ import React, { useEffect, useMemo, useState } from 'react';
+ import { BarChart2, BookOpen, Globe, MapPin, RefreshCw, Users } from 'lucide-react';
++import { AppPageHeader } from '../../components/app/AppPageHeader';
+ import { RegionSelector } from '../../components/RegionSelector';
+ import { cn } from '../../lib/utils';
+ import { type RankTier } from '../../types';
+-import { getRankInfo } from './rankUtils';
++import { formatDisplayMmr, getRankInfo, toRawMmr } from './rankUtils';
+ import {
+   ALL_PROVINCES_FILTER,
+   getDisplayInitials,
+@@ -75,7 +76,7 @@ const LeaderboardSummaryCards = ({
+   const currentRankIndex = rankedUsers.findIndex((u) => u?.uid === currentUser?.uid);
+   const currentRank = currentRankIndex >= 0 ? currentRankIndex + 1 : null;
+   const leaderboardUser = currentRankIndex >= 0 ? rankedUsers[currentRankIndex] : currentUser;
+-  const currentMmr = Number.isFinite(Number(leaderboardUser?.mmr)) ? Number(leaderboardUser.mmr) : 0;
++  const currentMmr = toRawMmr(leaderboardUser?.mmr);
+   const currentMatches = Number.isFinite(Number(leaderboardUser?.totalMatches)) ? Number(leaderboardUser.totalMatches) : 0;
+   const rankInfo = getRankInfo(currentMmr);
+   const RankIcon = rankInfo.icon;
+@@ -95,7 +96,7 @@ const LeaderboardSummaryCards = ({
+           <div>
+             <p className="mb-0.5 text-[11px] font-bold uppercase tracking-[0.04em] text-white/75">MMR</p>
+             <p className="font-display text-[32px] font-black leading-none tracking-tight text-white tabular-nums">
+-              {currentMmr.toLocaleString()}
++              {formatDisplayMmr(currentMmr)}
+             </p>
+           </div>
+           <div className="h-8 w-px bg-white/30" />
+@@ -127,7 +128,7 @@ const LeaderboardUserRow = ({
+   isHighlighted?: boolean;
+ }) => {
+   const rank = index + 1;
+-  const mmr = Number.isFinite(Number(user?.mmr)) ? Number(user.mmr) : 0;
++  const mmr = toRawMmr(user?.mmr);
+   const totalMatches = Number.isFinite(Number(user?.totalMatches)) ? Number(user.totalMatches) : 0;
+   const matchesLabel = `${totalMatches}M`;
+   const areaLabel = toProvinceName(user?.region || user?.homeBase) || 'Unknown';
+@@ -185,7 +186,7 @@ const LeaderboardUserRow = ({
+ 
+       <div className="shrink-0 text-right">
+         <p className="font-display text-[17px] font-black leading-tight tracking-tight text-on-surface tabular-nums">
+-          {mmr.toLocaleString()} <span className="text-[11px] font-semibold tracking-tight text-ios-gray">MMR</span>
++          {formatDisplayMmr(mmr)} <span className="text-[11px] font-semibold tracking-tight text-ios-gray">MMR</span>
+         </p>
+         <div className="mt-1 flex justify-end">
+           <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold tracking-[0.03em]', getRankBadgeClass(rankInfo.name))}>
+@@ -331,6 +332,38 @@ export const LeaderboardScreen = ({
+   const showingLabel = rankedUsers.length >= 100
+     ? `Top ${rankedUsers.length} Players`
+     : `${rankedUsers.length} ${rankedUsers.length === 1 ? 'Player' : 'Players'}`;
++  const headerMetaItems = [
++    { label: 'shown', value: showingLabel },
++    { label: 'scope', value: provinceFilter === ALL_PROVINCES_FILTER ? 'Global' : toProvinceName(provinceFilter), labelFirst: true },
++  ];
++  const leaderboardScopeControl = (
++    <div className="flex items-center gap-0.5 rounded-full bg-surface p-[3px]">
++      <button
++        onClick={() => setProvinceFilter(ALL_PROVINCES_FILTER)}
++        className={cn(
++          "flex h-[30px] items-center gap-1.5 rounded-full px-3.5 text-[13px] font-bold tracking-tight tap-target transition-colors",
++          provinceFilter === ALL_PROVINCES_FILTER
++            ? "bg-on-surface text-white"
++            : "bg-transparent text-ios-gray"
++        )}
++      >
++        <Globe size={12} strokeWidth={2.2} />
++        Global
++      </button>
++      <button
++        onClick={() => setIsRegionSelectorOpen(true)}
++        className={cn(
++          "flex h-[30px] max-w-[8.75rem] items-center gap-1.5 rounded-full px-3.5 text-[13px] font-bold tracking-tight tap-target transition-colors",
++          provinceFilter === ALL_PROVINCES_FILTER
++            ? "bg-transparent text-ios-gray"
++            : "bg-on-surface text-white"
++        )}
++      >
++        <MapPin size={12} strokeWidth={2.2} />
++        <span className="truncate">{provinceFilter === ALL_PROVINCES_FILTER ? 'Province' : provinceFilter}</span>
++      </button>
++    </div>
++  );
+ 
+   return (
+     <div className="min-h-screen bg-white pb-32">
+@@ -342,36 +375,15 @@ export const LeaderboardScreen = ({
+         selectionMode="province"
+       />
+ 
+-      <main className="mx-auto w-full max-w-[430px] px-6 pt-5">
+-        <div className="flex items-center justify-between gap-3">
+-          <h1 className="font-display text-[28px] font-black leading-tight tracking-tight text-on-surface">Ranking</h1>
+-          <div className="flex items-center gap-0.5 rounded-full bg-surface p-[3px]">
+-            <button
+-              onClick={() => setProvinceFilter(ALL_PROVINCES_FILTER)}
+-              className={cn(
+-                "flex h-[30px] items-center gap-1.5 rounded-full px-3.5 text-[13px] font-bold tracking-tight tap-target transition-colors",
+-                provinceFilter === ALL_PROVINCES_FILTER
+-                  ? "bg-on-surface text-white"
+-                  : "bg-transparent text-ios-gray"
+-              )}
+-            >
+-              <Globe size={12} strokeWidth={2.2} />
+-              Global
+-            </button>
+-            <button
+-              onClick={() => setIsRegionSelectorOpen(true)}
+-              className={cn(
+-                "flex h-[30px] max-w-[8.75rem] items-center gap-1.5 rounded-full px-3.5 text-[13px] font-bold tracking-tight tap-target transition-colors",
+-                provinceFilter === ALL_PROVINCES_FILTER
+-                  ? "bg-transparent text-ios-gray"
+-                  : "bg-on-surface text-white"
+-              )}
+-            >
+-              <MapPin size={12} strokeWidth={2.2} />
+-              <span className="truncate">{provinceFilter === ALL_PROVINCES_FILTER ? 'Province' : provinceFilter}</span>
+-            </button>
+-          </div>
+-        </div>
++      <main className="mx-auto w-full max-w-2xl px-4 pt-[calc(env(safe-area-inset-top,0px)+34px)]">
++        <AppPageHeader
++          eyebrow="Ranking"
++          title="Leaderboard"
++          subtitle="Track player ratings and regional standing."
++          metaItems={headerMetaItems}
++          trailing={leaderboardScopeControl}
++          className="px-0"
++        />
+ 
+         <LeaderboardSummaryCards rankedUsers={rankedUsers} currentUser={currentUser} />
+         <LeaderboardHeaderSummary
+diff --git a/src/features/share/shareUtils.ts b/src/features/share/shareUtils.ts
+index c5ed1c9..0130851 100644
+--- a/src/features/share/shareUtils.ts
++++ b/src/features/share/shareUtils.ts
+@@ -1,6 +1,6 @@
+ import type { Match, Player, Tournament, TournamentHistory } from '../../types';
+ import { normalizeCourtChanges } from '../history/historyPersistence';
+-import { toFirestoreSafe } from '../../services/firestoreSerialization';
++import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
+ 
+ const getShareableInitials = (name = '') => (
+   name
+@@ -17,7 +17,6 @@ const toShareablePlayerSnapshot = (player: Player): Player => ({
+   name: player.name,
+   rating: Number.isFinite(Number(player.rating)) ? Number(player.rating) : 0,
+   source: player.source,
+-  avatar: player.avatar || '',
+   initials: player.initials || getShareableInitials(player.name),
+   stats: {
+     matches: Number(player.stats?.matches || 0),
+@@ -53,12 +52,12 @@ export const toShareableTournamentSnapshot = (targetTournament: Tournament | Tou
+     }))
+     .filter((round) => round.matches.length > 0);
+ 
+-  return toFirestoreSafe({
++  return toFirestoreSafe(stripLargeInlineImages(stripTournamentPlayerAvatars({
+     ...targetTournament,
+     players: (targetTournament.players || []).map(toShareablePlayerSnapshot),
+     rounds: shareableRounds,
+     courtChanges: normalizeCourtChanges(targetTournament.courtChanges),
+-  });
++  })));
+ };
+ 
+ const getShareBaseUrl = () => {
+diff --git a/src/features/share/useShareActions.ts b/src/features/share/useShareActions.ts
+index 83f68ec..dcff91a 100644
+--- a/src/features/share/useShareActions.ts
++++ b/src/features/share/useShareActions.ts
+@@ -29,6 +29,7 @@ type RecordDbError = (input: {
+ type UseShareActionsParams = {
+   userUid: string | null | undefined;
+   tournament: Tournament;
++  skipSharePersistence?: boolean;
+   isSharedViewer: boolean;
+   sharedMatchId: string | null;
+   setSharedMatchId: Dispatch<SetStateAction<string | null>>;
+@@ -60,7 +61,6 @@ const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> =>
+     ta.style.position = 'fixed';
+     ta.style.top = '-9999px';
+     ta.style.left = '-9999px';
+-    ta.setAttribute('readonly', '');
+     ta.style.pointerEvents = 'none';
+     document.body.appendChild(ta);
+     ta.focus();
+@@ -69,7 +69,6 @@ const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> =>
+     const copied = document.execCommand('copy');
+     document.body.removeChild(ta);
+     if (copied) return 'copied';
+-    return 'copied';
+   } catch {
+     // fallback below
+   }
+@@ -95,6 +94,7 @@ const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> =>
+ export const useShareActions = ({
+   userUid,
+   tournament,
++  skipSharePersistence = false,
+   isSharedViewer,
+   sharedMatchId,
+   setSharedMatchId,
+@@ -109,8 +109,34 @@ export const useShareActions = ({
+   recordDbError,
+   serverTimestamp,
+ }: UseShareActionsParams) => {
++  const buildViewerShareUrl = (view: 'active' | 'klasemen') => {
++    if (sharedMatchId) return buildShareUrl(sharedMatchId, view);
++
++    try {
++      const currentUrl = new URL(window.location.href);
++      currentUrl.pathname = '/app';
++      if (view === 'klasemen') currentUrl.searchParams.set('view', 'klasemen');
++      else currentUrl.searchParams.delete('view');
++      return currentUrl.toString();
++    } catch {
++      return window.location.href;
++    }
++  };
++
++  const shareViewerUrl = async (view: 'active' | 'klasemen') => {
++    const shareResult = await tryCopyToClipboard(buildViewerShareUrl(view));
++    if (shareResult === 'copied') showShareCopiedToast('copied');
++    else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('ready');
++    else showShareFeedbackToast('failed', 'Browser menolak akses clipboard. Coba share lagi.');
++  };
++
+   const handleShareCurrentMatch = async () => {
+     try {
++      if (isSharedViewer) {
++        await shareViewerUrl('active');
++        return;
++      }
++
+       const currentUid = auth.currentUser?.uid || userUid;
+       if (!currentUid) {
+         addNotification('Login Required', 'Please log in first to share matches.', 'system');
+@@ -129,38 +155,40 @@ export const useShareActions = ({
+ 
+       await persistActiveTournamentSnapshot(tournament);
+ 
+-      try {
+-        await withTimeout(
+-          saveSharedMatch(shareId, writePayload, { merge: true }),
+-          SHARE_WRITE_TIMEOUT_MS,
+-          'Share link sync'
+-        );
+-        recordDbMetric({
+-          flow: 'share_host',
+-          operation: 'write',
+-          count: 1,
+-          label: 'share_current_match',
+-          dbRole: 'ephemeral',
+-          collection: SHARED_MATCHES_COLLECTION,
+-        });
+-      } catch (firstErr) {
+-        if (firstErr instanceof Error && firstErr.message.includes('timed out')) {
+-          throw firstErr;
++      if (!skipSharePersistence) {
++        try {
++          await withTimeout(
++            saveSharedMatch(shareId, writePayload, { merge: true }),
++            SHARE_WRITE_TIMEOUT_MS,
++            'Share link sync'
++          );
++          recordDbMetric({
++            flow: 'share_host',
++            operation: 'write',
++            count: 1,
++            label: 'share_current_match',
++            dbRole: 'ephemeral',
++            collection: SHARED_MATCHES_COLLECTION,
++          });
++        } catch (firstErr) {
++          if (firstErr instanceof Error && firstErr.message.includes('timed out')) {
++            throw firstErr;
++          }
++          shareId = Math.random().toString(36).slice(2, 10);
++          await withTimeout(
++            saveSharedMatch(shareId, writePayload, { merge: false }),
++            SHARE_WRITE_TIMEOUT_MS,
++            'Share link sync'
++          );
++          recordDbMetric({
++            flow: 'share_host',
++            operation: 'write',
++            count: 1,
++            label: 'share_current_match_fresh',
++            dbRole: 'ephemeral',
++            collection: SHARED_MATCHES_COLLECTION,
++          });
+         }
+-        shareId = Math.random().toString(36).slice(2, 10);
+-        await withTimeout(
+-          saveSharedMatch(shareId, writePayload, { merge: false }),
+-          SHARE_WRITE_TIMEOUT_MS,
+-          'Share link sync'
+-        );
+-        recordDbMetric({
+-          flow: 'share_host',
+-          operation: 'write',
+-          count: 1,
+-          label: 'share_current_match_fresh',
+-          dbRole: 'ephemeral',
+-          collection: SHARED_MATCHES_COLLECTION,
+-        });
+       }
+ 
+       setSharedMatchId(shareId);
+@@ -196,12 +224,8 @@ export const useShareActions = ({
+ 
+   const handleShareStandings = async (targetTournament: Tournament | TournamentHistory) => {
+     try {
+-      if (isSharedViewer && sharedMatchId) {
+-        const currentSharedUrl = buildShareUrl(sharedMatchId, 'klasemen');
+-        const shareResult = await tryCopyToClipboard(currentSharedUrl);
+-        if (shareResult === 'copied') showShareCopiedToast('copied');
+-        else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('ready');
+-        else showShareFeedbackToast('failed', 'Browser menolak akses clipboard. Coba share lagi.');
++      if (isSharedViewer) {
++        await shareViewerUrl('klasemen');
+         return;
+       }
+ 
+@@ -223,27 +247,29 @@ export const useShareActions = ({
+         ? (sharedMatchId || Math.random().toString(36).slice(2, 10))
+         : Math.random().toString(36).slice(2, 10);
+       const safeTournament = toShareableTournamentSnapshot(targetTournament);
+-      await withTimeout(
+-        saveSharedMatch(shareId, {
+-          tournament: safeTournament,
+-          hostUid: currentUid,
+-          activeStartedAt: isActiveTournamentShare
+-            ? Number((targetTournament as Tournament).startedAt || 0)
+-            : null,
+-          createdAt: serverTimestamp(),
+-          updatedAt: serverTimestamp(),
+-        }, { merge: isActiveTournamentShare }),
+-        SHARE_WRITE_TIMEOUT_MS,
+-        'Share standings sync'
+-      );
+-      recordDbMetric({
+-        flow: 'share_host',
+-        operation: 'write',
+-        count: 1,
+-        label: 'share_standings',
+-        dbRole: 'ephemeral',
+-        collection: SHARED_MATCHES_COLLECTION,
+-      });
++      if (!skipSharePersistence) {
++        await withTimeout(
++          saveSharedMatch(shareId, {
++            tournament: safeTournament,
++            hostUid: currentUid,
++            activeStartedAt: isActiveTournamentShare
++              ? Number((targetTournament as Tournament).startedAt || 0)
++              : null,
++            createdAt: serverTimestamp(),
++            updatedAt: serverTimestamp(),
++          }, { merge: isActiveTournamentShare }),
++          SHARE_WRITE_TIMEOUT_MS,
++          'Share standings sync'
++        );
++        recordDbMetric({
++          flow: 'share_host',
++          operation: 'write',
++          count: 1,
++          label: 'share_standings',
++          dbRole: 'ephemeral',
++          collection: SHARED_MATCHES_COLLECTION,
++        });
++      }
+       if (isActiveTournamentShare) {
+         setSharedMatchId(shareId);
+         setLinkedShareIds((prev) => Array.from(new Set([...prev, shareId])));
+diff --git a/src/features/tournaments/useActiveTournamentLifecycle.ts b/src/features/tournaments/useActiveTournamentLifecycle.ts
+index ceac33f..ba84227 100644
+--- a/src/features/tournaments/useActiveTournamentLifecycle.ts
++++ b/src/features/tournaments/useActiveTournamentLifecycle.ts
+@@ -4,6 +4,7 @@ import { auth, db } from '../../firebase';
+ import type { Tournament, TournamentHistory, TournamentStatsSyncState } from '../../types';
+ import { deleteActiveTournamentDraft, saveActiveTournamentDraft } from '../../services/activeDraftRepository';
+ import { PLAYER_STATS_COLLECTION, SHARED_MATCHES_COLLECTION, TOURNAMENTS_COLLECTION, ACTIVE_TOURNAMENT_DRAFTS_COLLECTION } from '../../services/firestoreCollections';
++import { stripLargeInlineImages, stripTournamentPlayerAvatars } from '../../services/firestoreSerialization';
+ import { saveSharedMatches } from '../../services/sharedMatchRepository';
+ import { invalidateTournamentHistoryCacheMetadata, normalizeHistoryTournament } from '../history/historyPersistence';
+ import { clearCachedLeaderboardUsers } from '../ranking/leaderboardCache';
+@@ -113,7 +114,7 @@ export const useActiveTournamentLifecycle = ({
+ 
+     setActiveSaveState('saving');
+     try {
+-      await saveActiveTournamentDraft(currentUid, toFirestoreSafe(nextTournament));
++      await saveActiveTournamentDraft(currentUid, toFirestoreSafe(stripLargeInlineImages(stripTournamentPlayerAvatars(nextTournament))));
+       recordDbMetric({
+         flow: 'active_draft',
+         operation: 'write',
+diff --git a/src/types.ts b/src/types.ts
+index 2487f02..20a9f85 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -69,6 +69,7 @@ export interface Tournament {
+   courtChanges?: CourtChange[];
+   rounds: Round[];
+   numRounds: number;
++  durationMinutes?: number;
+   venueName?: string;
+   location?: string;
+ }
+@@ -88,6 +89,7 @@ export interface TournamentHistory {
+   courts?: number;
+   totalPoints?: number;
+   numRounds: number;
++  durationMinutes?: number;
+   numPlayers: number;
+   rounds?: Round[];
+   players?: Player[];
+@@ -152,7 +154,7 @@ export interface FriendRequest {
+   resolvedAt?: any;
+ }
+ 
+-export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends';
++export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends' | 'rooms' | 'room-editor' | 'room-detail' | 'room-setup';
+ 
+ export type TournamentStatsSyncState = 'syncing' | 'synced' | 'error';
+ 
+diff --git a/tests/e2e/finished-flow.spec.ts b/tests/e2e/finished-flow.spec.ts
+index 774be2c..1b6bb69 100644
+--- a/tests/e2e/finished-flow.spec.ts
++++ b/tests/e2e/finished-flow.spec.ts
+@@ -4,7 +4,13 @@ test.describe('Finished Tournament Flow', () => {
+   test('history detail can open read-only match details and final standings', async ({ page }) => {
+     await page.goto('/app?e2e=finished-flow');
+ 
+-    await expect(page.getByRole('heading', { name: 'History Detail' })).toBeVisible();
++    await expect(page.getByRole('heading', { name: 'History', exact: true })).toBeVisible();
++    await expect(page.getByText('Event recap')).toBeVisible();
++    await expect(page.getByText('Players')).toBeVisible();
++    await expect(page.getByText('Rounds')).toBeVisible();
++    await expect(page.getByText('Courts')).toBeVisible();
++    await expect(page.getByText('Format')).toBeVisible();
++    await expect(page.getByText('Match history')).toBeVisible();
+     await expect(page.getByRole('button', { name: 'Round Details' }).first()).toBeVisible();
+ 
+     await page.getByRole('button', { name: 'Round Details' }).first().click();
+@@ -13,10 +19,10 @@ test.describe('Finished Tournament Flow', () => {
+     await expect(page.getByRole('button', { name: 'Finish Matches' })).toHaveCount(0);
+     await expect(page.getByRole('button', { name: 'Next Round' })).toHaveCount(0);
+ 
+-    await page.getByRole('button', { name: /View Final Standings/i }).first().click();
++    await page.getByRole('button', { name: 'Standings' }).first().click();
+ 
+     await expect(page.getByText('Ranking Player')).toBeVisible();
+     await expect(page.getByText('Ended')).toBeVisible();
+-    await expect(page.getByText('Match 12/12')).toBeVisible();
++    await expect(page.getByRole('button', { name: 'Rounds' })).toBeVisible();
+   });
+ });

@@ -257,9 +257,9 @@ export const LoginScreen = () => {
         <main className="flex flex-1 flex-col justify-center py-8">
           <header className={cn(sectionWidthClass, 'text-center', isLoginMode ? 'space-y-5' : 'space-y-3')}>
             <img
-              src="/assets/fom-logotype-color.png"
+              src="/assets/fom-play-logo-light-cropped.png"
               alt="FOM Play"
-              className={cn('mx-auto object-contain', isLoginMode ? 'h-10 w-[112px]' : 'h-9 w-[100px]')}
+              className={cn('mx-auto object-contain', isLoginMode ? 'h-14 w-[228px]' : 'h-12 w-[196px]')}
               loading="eager"
               decoding="async"
             />

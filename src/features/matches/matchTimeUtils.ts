@@ -33,24 +33,26 @@ export const getTournamentElapsedMs = (
 ) => {
   if (!rounds || rounds.length === 0) return 0;
 
-  return rounds.reduce((totalMs, round) => (
-    totalMs + (round.matches || []).reduce((roundMs, match) => {
-      if (match.status === 'pending') return roundMs;
+  return rounds.reduce((totalMs, round) => {
+    const roundElapsedMs = (round.matches || []).reduce((maxMatchMs, match) => {
+      if (match.status === 'pending') return maxMatchMs;
 
       if (match.status === 'active' && typeof match.startedAt === 'number') {
-        return roundMs + Math.max(0, nowMs - match.startedAt);
+        return Math.max(maxMatchMs, Math.max(0, nowMs - match.startedAt));
       }
 
       const parsedDuration = parseDurationToMs(match.duration);
       if (parsedDuration !== null) {
-        return roundMs + parsedDuration;
+        return Math.max(maxMatchMs, parsedDuration);
       }
 
       if (typeof match.startedAt === 'number' && typeof endedAt === 'number') {
-        return roundMs + Math.max(0, endedAt - match.startedAt);
+        return Math.max(maxMatchMs, Math.max(0, endedAt - match.startedAt));
       }
 
-      return roundMs;
-    }, 0)
-  ), 0);
+      return maxMatchMs;
+    }, 0);
+
+    return totalMs + roundElapsedMs;
+  }, 0);
 };

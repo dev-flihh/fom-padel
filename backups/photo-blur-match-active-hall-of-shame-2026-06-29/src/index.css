@@ -1,0 +1,538 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  
+  --color-surface: #F7F7FA;
+  --color-surface-container: #FFFFFF;
+  --color-primary: #E65E14;
+  --color-on-surface: #111827;
+  --color-error: #FF3B30;
+  --color-outline-variant: #ECECF2;
+  --color-ios-blue: #007AFF;
+  --color-ios-gray: #8E8E93;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    color-scheme: light;
+    background-color: #FFFFFF;
+  }
+
+  html.app-loading,
+  body.app-loading,
+  #root.app-loading {
+    background-color: #FFFFFF !important;
+  }
+
+  body.app-loading::after {
+    content: "";
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(-1 * env(safe-area-inset-bottom, 0px) - 140px);
+    height: calc(env(safe-area-inset-bottom, 0px) + 220px);
+    background: #FFFFFF;
+    pointer-events: none;
+    z-index: 2147483647;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :where(button, a, input, select, textarea, [tabindex]):focus {
+    outline: none;
+  }
+
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid rgba(230, 94, 20, 0.38);
+    outline-offset: 3px;
+  }
+
+  body {
+    @apply bg-surface text-on-surface antialiased;
+    color-scheme: light;
+    background-color: #FFFFFF;
+    font-family: var(--font-sans);
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+    min-height: 100dvh;
+  }
+
+  h1, h2, h3, h4 {
+    @apply tracking-tight text-on-surface;
+  }
+
+  input, select, textarea {
+    @apply text-on-surface;
+    color-scheme: light;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+}
+
+@layer utilities {
+  .min-h-screen {
+    min-height: 100dvh;
+    min-height: -webkit-fill-available;
+  }
+}
+
+@layer components {
+  @keyframes cta-shimmer {
+    0% {
+      left: -58%;
+    }
+    58% {
+      left: 118%;
+    }
+    100% {
+      left: 118%;
+    }
+  }
+
+  @keyframes room-ambient-drift {
+    0% {
+      transform: translate3d(-18%, -8%, 0) rotate(-8deg) scale(1);
+      opacity: 0.68;
+    }
+    45% {
+      transform: translate3d(8%, 5%, 0) rotate(4deg) scale(1.1);
+      opacity: 0.96;
+    }
+    100% {
+      transform: translate3d(22%, -7%, 0) rotate(10deg) scale(1.16);
+      opacity: 0.76;
+    }
+  }
+
+  @keyframes fom-room-hero-sheen {
+    0% {
+      transform: translate3d(-10%, -3%, 0) rotate(-8deg) scale(1);
+      opacity: 0.38;
+    }
+    50% {
+      opacity: 0.62;
+    }
+    100% {
+      transform: translate3d(8%, 4%, 0) rotate(7deg) scale(1.08);
+      opacity: 0.44;
+    }
+  }
+
+  @keyframes fom-room-hero-wave {
+    0% {
+      transform: translate3d(-2.5%, 0, 0) rotate(-0.8deg);
+    }
+    100% {
+      transform: translate3d(2.5%, -5%, 0) rotate(0.8deg);
+    }
+  }
+
+  @keyframes fom-room-hero-pulse {
+    0% {
+      transform: translate3d(-2%, 0, 0) scale(1);
+      opacity: 0.82;
+    }
+    100% {
+      transform: translate3d(2%, -2%, 0) scale(1.06);
+      opacity: 1;
+    }
+  }
+
+  @keyframes toxic-confetti-fall {
+    0% {
+      opacity: 1;
+      transform: translateY(-18px) rotate(0deg);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(340px) rotate(480deg);
+    }
+  }
+
+  @keyframes toxic-crown-in {
+    0% {
+      opacity: 0;
+      transform: translateY(-18px) rotate(-4deg);
+    }
+    62% {
+      opacity: 1;
+      transform: translateY(3px) rotate(-24deg);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) rotate(-18deg);
+    }
+  }
+
+  @keyframes toxic-ticker-in {
+    0% {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .toxic-confetti-piece {
+    position: absolute;
+    top: -16px;
+    opacity: 0;
+    animation-name: toxic-confetti-fall;
+    animation-timing-function: ease-in;
+    animation-fill-mode: forwards;
+  }
+
+  .toxic-crown-drop {
+    animation: toxic-crown-in 0.7s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
+
+  .toxic-ticker {
+    animation: toxic-ticker-in 0.45s ease-out both;
+  }
+
+  .fom-room-hero {
+    background: #ff5500;
+  }
+
+  .fom-room-hero-motion {
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 78% 4%, rgba(255, 255, 255, 0.2), transparent 28%),
+      radial-gradient(ellipse at 8% 34%, rgba(255, 186, 124, 0.25), transparent 34%),
+      linear-gradient(180deg, #ff5500 0%, #fa5000 58%, #e94800 100%);
+  }
+
+  .fom-room-hero-motion::before {
+    content: "";
+    position: absolute;
+    inset: -22% -26% 18% 34%;
+    border-radius: 999px;
+    background:
+      radial-gradient(ellipse at 38% 40%, rgba(255, 255, 255, 0.18), transparent 56%),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.025));
+    filter: blur(2px);
+    transform: rotate(13deg);
+    animation: fom-room-hero-pulse 8s ease-in-out infinite alternate;
+    will-change: transform, opacity;
+  }
+
+  .fom-room-hero-motion::after {
+    content: "";
+    position: absolute;
+    inset: -28% -34% -18% -34%;
+    background:
+      linear-gradient(118deg, transparent 20%, rgba(255, 255, 255, 0.13) 38%, transparent 55%),
+      linear-gradient(72deg, transparent 50%, rgba(255, 255, 255, 0.08) 58%, transparent 68%);
+    animation: fom-room-hero-sheen 10s ease-in-out infinite alternate;
+    will-change: transform, opacity;
+  }
+
+  .fom-room-hero-ribbons {
+    animation: fom-room-hero-wave 8s ease-in-out infinite alternate;
+    will-change: transform;
+  }
+
+  .room-hero-ambient {
+    position: absolute;
+    inset: -40% -46%;
+    pointer-events: none;
+    background:
+      linear-gradient(
+        112deg,
+        transparent 8%,
+        rgba(255, 255, 255, 0.08) 25%,
+        rgba(230, 94, 20, 0.3) 41%,
+        rgba(255, 178, 118, 0.18) 56%,
+        transparent 73%
+      ),
+      radial-gradient(ellipse at 82% 18%, rgba(230, 94, 20, 0.24), transparent 48%);
+    filter: blur(15px);
+    mix-blend-mode: screen;
+    transform-origin: center;
+    animation: room-ambient-drift 11s ease-in-out infinite alternate;
+    will-change: transform, opacity;
+  }
+
+  .room-hero-ambient::after {
+    content: "";
+    position: absolute;
+    inset: 18% 12%;
+    background: linear-gradient(92deg, transparent, rgba(255, 255, 255, 0.11), transparent);
+    transform: rotate(-14deg);
+  }
+
+  .cta-shimmer {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  .cta-shimmer::after {
+    content: "";
+    position: absolute;
+    top: -24%;
+    bottom: -24%;
+    width: 44%;
+    left: -58%;
+    transform: skewX(-20deg);
+    background: linear-gradient(
+      110deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.1) 34%,
+      rgba(255, 255, 255, 0.34) 50%,
+      rgba(255, 255, 255, 0.1) 66%,
+      transparent 100%
+    );
+    pointer-events: none;
+    animation: cta-shimmer 2.8s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cta-shimmer::after {
+      animation: none;
+    }
+
+    .room-hero-ambient {
+      animation: none;
+      transform: none;
+    }
+
+    .fom-room-hero-motion::after,
+    .fom-room-hero-motion::before,
+    .fom-room-hero-ribbons {
+      animation: none;
+      transform: none;
+    }
+  }
+
+  .ios-blur {
+    @apply backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+    padding-top: var(--app-safe-top, 0px);
+    min-height: calc(56px + var(--app-safe-top, 0px));
+  }
+  
+  .ios-card {
+    @apply bg-white rounded-3xl shadow-[0_8px_30px_rgba(17,24,39,0.06)] border border-ios-gray/10;
+  }
+
+  .ios-page {
+    @apply min-h-screen bg-surface;
+  }
+
+  .ios-header-title {
+    @apply text-[17px] font-semibold tracking-tight text-on-surface;
+  }
+
+  .ios-topbar {
+    @apply sticky top-0 z-50 w-full h-14 px-4 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+  }
+
+  .ios-topbar-fixed {
+    @apply sticky top-0 z-50 w-full h-14 px-4 flex items-center justify-between backdrop-blur-2xl bg-white/85 supports-[backdrop-filter]:bg-white/72;
+  }
+
+  .ios-topbar-icon-btn {
+    @apply w-9 h-9 rounded-full flex items-center justify-center text-on-surface/80 shrink-0 active:opacity-80 active:scale-[0.985] transition-all;
+  }
+
+  .ios-topbar-icon {
+    @apply w-5 h-5;
+  }
+
+  .ios-list-card {
+    @apply bg-white border border-ios-gray/10 rounded-2xl p-4 shadow-sm;
+  }
+
+  .ios-meta-label {
+    @apply text-[10px] font-bold uppercase tracking-widest text-ios-gray;
+  }
+
+  .ios-input {
+    @apply w-full h-12 bg-ios-gray/5 border border-ios-gray/15 rounded-xl px-4 text-[14px] font-medium outline-none focus:border-primary/35 focus:ring-2 focus:ring-primary/10 transition-all;
+  }
+
+  .ios-button-primary {
+    @apply h-12 px-5 rounded-xl bg-primary text-white font-bold shadow-md shadow-primary/20 active:scale-[0.98] transition-all;
+  }
+
+  .ios-section {
+    @apply px-5 mb-8;
+  }
+
+  .ios-section-title {
+    @apply text-[11px] font-bold uppercase tracking-widest text-on-surface/55;
+  }
+
+  .tap-target {
+    @apply active:opacity-80 active:scale-[0.985] transition-all;
+  }
+
+  .standings-format-short {
+    display: none;
+  }
+
+  .standings-compact-grid {
+    grid-template-columns: minmax(0, 1fr) 70px 40px 40px;
+  }
+
+  .standings-medal-badge {
+    position: relative;
+    overflow: visible;
+    isolation: isolate;
+  }
+
+  .standings-medal-badge::before,
+  .standings-medal-badge::after {
+    content: "";
+    position: absolute;
+    bottom: -0.18rem;
+    width: 0.24rem;
+    height: 0.34rem;
+    border-radius: 0 0 0.12rem 0.12rem;
+    opacity: 0.62;
+    z-index: -1;
+  }
+
+  .standings-medal-badge::before {
+    left: 0.43rem;
+    transform: rotate(14deg);
+  }
+
+  .standings-medal-badge::after {
+    right: 0.43rem;
+    transform: rotate(-14deg);
+  }
+
+  .standings-medal-gold::before,
+  .standings-medal-gold::after {
+    background: #d9a900;
+  }
+
+  .standings-medal-silver::before,
+  .standings-medal-silver::after {
+    background: #9aa6b4;
+  }
+
+  .standings-medal-bronze::before,
+  .standings-medal-bronze::after {
+    background: #b97145;
+  }
+
+  @media (max-width: 360px) {
+    .standings-header-inner,
+    .standings-main {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    .standings-header-logo {
+      height: 1.65rem;
+    }
+
+    .standings-header-actions {
+      gap: 0.5rem;
+    }
+
+    .standings-header-install,
+    .standings-header-share {
+      width: 2rem;
+      gap: 0;
+    }
+
+    .standings-header-install span,
+    .standings-header-share-label {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .standings-format-full {
+      display: none;
+    }
+
+    .standings-format-short {
+      display: inline;
+    }
+
+    .standings-compact-grid {
+      grid-template-columns: minmax(0, 1fr) 48px 32px 32px !important;
+      column-gap: 0.25rem !important;
+    }
+
+    .standings-compact-row {
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .standings-compact-player {
+      gap: 0.25rem;
+    }
+
+    .standings-compact-rank {
+      width: 1.25rem;
+      height: 1.25rem;
+      font-size: 9px;
+    }
+
+    .standings-medal-badge::before,
+    .standings-medal-badge::after {
+      bottom: -0.16rem;
+      width: 0.2rem;
+      height: 0.3rem;
+    }
+
+    .standings-medal-badge::before {
+      left: 0.36rem;
+    }
+
+    .standings-medal-badge::after {
+      right: 0.36rem;
+    }
+
+    .standings-compact-avatar {
+      width: 1.5rem;
+      height: 1.5rem;
+    }
+
+    .standings-compact-player-name {
+      font-size: 12px;
+    }
+
+    .standings-compact-meta {
+      font-size: 9.5px;
+    }
+  }
+  
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

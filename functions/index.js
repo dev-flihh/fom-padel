@@ -52,9 +52,35 @@ const toSafeLeaderboardDocId = (value = '') => {
   return normalized || 'unknown';
 };
 
-const getBaseMMRChange = (isWin, scoreDiff) => {
-  if (isWin) return scoreDiff >= 10 ? 40 : 25;
-  return scoreDiff >= 10 ? -35 : -20;
+const DOMINANT_SCORE_SHARE_THRESHOLD = 0.7;
+const DRAW_BASE_MMR_CHANGE = 8;
+const DRAW_UNDERDOG_MMR_STEP = 50;
+const DRAW_UNDERDOG_BONUS_PER_STEP = 3;
+const DRAW_UNDERDOG_BONUS_CAP = 20;
+
+const isDominantScoreline = (ownScore, opponentScore) => {
+  const safeOwnScore = Math.max(0, toNumber(ownScore, 0));
+  const safeOpponentScore = Math.max(0, toNumber(opponentScore, 0));
+  if (safeOwnScore === safeOpponentScore) return false;
+  const totalScore = safeOwnScore + safeOpponentScore;
+  if (totalScore <= 0) return false;
+  const winnerScore = Math.max(safeOwnScore, safeOpponentScore);
+  return (winnerScore / totalScore) >= DOMINANT_SCORE_SHARE_THRESHOLD;
+};
+
+const getDrawMMRChange = (teamAverageMmr, opponentAverageMmr) => {
+  const strengthGap = toNumber(opponentAverageMmr, 0) - toNumber(teamAverageMmr, 0);
+  if (strengthGap <= 0) return DRAW_BASE_MMR_CHANGE;
+  const bonus = Math.min(
+    DRAW_UNDERDOG_BONUS_CAP,
+    Math.floor(strengthGap / DRAW_UNDERDOG_MMR_STEP) * DRAW_UNDERDOG_BONUS_PER_STEP
+  );
+  return DRAW_BASE_MMR_CHANGE + bonus;
+};
+
+const getBaseMMRChange = (isWin, isDominant) => {
+  if (isWin) return isDominant ? 40 : 25;
+  return isDominant ? -35 : -20;
 };
 
 const getModifierMMRChange = (isWin, isUnderdog, isFavorite) => {
@@ -63,28 +89,28 @@ const getModifierMMRChange = (isWin, isUnderdog, isFavorite) => {
   return 0;
 };
 
-const calculateMMRChange = (isWin, scoreDiff, isUnderdog = false, isFavorite = false) => (
-  getBaseMMRChange(isWin, scoreDiff) + getModifierMMRChange(isWin, isUnderdog, isFavorite)
+const calculateMMRChange = (isWin, isDominant, isUnderdog = false, isFavorite = false) => (
+  getBaseMMRChange(isWin, isDominant) + getModifierMMRChange(isWin, isUnderdog, isFavorite)
 );
 
-const buildResultReason = (isDraw, isWin, scoreDiff, isUnderdog, isFavorite) => {
+const buildResultReason = (isDraw, isWin, isDominant, isUnderdog, isFavorite, modifierDeltaMmr = 0) => {
   if (isDraw) {
+    const hasUnderdogBonus = modifierDeltaMmr > 0 && isUnderdog;
     return {
-      reasonCode: 'draw',
-      reasonLabel: 'Draw',
-      baseReasonLabel: 'Draw',
-      modifierCode: 'none',
-      modifierLabel: '',
+      reasonCode: hasUnderdogBonus ? 'underdog_draw' : 'draw',
+      reasonLabel: hasUnderdogBonus ? 'Draw + Underdog Bonus' : 'Draw Reward',
+      baseReasonLabel: 'Draw Reward',
+      modifierCode: hasUnderdogBonus ? 'underdog_draw_bonus' : 'none',
+      modifierLabel: hasUnderdogBonus ? 'Underdog Draw Bonus' : '',
     };
   }
 
-  const dominant = scoreDiff >= 10;
   const reasonCode = isWin
-    ? (dominant ? 'dominant_win' : 'standard_win')
-    : (dominant ? 'heavy_loss' : 'standard_loss');
+    ? (isDominant ? 'dominant_win' : 'standard_win')
+    : (isDominant ? 'heavy_loss' : 'standard_loss');
   const baseReasonLabel = isWin
-    ? (dominant ? 'Dominant Win' : 'Standard Win')
-    : (dominant ? 'Heavy Loss' : 'Standard Loss');
+    ? (isDominant ? 'Dominant Win' : 'Standard Win')
+    : (isDominant ? 'Heavy Loss' : 'Standard Loss');
   const modifierCode = isWin
     ? (isUnderdog ? 'underdog_bonus' : 'none')
     : (isFavorite ? 'favorite_penalty' : 'none');
@@ -131,7 +157,7 @@ const buildFriendMirrorPayload = (userId, userData = {}) => {
   if (typeof userData?.displayName === 'string') payload.displayName = userData.displayName;
   if (typeof userData?.photoURL === 'string') payload.photoURL = userData.photoURL;
   if (typeof userData?.username === 'string') payload.username = userData.username;
-  if (Number.isFinite(Number(userData?.mmr))) payload.mmr = Math.max(0, Number(userData.mmr));
+  if (Number.isFinite(Number(userData?.mmr))) payload.mmr = Number(userData.mmr);
 
   return payload;
 };
@@ -145,7 +171,7 @@ const buildFriendRequestMirrorPatch = (userId, userData = {}, role = 'requester'
   if (typeof userData?.displayName === 'string') payload[`${safeRole}DisplayName`] = userData.displayName;
   if (typeof userData?.photoURL === 'string') payload[`${safeRole}PhotoURL`] = userData.photoURL;
   if (typeof userData?.username === 'string') payload[`${safeRole}Username`] = userData.username;
-  if (Number.isFinite(Number(userData?.mmr))) payload[`${safeRole}Mmr`] = Math.max(0, Number(userData.mmr));
+  if (Number.isFinite(Number(userData?.mmr))) payload[`${safeRole}Mmr`] = Number(userData.mmr);
 
   return payload;
 };
@@ -379,7 +405,7 @@ const toSearchUserResult = (docSnap) => {
     username: typeof data.username === 'string' ? data.username : '',
     phoneNumber: typeof data.phoneNumber === 'string' ? data.phoneNumber : '',
     photoURL: typeof data.photoURL === 'string' ? data.photoURL : '',
-    mmr: Math.max(0, toNumber(data.mmr, 0)),
+    mmr: toNumber(data.mmr, 0),
     totalMatches: Math.max(0, toNumber(data.totalMatches, 0)),
     region: typeof data.region === 'string' ? data.region : '',
     homeBase: typeof data.homeBase === 'string' ? data.homeBase : '',
@@ -409,6 +435,7 @@ const buildUserHistorySummaryDoc = (tournamentData, tournamentId, participantSum
     name: typeof tournamentData?.name === 'string' ? tournamentData.name : '',
     format: typeof tournamentData?.format === 'string' ? tournamentData.format : 'Americano',
     ...(typeof tournamentData?.backgroundId === 'string' ? { backgroundId: tournamentData.backgroundId } : {}),
+    ...(typeof tournamentData?.themeColorId === 'string' ? { themeColorId: tournamentData.themeColorId } : {}),
     ...(typeof tournamentData?.criteria === 'string' ? { criteria: tournamentData.criteria } : {}),
     ...(typeof tournamentData?.scoringType === 'string' ? { scoringType: tournamentData.scoringType } : {}),
     ...(typeof tournamentData?.startedAt === 'number' ? { startedAt: tournamentData.startedAt } : {}),
@@ -418,6 +445,8 @@ const buildUserHistorySummaryDoc = (tournamentData, tournamentId, participantSum
     ...(Number.isFinite(Number(tournamentData?.totalPoints)) ? { totalPoints: Number(tournamentData.totalPoints) } : {}),
     numRounds: normalizedNumRounds,
     numPlayers: normalizedNumPlayers,
+    ...(safePlayers.length > 0 ? { players: safePlayers } : {}),
+    ...(safeRounds.length > 0 ? { rounds: safeRounds } : {}),
     ...(Array.isArray(tournamentData?.courtChanges) ? { courtChanges: tournamentData.courtChanges } : {}),
     ...(typeof tournamentData?.venueName === 'string' ? { venueName: tournamentData.venueName } : {}),
     ...(typeof tournamentData?.location === 'string' ? { location: tournamentData.location } : {}),
@@ -431,6 +460,7 @@ const buildUserHistorySummaryDoc = (tournamentData, tournamentId, participantSum
     playedAt: tournamentData?.endedAt || FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
     hasDetail: true,
+    statsVersion: Number.isFinite(Number(tournamentData?.statsVersion)) ? Number(tournamentData.statsVersion) : 1,
     source: 'cloud_function_v2',
   };
 };
@@ -529,12 +559,14 @@ const collectTournamentAggregates = (tournamentData, tournamentId, baselineMmrBy
     const scoreDiff = Math.abs(safeOwnScore - safeOpponentScore);
     const isDraw = safeOwnScore === safeOpponentScore;
     const isWin = safeOwnScore > safeOpponentScore;
+    const isDominant = isDominantScoreline(safeOwnScore, safeOpponentScore);
     const currentMmrBefore = toNumber(runningMmrByUid.get(uid), 0);
-    const baseDeltaMmr = isDraw ? 0 : getBaseMMRChange(isWin, scoreDiff);
-    const modifierDeltaMmr = isDraw ? 0 : getModifierMMRChange(isWin, isUnderdog, isFavorite);
-    const deltaMmr = isDraw ? 0 : calculateMMRChange(isWin, scoreDiff, isUnderdog, isFavorite);
+    const drawDeltaMmr = isDraw ? getDrawMMRChange(ownTeamAverageMmr, opponentTeamAverageMmr) : 0;
+    const baseDeltaMmr = isDraw ? DRAW_BASE_MMR_CHANGE : getBaseMMRChange(isWin, isDominant);
+    const modifierDeltaMmr = isDraw ? Math.max(0, drawDeltaMmr - DRAW_BASE_MMR_CHANGE) : getModifierMMRChange(isWin, isUnderdog, isFavorite);
+    const deltaMmr = isDraw ? drawDeltaMmr : calculateMMRChange(isWin, isDominant, isUnderdog, isFavorite);
     const mmrAfter = currentMmrBefore + deltaMmr;
-    const reason = buildResultReason(isDraw, isWin, scoreDiff, isUnderdog, isFavorite);
+    const reason = buildResultReason(isDraw, isWin, isDominant, isUnderdog, isFavorite, modifierDeltaMmr);
     const existing = participantMap.get(uid) || {
       uid,
       displayName: participant?.name || '',
@@ -580,8 +612,8 @@ const collectTournamentAggregates = (tournamentData, tournamentId, baselineMmrBy
       opponentSummary: summarizePlayers(opponentPlayers),
       teamAverageMmr: ownTeamAverageMmr,
       opponentAverageMmr: opponentTeamAverageMmr,
-      isUnderdog: Boolean(!isDraw && isUnderdog),
-      isFavorite: Boolean(!isDraw && isFavorite),
+      isUnderdog: Boolean(isUnderdog),
+      isFavorite: Boolean(isFavorite),
       mmrBefore: currentMmrBefore,
       mmrAfter,
       baseDeltaMmr,
@@ -608,6 +640,7 @@ const collectTournamentAggregates = (tournamentData, tournamentId, baselineMmrBy
       const teamBPlayers = getUniqueMatchPlayers(match?.teamB?.players).filter((player) => isLikelyFirebaseUid(player.id));
       const teamAScore = toNumber(match?.teamA?.score, 0);
       const teamBScore = toNumber(match?.teamB?.score, 0);
+      if (teamAScore + teamBScore <= 0) continue;
       const teamAAverageMmr = getTeamAverageMmr(teamAPlayers, runningMmrByUid);
       const teamBAverageMmr = getTeamAverageMmr(teamBPlayers, runningMmrByUid);
       const teamAIsUnderdog = teamAAverageMmr < teamBAverageMmr;

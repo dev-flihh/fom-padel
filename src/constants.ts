@@ -87,6 +87,8 @@ export const INITIAL_TOURNAMENT: Tournament = {
   name: 'Padel Tournament',
   format: 'Mexicano',
   themeColorId: 'orange',
+  toxicModeEnabled: false,
+  toxicIntensity: 'savage',
   criteria: 'Matches Won',
   courts: 1,
   totalPoints: 21,
@@ -94,5 +96,6 @@ export const INITIAL_TOURNAMENT: Tournament = {
   inactivePlayerIds: [],
   courtChanges: [],
   rounds: [],
-  numRounds: 8
+  numRounds: 8,
+  durationMinutes: 120
 };

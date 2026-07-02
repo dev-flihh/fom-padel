@@ -1,0 +1,225 @@
+{
+  "recoveryType": "manual_round_reconstruction",
+  "status": "applied_to_history_and_mmr",
+  "createdAt": "2026-05-04",
+  "sourceEvidence": {
+    "finalStandingsScreenshot": true,
+    "sharedLinkPartialRounds": true,
+    "sharedLinkId": "yzg2868w",
+    "hostEmail": "falih.hrmn@gmail.com",
+    "hostUid": "2qLcKN5Bj4eRnIuvP2URrruhp7g2",
+    "coverageNote": "Shared snapshot recovered only the early active state. Rounds 10-13 were manually reconstructed from host/player memory and applied after host approval."
+  },
+  "match": {
+    "id": "tm_evxzaa7c",
+    "name": "FOM Intense Play",
+    "format": "Mexicano",
+    "venueName": "Padel Yard",
+    "location": "Tangerang",
+    "date": "2026-05-03",
+    "playersCount": 13,
+    "courts": 2,
+    "numRoundsPlanned": 14,
+    "roundDisplay": "14/14",
+    "durationDisplay": "04:38:20"
+  },
+  "finalStandingsTop10": [
+    {
+      "rank": 1,
+      "displayName": "Andika Ramadhani",
+      "stats": { "wins": 6, "losses": 2, "draws": 2, "matches": 10, "diff": 6, "points": 23 }
+    },
+    {
+      "rank": 2,
+      "displayName": "Andi M Rizky",
+      "stats": { "wins": 5, "losses": 1, "draws": 0, "matches": 6, "diff": 12, "points": 18 }
+    },
+    {
+      "rank": 3,
+      "displayName": "Rudi",
+      "stats": { "wins": 4, "losses": 2, "draws": 3, "matches": 9, "diff": 10, "points": 23 }
+    },
+    {
+      "rank": 4,
+      "displayName": "aldif reza",
+      "stats": { "wins": 4, "losses": 2, "draws": 3, "matches": 9, "diff": 6, "points": 21 }
+    },
+    {
+      "rank": 5,
+      "displayName": "Falih",
+      "stats": { "wins": 4, "losses": 3, "draws": 3, "matches": 10, "diff": 4, "points": 22 }
+    },
+    {
+      "rank": 6,
+      "displayName": "dinar alam",
+      "stats": { "wins": 4, "losses": 3, "draws": 1, "matches": 10, "diff": 2, "points": 21 }
+    },
+    {
+      "rank": 7,
+      "displayName": "Elaw",
+      "stats": { "wins": 3, "losses": 3, "draws": 3, "matches": 9, "diff": 2, "points": 19 }
+    },
+    {
+      "rank": 8,
+      "displayName": "Fenza Kamal",
+      "stats": { "wins": 3, "losses": 4, "draws": 0, "matches": 7, "diff": -6, "points": 11 }
+    },
+    {
+      "rank": 9,
+      "displayName": "Steven Kurniajaya",
+      "stats": { "wins": 3, "losses": 4, "draws": 2, "matches": 9, "diff": -8, "points": 14 }
+    },
+    {
+      "rank": 10,
+      "displayName": "Tim",
+      "stats": { "wins": 2, "losses": 4, "draws": 2, "matches": 8, "diff": -4, "points": 14 }
+    }
+  ],
+  "rounds": [
+    {
+      "roundId": 9,
+      "confidence": "confirmed_by_host_memory",
+      "matches": [
+        {
+          "court": 1,
+          "teamA": ["Andi M Rizky", "Andika Ramadhani"],
+          "scoreA": 3,
+          "teamB": ["aldif reza", "Falih"],
+          "scoreB": 1
+        },
+        {
+          "court": 2,
+          "teamA": ["Fenza Kamal", "Farrel"],
+          "scoreA": 1,
+          "teamB": ["Rudi", "Elaw"],
+          "scoreB": 3
+        }
+      ]
+    },
+    {
+      "roundId": 10,
+      "confidence": "generated_from_share_state_after_andi_inactive",
+      "notes": [
+        "Andi M Rizky was made inactive before this round.",
+        "Scores are not confirmed. Court 1 is currently narrowed to likely 1-3 or 0-4 for Rudi/dinar, but not safe for MMR.",
+        "Host confirmed with another player that Timothy/Tim and Farrel had a draw in one match above round 9. Because Farrel was inactive by round 12, this draw must belong to round 10 or round 11, likely via a manual replacement from the generated pairing."
+      ],
+      "matches": [
+        {
+          "court": 1,
+          "teamA": ["Andika Ramadhani", "Steven Kurniajaya"],
+          "scoreA": null,
+          "teamB": ["Rudi", "dinar alam"],
+          "scoreB": null
+        },
+        {
+          "court": 2,
+          "teamA": ["Muhammad Dzikri", "Farrel"],
+          "scoreA": null,
+          "teamB": ["Tim", "Raybah"],
+          "scoreB": null
+        }
+      ],
+      "bye": ["aldif reza", "Falih", "Elaw", "Fenza Kamal"]
+    },
+    {
+      "roundId": 11,
+      "confidence": "likely_by_host_memory",
+      "matches": [
+        {
+          "court": null,
+          "teamA": ["aldif reza", "dinar alam"],
+          "scoreA": 2,
+          "teamB": ["Falih", "Elaw"],
+          "scoreB": 2
+        }
+      ],
+      "notes": [
+        "Court number is not confirmed.",
+        "This draw was accepted as the most likely Falih/aldif memory."
+      ]
+    },
+    {
+      "roundId": "10_or_11",
+      "confidence": "likely_by_host_memory_and_player_confirmation",
+      "matches": [
+        {
+          "court": null,
+          "teamA": ["Timothy", "Farrel"],
+          "scoreA": 2,
+          "teamB": ["Muhammad Dzikri", "Raybah"],
+          "scoreB": 2
+        }
+      ],
+      "notes": [
+        "Timothy/Farrel draw was confirmed by another player.",
+        "Host clarified Falih never played against Timothy/Farrel, so Dzikri/Raybah is currently the likely opponent pair.",
+        "Exact round and court are still not locked."
+      ]
+    },
+    {
+      "roundId": 12,
+      "confidence": "unknown",
+      "notes": [
+        "Farrel and Muhammad Dzikri were already inactive by this round.",
+        "Exact pairings and scores are not locked.",
+        "The previously uncertain Tim/Farrel draw has now been confirmed and should be placed before this round."
+      ],
+      "matches": []
+    },
+    {
+      "roundId": 13,
+      "confidence": "partial_confirmed",
+      "notes": [
+        "Farrel and Muhammad Dzikri were inactive.",
+        "Fenza Kamal should have been scheduled on another court but was manually replaced; replacement player is unknown."
+      ],
+      "matches": [
+        {
+          "court": 2,
+          "teamA": ["Falih", "Raybah"],
+          "scoreA": 3,
+          "teamB": ["Tim", "dinar alam"],
+          "scoreB": 1
+        }
+      ]
+    },
+    {
+      "roundId": 14,
+      "confidence": "confirmed_by_host_memory",
+      "notes": [
+        "Only active players were Falih, Andika Ramadhani, dinar alam, Steven Kurniajaya, Tim, and Raybah.",
+        "Generated match should have been Falih/Steve vs Andika/Raybah, but Raybah was manually replaced by dinar alam."
+      ],
+      "matches": [
+        {
+          "court": 1,
+          "teamA": ["Steven Kurniajaya", "Falih"],
+          "scoreA": 1,
+          "teamB": ["dinar alam", "Andika Ramadhani"],
+          "scoreB": 3
+        }
+      ]
+    }
+  ],
+  "mmrRecoveryStatus": {
+    "safeToApplyMmr": true,
+    "appliedAt": "2026-05-04T03:52:25.264Z",
+    "appliedByScript": "scripts/recover-fom-intense-play-20260503.mjs",
+    "ledgerEntriesCreated": 54,
+    "reason": "Host approved the final reconstructed round table. The reconstruction matches final W/L/D counts for the visible top 10; some reconstructed score differentials remain best-effort because the original browser state was unrecoverable.",
+    "verification": [
+      "tournaments/tm_evxzaa7c statsVersion is 1",
+      "tournament_stat_runs/tm_evxzaa7c exists in the ephemeral database",
+      "leaderboard_snapshots/global was refreshed after apply"
+    ]
+  },
+  "confirmedClues": [
+    "Timothy/Tim and Farrel had a draw after round 9 and before Farrel became inactive by round 12.",
+    "The Timothy/Tim and Farrel draw most likely has score 2-2 because matches use totalPoints 4."
+  ],
+  "knownContradictions": [
+    "Rudi's final screenshot line is difficult to reconcile exactly with the confirmed R9 score and the currently remembered later rounds.",
+    "The confirmed Tim/Farrel draw implies at least one manual replacement in round 10 or round 11, because the generated round 10 pairing did not naturally place Tim and Farrel together."
+  ]
+}

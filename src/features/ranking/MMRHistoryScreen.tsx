@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils';
 import { db } from '../../firebase';
 import { PLAYER_MATCH_LEDGER_COLLECTION } from '../../services/firestoreCollections';
 import { type PlayerMatchLedgerEntry } from '../../types';
-import { getRankInfo } from './rankUtils';
+import { formatDisplayMmr, getRankInfo, toRawMmr } from './rankUtils';
 import { MMRSessionHistoryCard } from './MMRSessionHistoryCard';
 import { formatLedgerEntryDate, formatMmrDelta, getLedgerEntryTimestamp, getLedgerGroupLabel, type MMRSessionHistoryGroup } from './mmrHistoryUtils';
 import { rankingDetailBackButtonClassName, rankingDetailHeaderClassName, rankingDetailTitleClassName } from './rankingDetailLayout';
@@ -15,7 +15,7 @@ const MMR_HISTORY_PAGE_SIZE = 40;
 
 export const MMRHistoryScreen = ({ currentUser, onBack, onOpenRankDetails, renderLogo }: { currentUser: any; onBack: () => void; onOpenRankDetails: () => void; renderLogo: (className: string) => React.ReactNode }) => {
   const uid = String(currentUser?.uid || '').trim();
-  const currentMmr = Number.isFinite(Number(currentUser?.mmr)) ? Number(currentUser.mmr) : 0;
+  const currentMmr = toRawMmr(currentUser?.mmr);
   const currentRank = getRankInfo(currentMmr);
   const [entries, setEntries] = useState<PlayerMatchLedgerEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -199,12 +199,14 @@ export const MMRHistoryScreen = ({ currentUser, onBack, onOpenRankDetails, rende
           net: 0,
           wins: 0,
           losses: 0,
+          draws: 0,
           items: []
         };
 
         targetSession.net += Number(entry.deltaMmr || 0);
         if (entry.result === 'win') targetSession.wins += 1;
         if (entry.result === 'loss') targetSession.losses += 1;
+        if (entry.result === 'draw') targetSession.draws += 1;
         targetSession.items.push(entry);
 
         if (!existingSession) sessions.push(targetSession);
@@ -216,7 +218,7 @@ export const MMRHistoryScreen = ({ currentUser, onBack, onOpenRankDetails, rende
 
   const lastFiveResults = useMemo(
     () => entries
-      .filter((entry) => entry.result === 'win' || entry.result === 'loss')
+      .filter((entry) => entry.result === 'win' || entry.result === 'loss' || entry.result === 'draw')
       .slice(0, 5),
     [entries]
   );
@@ -227,13 +229,14 @@ export const MMRHistoryScreen = ({ currentUser, onBack, onOpenRankDetails, rende
   const displayName = String(currentUser?.displayName || currentUser?.username || 'Player').trim();
   const lastFiveWins = lastFiveResults.filter((entry) => entry.result === 'win').length;
   const lastFiveLosses = lastFiveResults.filter((entry) => entry.result === 'loss').length;
+  const lastFiveDraws = lastFiveResults.filter((entry) => entry.result === 'draw').length;
   const heroSparkPoints = useMemo(() => {
     const recent = [...entries].slice(0, 12).reverse();
     if (recent.length === 0) return '0,40 60,34 120,30 180,24 240,16 300,18 340,12';
     const values: number[] = [];
     let running = Number(recent[0]?.mmrBefore);
     if (!Number.isFinite(running)) {
-      running = Math.max(0, currentMmr - recent.reduce((sum, entry) => sum + Number(entry.deltaMmr || 0), 0));
+      running = currentMmr - recent.reduce((sum, entry) => sum + Number(entry.deltaMmr || 0), 0);
     }
     recent.forEach((entry) => {
       const after = Number(entry.mmrAfter);
@@ -286,7 +289,7 @@ export const MMRHistoryScreen = ({ currentUser, onBack, onOpenRankDetails, rende
             <div className="min-w-0">
               <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-white/80">Current Rating</p>
               <div className="flex items-baseline gap-1.5">
-                <span className="text-[54px] font-black leading-none tracking-[-0.05em] tabular-nums">{currentMmr.toLocaleString()}</span>
+                <span className="text-[54px] font-black leading-none tracking-[-0.05em] tabular-nums">{formatDisplayMmr(currentMmr)}</span>
                 <span className="text-[15px] font-bold text-white/80">MMR</span>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -334,11 +337,18 @@ export const MMRHistoryScreen = ({ currentUser, onBack, onOpenRankDetails, rende
           <div className="flex items-center gap-1.5">
             {lastFiveResults.length > 0
               ? lastFiveResults.map((entry) => (
-                <span key={entry.id} className={cn('h-2.5 w-2.5 rounded-full', entry.result === 'win' ? 'bg-[#18a486]' : 'bg-[#ef4444]')} />
+                <span key={entry.id} className={cn(
+                  'h-2.5 w-2.5 rounded-full',
+                  entry.result === 'win'
+                    ? 'bg-[#18a486]'
+                    : entry.result === 'draw'
+                      ? 'bg-primary'
+                      : 'bg-[#ef4444]'
+                )} />
               ))
               : [0, 1, 2, 3, 4].map((item) => <span key={item} className="h-2.5 w-2.5 rounded-full bg-[#d7d9df]" />)}
           </div>
-          <p className="text-[12px] font-extrabold text-[#111827]">{lastFiveWins}W · {lastFiveLosses}L</p>
+          <p className="text-[12px] font-extrabold text-[#111827]">{lastFiveWins}W · {lastFiveLosses}L · {lastFiveDraws}D</p>
         </section>
 
         <section className="mb-2 flex items-center justify-between px-5">

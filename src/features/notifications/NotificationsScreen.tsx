@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Bell, ChevronLeft } from 'lucide-react';
+import { AppPageHeader } from '../../components/app/AppPageHeader';
 import { cn } from '../../lib/utils';
 import { type AppNotification } from '../../types';
 import { getNotificationVisuals } from './notificationVisuals';
@@ -42,19 +43,27 @@ export const NotificationsScreen = ({ notifications, onMarkAsRead, onClearAll, o
     [notifications]
   );
   const unreadCount = sortedNotifications.filter((notif) => !notif.read).length;
+  const headerMetaItems = [
+    { label: sortedNotifications.length === 1 ? 'notification' : 'notifications', value: sortedNotifications.length.toLocaleString('en-US') },
+    { label: 'unread', value: unreadCount.toLocaleString('en-US') },
+  ];
 
   return (
-    <div className="bg-white min-h-screen pb-32">
-      <header className="ios-blur sticky top-0 z-50 flex items-center w-full px-4 h-14 border-b border-ios-gray/10">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <button onClick={onBack} className="tap-target p-2 -ml-2">
-            <ChevronLeft size={24} className="text-on-surface" />
-          </button>
-          <h1 className="text-[17px] font-bold tracking-tight text-on-surface truncate">Notifications</h1>
-        </div>
-      </header>
+    <div className="min-h-screen bg-white pb-32">
+      <main className="mx-auto max-w-2xl space-y-4 px-4 pb-4 pt-[calc(env(safe-area-inset-top,0px)+34px)]">
+        <AppPageHeader
+          eyebrow="Updates"
+          title="Notifications"
+          subtitle="Match updates and account activity."
+          metaItems={headerMetaItems}
+          className="px-0"
+          leading={(
+            <button onClick={onBack} className="tap-target -ml-2 flex h-10 w-10 items-center justify-center rounded-full bg-surface text-on-surface active:bg-ios-gray/[0.08]">
+              <ChevronLeft size={22} />
+            </button>
+          )}
+        />
 
-      <main className="max-w-md mx-auto px-4 py-4 space-y-4">
         {sortedNotifications.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
             <div className="w-20 h-20 bg-ios-gray/5 rounded-full flex items-center justify-center mb-4">

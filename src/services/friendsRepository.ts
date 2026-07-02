@@ -1,5 +1,5 @@
 import { httpsCallable } from 'firebase/functions';
-import { collection, doc, getDocs, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db, functions as firebaseFunctions } from '../firebase';
 import {
   USERS_COLLECTION,
@@ -16,6 +16,47 @@ type CurrentFriendUser = {
   photoURL?: string;
   username?: string;
   mmr?: number;
+};
+
+const normalizeFriendWithProfile = (friend: Friend, profile?: Partial<UserProfile> | null): Friend => {
+  const numericMmr = Number(profile?.mmr);
+  return {
+    ...friend,
+    displayName: profile?.displayName || friend.displayName || 'Player',
+    photoURL: profile?.photoURL || friend.photoURL || '',
+    username: profile?.username || friend.username || '',
+    mmr: Number.isFinite(numericMmr)
+      ? numericMmr
+      : (Number.isFinite(Number(friend.mmr)) ? Number(friend.mmr) : 0),
+  };
+};
+
+const hydrateFriendsFromProfiles = async (friends: Friend[]) => {
+  const uniqueFriends = Array.from(
+    new Map(
+      friends
+        .filter((friend) => String(friend?.uid || '').trim())
+        .map((friend) => [String(friend.uid).trim(), friend])
+    ).values()
+  );
+  if (uniqueFriends.length === 0) return [];
+
+  const profileResults = await Promise.all(
+    uniqueFriends.map(async (friend) => {
+      try {
+        const profileSnap = await getDoc(doc(db, USERS_COLLECTION, friend.uid));
+        return {
+          friend,
+          profile: profileSnap.exists() ? profileSnap.data() as UserProfile : null,
+        };
+      } catch (err) {
+        console.error('Friend profile refresh error:', err);
+        return { friend, profile: null };
+      }
+    })
+  );
+
+  return profileResults.map(({ friend, profile }) => normalizeFriendWithProfile(friend, profile));
 };
 
 export const fetchFriendsScreenData = async (uid: string) => {
@@ -43,8 +84,10 @@ export const fetchFriendsScreenData = async (uid: string) => {
     statusMap[targetUid] = (data.status || 'pending') as FriendRequestStatus;
   });
 
+  const mergedFriends = await hydrateFriendsFromProfiles(fetchedFriends);
+
   return {
-    mergedFriends: fetchedFriends,
+    mergedFriends,
     mergedIncoming: fetchedIncoming,
     statusMap,
     docsCount: friendsSnapshot.docs.length + incomingSnapshot.docs.length + outgoingSnapshot.docs.length,
@@ -55,7 +98,7 @@ export const fetchUserFriends = async (uid: string) => {
   const snapshot = await getDocs(query(collection(db, USERS_COLLECTION, uid, USER_FRIENDS_COLLECTION)));
   const fetched: Friend[] = [];
   snapshot.forEach((docSnap) => fetched.push(docSnap.data() as Friend));
-  return fetched;
+  return hydrateFriendsFromProfiles(fetched);
 };
 
 export const searchFriendUsers = async (searchQuery: string) => {
@@ -71,7 +114,7 @@ export const searchFriendUsers = async (searchQuery: string) => {
       const numericMmr = Number(result?.mmr);
       return {
         ...result,
-        mmr: Number.isFinite(numericMmr) ? Math.max(0, numericMmr) : 0
+        mmr: Number.isFinite(numericMmr) ? numericMmr : 0
       };
     }),
     queryCount: Number(response.data?.meta?.queryCount || 1),

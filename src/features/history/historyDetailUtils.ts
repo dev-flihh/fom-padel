@@ -35,6 +35,8 @@ export const buildReadOnlyTournamentFromHistory = (history: TournamentHistory): 
     format: history.format,
     backgroundId: history.backgroundId,
     themeColorId: history.themeColorId,
+    toxicModeEnabled: Boolean(history.toxicModeEnabled),
+    toxicIntensity: history.toxicIntensity || 'savage',
     criteria: history.criteria || 'Points Won',
     scoringType: history.scoringType,
     startedAt: fallbackStartedAt,

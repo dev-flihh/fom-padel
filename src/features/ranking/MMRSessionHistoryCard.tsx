@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronRight } from 'lucide-react';
+import { Activity, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { formatMmrDelta, type MMRSessionHistoryGroup } from './mmrHistoryUtils';
+import { formatDisplayMmr } from './rankUtils';
 
 export const MMRSessionHistoryCard = ({ session, defaultOpen = false }: { session: MMRSessionHistoryGroup; defaultOpen?: boolean }) => {
   const [open, setOpen] = useState(defaultOpen);
@@ -14,8 +15,8 @@ export const MMRSessionHistoryCard = ({ session, defaultOpen = false }: { sessio
         onClick={() => setOpen((value) => !value)}
         className="flex w-full items-center gap-3 px-[18px] py-[15px] text-left active:bg-[#f2f2f5]"
       >
-        <div className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[13px] bg-[#fff6ef] text-[10px] font-black tracking-[0.04em] text-primary">
-          {String(session.items[0]?.format || 'MXC').slice(0, 3).toUpperCase()}
+        <div className="flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[13px] bg-[#fff6ef] text-primary" aria-hidden="true">
+          <Activity size={18} strokeWidth={2.6} />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[15px] font-extrabold tracking-tight text-[#111827]">{session.name}</p>
@@ -28,6 +29,9 @@ export const MMRSessionHistoryCard = ({ session, defaultOpen = false }: { sessio
           <div className="mt-1 flex justify-end gap-1">
             <span className="rounded-full bg-[#f0fdf9] px-2 py-0.5 text-[10px] font-bold text-[#18a486]">{session.wins}W</span>
             <span className="rounded-full bg-[#fff5f5] px-2 py-0.5 text-[10px] font-bold text-[#ef4444]">{session.losses}L</span>
+            {session.draws > 0 && (
+              <span className="rounded-full bg-[#fff6ef] px-2 py-0.5 text-[10px] font-bold text-primary">{session.draws}D</span>
+            )}
           </div>
         </div>
         <ChevronRight size={16} className={cn('shrink-0 text-[#9ca3af] transition-transform duration-300', open ? 'rotate-90' : '')} />
@@ -46,7 +50,12 @@ export const MMRSessionHistoryCard = ({ session, defaultOpen = false }: { sessio
             {session.items.map((entry) => {
               const delta = Number(entry.deltaMmr || 0);
               const isPositive = delta >= 0;
-              const result = entry.result === 'loss' ? 'loss' : 'win';
+              const result = entry.result === 'loss' ? 'loss' : entry.result === 'draw' ? 'draw' : 'win';
+              const resultTone = result === 'win'
+                ? 'bg-[#f0fdf9] text-[#18a486]'
+                : result === 'draw'
+                  ? 'bg-[#fff6ef] text-primary'
+                  : 'bg-[#fff5f5] text-[#ef4444]';
               const scoreLabel = Number.isFinite(Number(entry.scoreFor)) && Number.isFinite(Number(entry.scoreAgainst))
                 ? `${Number(entry.scoreFor)}-${Number(entry.scoreAgainst)}`
                 : 'No score';
@@ -54,7 +63,7 @@ export const MMRSessionHistoryCard = ({ session, defaultOpen = false }: { sessio
               const mmrAfter = Number(entry.mmrAfter);
               const hasMmrSnapshot = Number.isFinite(mmrBefore) && Number.isFinite(mmrAfter);
               const typeLabel = entry.modifierLabel
-                ? `${entry.reasonLabel || entry.baseReasonLabel || 'Standard'} · ${entry.modifierLabel}`
+                ? `${entry.baseReasonLabel || entry.reasonLabel || 'Standard'} · ${entry.modifierLabel}`
                 : entry.reasonLabel || entry.baseReasonLabel || 'Standard';
 
               return (
@@ -74,9 +83,9 @@ export const MMRSessionHistoryCard = ({ session, defaultOpen = false }: { sessio
                       <span className="text-[18px] font-black leading-none tracking-tight text-[#111827] tabular-nums">{scoreLabel}</span>
                       <span className={cn(
                         'rounded-full px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.02em]',
-                        result === 'win' ? 'bg-[#f0fdf9] text-[#18a486]' : 'bg-[#fff5f5] text-[#ef4444]'
+                        resultTone
                       )}>
-                        {result === 'win' ? 'Win' : 'Loss'}
+                        {result === 'win' ? 'Win' : result === 'draw' ? 'Draw' : 'Loss'}
                       </span>
                     </div>
                     <p className="mb-1 text-[12px] font-semibold leading-snug text-[#374151]">
@@ -88,7 +97,7 @@ export const MMRSessionHistoryCard = ({ session, defaultOpen = false }: { sessio
                       </p>
                       {hasMmrSnapshot && (
                         <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#f2f2f5] px-2 py-0.5 text-[10px] font-bold text-[#6b7280]">
-                          {mmrBefore.toLocaleString()} <span className="text-[9px] text-[#9ca3af]">→</span> {mmrAfter.toLocaleString()}
+                          {formatDisplayMmr(mmrBefore)} <span className="text-[9px] text-[#9ca3af]">→</span> {formatDisplayMmr(mmrAfter)}
                         </span>
                       )}
                     </div>

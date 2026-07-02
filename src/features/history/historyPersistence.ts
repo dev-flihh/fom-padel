@@ -62,8 +62,13 @@ export const normalizeHistoryTournament = (rawItem: TournamentHistory): Tourname
           ? new Date(rawDate)
           : new Date();
   const rounds = Array.isArray(rawItem.rounds) ? rawItem.rounds : [];
+  const normalizedToxicIntensity = rawItem.toxicIntensity || 'savage';
   if (rounds.length === 0) {
-    return { ...rawItem, date: normalizedDate };
+    return {
+      ...rawItem,
+      date: normalizedDate,
+      ...(rawItem.toxicModeEnabled ? { toxicIntensity: normalizedToxicIntensity } : {}),
+    };
   }
 
   const fallbackEndedAt = typeof rawItem.endedAt === 'number'
@@ -93,6 +98,7 @@ export const normalizeHistoryTournament = (rawItem: TournamentHistory): Tourname
   return {
     ...rawItem,
     date: normalizedDate,
+    ...(rawItem.toxicModeEnabled ? { toxicIntensity: normalizedToxicIntensity } : {}),
     endedAt: rawItem.endedAt ?? (hasStatusRepair ? fallbackEndedAt : rawItem.endedAt),
     courtChanges: normalizeCourtChanges(rawItem.courtChanges),
     rounds: normalizedRounds

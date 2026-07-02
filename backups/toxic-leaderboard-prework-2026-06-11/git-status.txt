@@ -1,0 +1,86 @@
+ M docs/DOCS_UPDATE_CHECKLIST.md
+ M docs/SSOT_FOM_PLAY.md
+ M docs/SSOT_FOM_PLAY_ENGINEERING_APPENDIX.md
+ M docs/SSOT_FOM_PLAY_EXEC_SUMMARY.md
+ M firestore.indexes.json
+ M firestore.rules
+ M fom-blog/site/index.html
+ M functions/index.js
+ M index.html
+ M public/blog/index.html
+ M src/App.tsx
+ M src/appBootstrap.ts
+ M src/components/app/AppLoadingScreen.tsx
+ M src/components/app/AppLogo.tsx
+ M src/components/app/BottomNav.tsx
+ M src/constants.ts
+ M src/features/app/useAppChrome.ts
+ M src/features/app/useAppShellNavigation.ts
+ M src/features/auth/useAuthBootstrap.ts
+ M src/features/dashboard/DashboardScreen.tsx
+ M src/features/friends/FriendsScreen.tsx
+ M src/features/friends/useFriendMatchPickerActions.ts
+ M src/features/history/HistoryCards.tsx
+ M src/features/history/HistoryDetailScreen.tsx
+ M src/features/history/HistoryScreen.tsx
+ M src/features/history/historyUtils.ts
+ M src/features/history/useLocalTournamentPersistence.ts
+ M src/features/matches/ActiveMatchHeader.tsx
+ M src/features/matches/ActiveMatchRoundCard.tsx
+ M src/features/matches/ActiveMatchSummaryPanel.tsx
+ M src/features/matches/ActivePlayersEditorModal.tsx
+ M src/features/matches/AddPlayerModal.tsx
+ M src/features/matches/FormatStep.tsx
+ M src/features/matches/KlasemenScreen.tsx
+ M src/features/matches/MatchActiveScreen.tsx
+ M src/features/matches/MatchSettingsScreen.tsx
+ M src/features/matches/MatchSettingsWizardShell.tsx
+ M src/features/matches/SwapPlayerModal.tsx
+ M src/features/matches/matchSettingsSummary.ts
+ M src/features/matches/matchTimeUtils.ts
+ M src/features/matches/useMatchMutationActions.ts
+ M src/features/matches/useMatchSettingsDraft.ts
+ M src/features/matches/useMatchSettingsPlayers.ts
+ M src/features/matches/useMatchSettingsRosterSync.ts
+ M src/features/matches/useRoundProgressionActions.ts
+ M src/features/notifications/NotificationsScreen.tsx
+ M src/features/notifications/useNotifications.ts
+ M src/features/players/usePlayerProfileSync.ts
+ M src/features/profile/ProfileScreen.tsx
+ M src/features/ranking/LeaderboardScreen.tsx
+ M src/features/ranking/MMRHistoryScreen.tsx
+ M src/features/ranking/MMRSessionHistoryCard.tsx
+ M src/features/ranking/RankDiscoveryScreen.tsx
+ M src/features/ranking/mmrHistoryUtils.ts
+ M src/features/ranking/rankUtils.ts
+ M src/features/share/shareUtils.ts
+ M src/features/share/useShareActions.ts
+ M src/features/tournaments/useActiveTournamentLifecycle.ts
+ M src/index.css
+ M src/marketing.tsx
+ M src/services/firestoreCollections.ts
+ M src/services/firestoreSerialization.ts
+ M src/services/friendsRepository.ts
+ M src/types.ts
+ M tests/e2e/finished-flow.spec.ts
+ M vite.config.ts
+?? .vscode/
+?? backups/toxic-leaderboard-prework-2026-06-11/
+?? docs/HOST_FINANCE_REQUIREMENTS.md
+?? docs/LOBBY_SETTINGS_AND_VIEW_GUIDE.md
+?? docs/PRD_APP_HOMEPAGE.md
+?? docs/PRD_BRIEF_LOBBY_VIEW_AND_DETAIL.md
+?? docs/PRD_HOMEPAGE.md
+?? docs/PRD_KLASEMEN_LEADERBOARD_DAN_PERTANDINGAN_AKTIF.md
+?? docs/REQUIREMENTS_KLASEMEN_DAN_PERTANDINGAN_AKTIF.md
+?? docs/ROOM_LIST_REQUIREMENTS.md
+?? docs/ROOM_VIEW_REQUIREMENTS.md
+?? docs/recovery/FOM_INTENSE_PLAY_2026-05-03.partial-reconstruction.json
+?? scripts/recover-fom-intense-play-20260503.mjs
+?? src/components/app/AppPageHeader.tsx
+?? src/components/app/SharedViewerFomPlayCta.tsx
+?? src/features/matches/ReplaceManualPlayerModal.tsx
+?? src/features/matches/americanoScheduler.ts
+?? src/features/rooms/
+?? tests/e2e/share-flow.spec.ts
+?? tests/e2e/story-image-style.spec.ts

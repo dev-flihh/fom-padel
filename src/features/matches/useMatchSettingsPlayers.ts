@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, type Dispatch, type SetStateAction } from 'react';
 import { type Player, type Tournament } from '../../types';
 import { dedupePlayersById, sortPlayersByName } from './matchSetupUtils';
 
@@ -13,8 +13,7 @@ export const useMatchSettingsPlayers = ({
   setAllPlayers: Dispatch<SetStateAction<Player[]>>;
   setTournament: Dispatch<SetStateAction<Tournament>>;
 }) => {
-  const [selectedPlayers, setSelectedPlayers] = useState<Player[]>(() => dedupePlayersById(tournamentPlayers || []));
-
+  const selectedPlayers = useMemo(() => dedupePlayersById(tournamentPlayers || []), [tournamentPlayers]);
   const normalizedAllPlayers = useMemo(() => dedupePlayersById(allPlayers || []), [allPlayers]);
   const sortedSelectedPlayers = useMemo(() => sortPlayersByName(selectedPlayers), [selectedPlayers]);
   const availablePlayers = useMemo(
@@ -23,13 +22,6 @@ export const useMatchSettingsPlayers = ({
     ),
     [normalizedAllPlayers, selectedPlayers]
   );
-
-  useEffect(() => {
-    const normalizedFromTournament = dedupePlayersById(tournamentPlayers || []);
-    const currentIds = selectedPlayers.map((p) => p.id).join('|');
-    const nextIds = normalizedFromTournament.map((p) => p.id).join('|');
-    if (currentIds !== nextIds) setSelectedPlayers(normalizedFromTournament);
-  }, [tournamentPlayers, selectedPlayers]);
 
   useEffect(() => {
     if (selectedPlayers.length === 0) return;
@@ -50,29 +42,30 @@ export const useMatchSettingsPlayers = ({
     });
   }, [selectedPlayers, setAllPlayers]);
 
-  useEffect(() => {
-    setTournament((prev) => {
-      const prevIds = prev.players.map((p) => p.id).join('|');
-      const nextIds = selectedPlayers.map((p) => p.id).join('|');
-      if (prevIds === nextIds) return prev;
-      return { ...prev, players: selectedPlayers };
-    });
-  }, [selectedPlayers, setTournament]);
-
   const togglePlayer = (player: Player) => {
     if (!player?.id) return;
-    setSelectedPlayers((prev) => {
-      const alreadySelected = prev.some((p) => p?.id === player.id);
-      const next = alreadySelected
-        ? prev.filter((p) => p?.id !== player.id)
-        : [...prev, player];
-      return dedupePlayersById(next);
+    setTournament((prev) => {
+      const currentPlayers = dedupePlayersById(prev.players || []);
+      const alreadySelected = currentPlayers.some((p) => p?.id === player.id);
+      const nextPlayers = alreadySelected
+        ? currentPlayers.filter((p) => p?.id !== player.id)
+        : dedupePlayersById([...currentPlayers, player]);
+      const currentIds = currentPlayers.map((p) => p.id).join('|');
+      const nextIds = nextPlayers.map((p) => p.id).join('|');
+      if (currentIds === nextIds) return prev;
+      return { ...prev, players: nextPlayers };
     });
   };
 
   const addPlayer = (newPlayer: Player) => {
     setAllPlayers((prev) => dedupePlayersById([newPlayer, ...prev]));
-    setSelectedPlayers((prev) => dedupePlayersById([newPlayer, ...prev]));
+    setTournament((prev) => {
+      const nextPlayers = dedupePlayersById([newPlayer, ...(prev.players || [])]);
+      const prevIds = (prev.players || []).map((p) => p.id).join('|');
+      const nextIds = nextPlayers.map((p) => p.id).join('|');
+      if (prevIds === nextIds) return prev;
+      return { ...prev, players: nextPlayers };
+    });
   };
 
   return {

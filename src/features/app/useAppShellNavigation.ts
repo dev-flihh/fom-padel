@@ -62,6 +62,11 @@ export const useAppShellNavigation = ({
       const targetScreen = event.state?.__fomPlay?.screen || event.state?.screen;
       if (targetScreen) {
         isHandlingPopStateRef.current = true;
+        if (screen === 'room-detail' && targetScreen === 'rooms') {
+          setScreen('dashboard');
+          window.history.replaceState({ __fomPlay: true, screen: 'dashboard' }, '');
+          return;
+        }
         setScreen(targetScreen as Screen);
         return;
       }
@@ -80,7 +85,7 @@ export const useAppShellNavigation = ({
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [isLoggedIn, marketingBasePath, setScreen, setTopLevelRoute, sharedTargetScreen]);
+  }, [isLoggedIn, marketingBasePath, screen, setScreen, setTopLevelRoute, sharedTargetScreen]);
 
   useEffect(() => {
     const handleTouchStart = (event: TouchEvent) => {

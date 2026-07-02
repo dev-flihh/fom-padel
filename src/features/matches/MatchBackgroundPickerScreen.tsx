@@ -49,7 +49,7 @@ export const MatchBackgroundPickerScreen = ({
       <main className="max-w-md mx-auto px-4 py-6 space-y-4">
         <section className="space-y-1">
           <p className="text-[15px] font-semibold text-on-surface">Choose from the app collection</p>
-          <p className="text-[12px] text-ios-gray">This background will be shown in Active Match.</p>
+          <p className="text-[12px] text-ios-gray">Saved with this match for share assets and future visual options.</p>
         </section>
 
         <section className="grid grid-cols-2 gap-3">

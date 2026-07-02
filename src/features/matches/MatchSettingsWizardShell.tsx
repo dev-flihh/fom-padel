@@ -60,7 +60,11 @@ export const MatchSettingsWizardShell = ({
             </p>
           </div>
         </div>
-        <div className="mt-3 grid grid-cols-5 gap-1.5" aria-label="Match setup progress">
+        <div
+          className="mt-3 grid gap-1.5"
+          style={{ gridTemplateColumns: `repeat(${wizardSteps.length}, minmax(0, 1fr))` }}
+          aria-label="Match setup progress"
+        >
           {wizardSteps.map((step, index) => (
             <button
               key={step.label}

@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, RefreshCw, Search, User, Users } from 'lucide-react';
+import { AppPageHeader } from '../../components/app/AppPageHeader';
 import { cn } from '../../lib/utils';
 import { auth } from '../../firebase';
 import { type AppNotification, type Friend, type FriendRequest, type FriendRequestStatus, type UserProfile } from '../../types';
-import { RankBadge } from '../ranking/RankBadge';
 import { readCachedFriendsScreenData, writeCachedFriendsScreenData } from './friendsScreenCache';
 import { sortFriendsByName } from './friendUtils';
 import { fetchFriendsScreenData, resolveFriendRequest, searchFriendUsers, sendFriendRequestToUser } from '../../services/friendsRepository';
+import { formatDisplayMmr } from '../ranking/rankUtils';
 
 type FriendsScreenProps = {
   currentUser: any;
@@ -18,8 +19,27 @@ type FriendsScreenProps = {
   recordDbError: (record: any) => void;
   pickerMode?: boolean;
   selectedPlayerIds?: string[];
-  onTogglePickForMatch?: (friend: Friend) => void;
+  onTogglePickForMatch?: (friend: MatchPickerCandidate) => void;
   onDonePick?: () => void;
+};
+
+export type MatchPickerCandidate = Friend & {
+  relation?: 'friend' | 'search';
+};
+
+const buildMatchPickerCandidate = (
+  userProfile: UserProfile,
+  relation: MatchPickerCandidate['relation']
+): MatchPickerCandidate => {
+  const mmr = Number(userProfile?.mmr);
+  return {
+    uid: userProfile.uid,
+    displayName: userProfile.displayName || userProfile.username || 'Player',
+    photoURL: userProfile.photoURL || '',
+    username: userProfile.username || '',
+    mmr: Number.isFinite(mmr) ? mmr : 0,
+    relation,
+  };
 };
 
 export const FriendsScreen = ({
@@ -244,19 +264,23 @@ export const FriendsScreen = ({
     () => sortFriendsByName(friends.filter((friend) => selectedPlayerIds.includes(friend.uid))),
     [friends, selectedPlayerIds]
   );
-  const searchSectionTitle = pickerMode ? 'Find More Friends' : 'Find Friends';
+  const searchSectionTitle = pickerMode ? 'Find FOM Players' : 'Find Friends';
   const searchSectionCopy = pickerMode
-    ? 'Search if someone is not in your friends list yet.'
-    : 'Search by username, email, or phone number to connect with other FOM players.';
+    ? 'Search FOM players by username, email, or phone.'
+    : 'Search by username, email, or phone.';
   const friendsSectionTitle = pickerMode ? 'Your Friends' : 'Your Friends';
   const friendsSectionCopy = pickerMode
-    ? 'Tap Add or Selected to update this match.'
-    : 'Your player network for future matches, requests, and quick invites.';
+    ? 'Tap to add players into this match.'
+    : 'Your player network.';
+  const headerMetaItems = [
+    { label: friends.length === 1 ? 'friend' : 'friends', value: friends.length.toLocaleString('en-US') },
+    { label: incomingRequests.length === 1 ? 'request' : 'requests', value: incomingRequests.length.toLocaleString('en-US') },
+  ];
 
   const searchPanel = (
-    <section className="rounded-[24px] border border-black/5 bg-white p-3.5">
+    <section className="rounded-[24px] bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] ring-1 ring-black/[0.04]">
       <div className="mb-3">
-        <h2 className="text-[16px] font-bold tracking-tight text-on-surface">{searchSectionTitle}</h2>
+        <h2 className="text-[16px] font-semibold tracking-tight text-on-surface">{searchSectionTitle}</h2>
         <p className="mt-1 text-[13px] leading-relaxed text-ios-gray">
           {searchSectionCopy}
         </p>
@@ -269,14 +293,14 @@ export const FriendsScreen = ({
             placeholder="Search username, email, or phone number"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-[20px] border border-black/5 bg-ios-gray/5 py-3.5 pl-11 pr-4 text-[14px] font-medium text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+            className="w-full rounded-[18px] border border-black/[0.04] bg-ios-gray/[0.035] py-3.5 pl-11 pr-4 text-[14px] font-medium text-on-surface transition-all focus:outline-none focus:ring-2 focus:ring-[#ff5500]/15"
           />
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ios-gray" size={18} />
         </div>
         <button
           type="submit"
           disabled={searching || !searchQuery.trim()}
-          className="inline-flex h-10 items-center rounded-full bg-primary px-4 text-[12px] font-semibold tracking-tight text-white tap-target disabled:opacity-50"
+          className="inline-flex h-10 items-center rounded-full bg-[#ff5500] px-4 text-[12px] font-semibold tracking-tight text-white tap-target disabled:opacity-50"
         >
           {searching ? 'Searching...' : 'Search'}
         </button>
@@ -284,15 +308,15 @@ export const FriendsScreen = ({
 
       {searchResults.length > 0 && (
         <div className="mt-4 space-y-2.5">
-          <p className="px-1 text-[11px] font-semibold tracking-tight text-ios-gray">Search Results</p>
+          <p className="px-1 text-[11px] font-bold uppercase tracking-[0.14em] text-ios-gray/72">Search Results</p>
           {searchResults.map(res => (
-            <div key={res.uid} className="flex items-center justify-between gap-3 rounded-[20px] border border-black/5 bg-surface px-3.5 py-3">
+            <div key={res.uid} className="flex items-center justify-between gap-3 rounded-[18px] bg-ios-gray/[0.025] px-3 py-3 ring-1 ring-black/[0.03]">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/5 bg-ios-gray/10">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ios-gray/[0.08] ring-1 ring-black/[0.03]">
                   {res.photoURL ? <img src={res.photoURL} className="h-full w-full object-cover" /> : <User size={20} className="text-ios-gray/30" />}
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-[14px] font-bold text-on-surface">{res.displayName}</p>
+                  <p className="truncate text-[14px] font-medium text-on-surface">{res.displayName}</p>
                   <p className="truncate text-[11px] font-medium tracking-tight text-ios-gray">@{res.username || 'user'}</p>
                 </div>
               </div>
@@ -302,9 +326,16 @@ export const FriendsScreen = ({
                 const isPending = requestStatus === 'pending';
                 const isAccepted = requestStatus === 'accepted';
                 const isSending = sendingRequestUid === res.uid;
-                const disabled = isAlreadyFriend || isPending || isAccepted || isSending;
+                const isSelectedForMatch = selectedPlayerIds.includes(res.uid);
+                const disabled = pickerMode
+                  ? false
+                  : isAlreadyFriend || isPending || isAccepted || isSending;
 
-                const label = isAlreadyFriend
+                const label = pickerMode
+                  ? isSelectedForMatch
+                    ? 'Selected'
+                    : 'Add to Match'
+                  : isAlreadyFriend
                   ? 'Friends'
                   : isSending
                     ? 'Sending...'
@@ -317,13 +348,21 @@ export const FriendsScreen = ({
                 return (
                   <button
                     type="button"
-                    onClick={() => sendFriendRequest(res)}
+                    onClick={() => {
+                      if (pickerMode && onTogglePickForMatch) {
+                        onTogglePickForMatch(buildMatchPickerCandidate(res, isAlreadyFriend ? 'friend' : 'search'));
+                        return;
+                      }
+                      sendFriendRequest(res);
+                    }}
                     disabled={disabled}
                     className={cn(
                       'h-8 shrink-0 rounded-full px-3 text-[11px] font-semibold tracking-tight tap-target',
-                      disabled
+                      pickerMode && isSelectedForMatch
+                        ? 'border border-[#ff5500]/15 bg-[#ff5500]/[0.06] text-[#ff5500]'
+                        : disabled
                         ? 'border border-black/5 bg-white text-ios-gray'
-                        : 'bg-primary text-white'
+                        : 'bg-[#ff5500] text-white'
                     )}
                   >
                     {label}
@@ -338,58 +377,59 @@ export const FriendsScreen = ({
   );
 
   const friendsPanel = (
-    <section className="rounded-[24px] border border-black/5 bg-white p-3.5">
+    <section className="overflow-hidden rounded-[24px] bg-white shadow-[0_1px_2px_rgba(15,23,42,0.03)] ring-1 ring-black/[0.04]">
       <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-[16px] font-bold tracking-tight text-on-surface">{friendsSectionTitle}</h2>
+        <div className="px-3.5 pt-3.5">
+          <h2 className="text-[16px] font-semibold tracking-tight text-on-surface">{friendsSectionTitle}</h2>
           <p className="mt-1 text-[13px] leading-relaxed text-ios-gray">
             {friendsSectionCopy}
           </p>
         </div>
-        <span className="shrink-0 rounded-full border border-black/5 bg-surface px-3 py-1.5 text-[11px] font-semibold tracking-tight text-ios-gray">
+        <span className="mr-3.5 mt-3.5 shrink-0 rounded-full bg-ios-gray/[0.06] px-3 py-1.5 text-[11px] font-semibold tracking-tight text-ios-gray">
           {friends.length} {friends.length === 1 ? 'friend' : 'friends'}
         </span>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-10">
-          <RefreshCw className="animate-spin text-primary/20" size={32} />
+          <RefreshCw className="animate-spin text-ios-gray/25" size={30} />
         </div>
       ) : friends.length === 0 ? (
-        <div className="rounded-[24px] border border-dashed border-black/8 bg-surface px-6 py-10 text-center">
+        <div className="mx-3.5 mb-3.5 rounded-[20px] border border-dashed border-black/8 bg-ios-gray/[0.025] px-6 py-10 text-center">
           <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white">
             <Users size={40} className="text-ios-gray/20" />
           </div>
-          <h3 className="text-[18px] font-bold tracking-tight text-on-surface">
+          <h3 className="text-[18px] font-semibold tracking-tight text-on-surface">
             {pickerMode ? 'No friends yet' : 'No friends yet'}
           </h3>
           <p className="mx-auto mt-2 max-w-sm text-[14px] font-medium leading-relaxed text-ios-gray">
             {pickerMode
-              ? 'Search for friends first, then bring them into this match.'
+              ? 'Search for FOM players below, then bring them into this match.'
               : 'Search for players using username, email, or phone number to start building your network.'}
           </p>
         </div>
       ) : (
-        <div className="space-y-2.5">
+        <div className="border-t border-black/[0.045]">
           {sortedFriends.map(friend => (
             <div
               key={friend.uid}
               className={cn(
-                'flex items-center justify-between gap-3 rounded-[22px] border px-3.5 py-3.5',
+                'flex items-center justify-between gap-3 border-b border-black/[0.045] px-3.5 py-3',
                 pickerMode && selectedPlayerIds.includes(friend.uid)
-                  ? 'border-primary/20 bg-primary/[0.04]'
-                  : 'border-black/5 bg-surface'
+                  ? 'bg-[#ff5500]/[0.035]'
+                  : 'bg-white'
               )}
             >
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/5 bg-ios-gray/10">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ios-gray/[0.08] ring-1 ring-black/[0.03]">
                   {friend.photoURL ? <img src={friend.photoURL} className="h-full w-full object-cover" /> : <User size={24} className="text-ios-gray/30" />}
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-[14px] font-bold text-on-surface">{friend.displayName}</p>
-                  <div className="mt-1 flex items-center gap-2">
-                    <RankBadge mmr={friend.mmr} size="sm" />
-                    <span className="truncate text-[11px] font-medium tracking-tight text-ios-gray">@{friend.username || 'user'}</span>
+                  <p className="truncate text-[14px] font-medium text-on-surface">{friend.displayName}</p>
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] font-medium tracking-tight text-ios-gray">
+                    <span className="shrink-0">{formatDisplayMmr(friend.mmr)} MMR</span>
+                    <span className="shrink-0 text-ios-gray/45">·</span>
+                    <span className="truncate">@{friend.username || 'user'}</span>
                   </div>
                 </div>
               </div>
@@ -399,8 +439,8 @@ export const FriendsScreen = ({
                   className={cn(
                     'h-9 shrink-0 rounded-full px-3.5 text-[11px] font-semibold tracking-tight tap-target',
                     selectedPlayerIds.includes(friend.uid)
-                      ? 'border border-primary/15 bg-primary/[0.06] text-primary'
-                      : 'bg-primary text-white'
+                      ? 'border border-[#ff5500]/15 bg-[#ff5500]/[0.06] text-[#ff5500]'
+                      : 'bg-[#ff5500] text-white'
                   )}
                 >
                   {selectedPlayerIds.includes(friend.uid) ? 'Selected' : 'Add'}
@@ -414,38 +454,49 @@ export const FriendsScreen = ({
   );
 
   return (
-    <div className="min-h-screen bg-surface pb-32">
-      <header className="ios-blur sticky top-0 z-50 flex min-h-16 w-full items-center border-b border-ios-gray/10 px-4 py-2">
-        <button onClick={onBack} className="tap-target p-2 -ml-2">
-          <ChevronLeft size={24} />
-        </button>
-        <div className="ml-2 min-w-0 flex-1">
-          <h1 className="text-[17px] font-bold tracking-tight text-on-surface">
-            {pickerMode ? 'Add Players' : 'Friends'}
-          </h1>
-          <p className="mt-0.5 truncate text-[12px] font-medium tracking-tight text-ios-gray">
-            {pickerMode
-              ? `${selectedCount} player${selectedCount === 1 ? '' : 's'} selected`
-              : `${friends.length} friend${friends.length === 1 ? '' : 's'} in your network`}
-          </p>
-        </div>
-        {pickerMode ? (
+    <div className={cn('min-h-screen pb-32', pickerMode ? 'bg-surface' : 'bg-white')}>
+      {pickerMode && (
+        <header className="ios-blur sticky top-0 z-50 flex min-h-16 w-full items-center border-b border-ios-gray/10 px-4 py-2">
+          <button onClick={onBack} className="tap-target p-2 -ml-2">
+            <ChevronLeft size={24} />
+          </button>
+          <div className="ml-2 min-w-0 flex-1">
+            <h1 className="text-[17px] font-bold tracking-tight text-on-surface">
+              Add Players
+            </h1>
+            <p className="mt-0.5 truncate text-[12px] font-medium tracking-tight text-ios-gray">
+              {selectedCount} player{selectedCount === 1 ? '' : 's'} selected
+            </p>
+          </div>
           <button
             onClick={onDonePick || onBack}
-            className="ml-3 inline-flex h-9 shrink-0 items-center rounded-full border border-primary/15 bg-primary/10 px-3.5 text-[12px] font-semibold tracking-tight text-primary tap-target"
+            className="ml-3 inline-flex h-9 shrink-0 items-center rounded-full border border-[#ff5500]/15 bg-[#ff5500]/[0.08] px-3.5 text-[12px] font-semibold tracking-tight text-[#ff5500] tap-target"
           >
             Done
           </button>
-        ) : null}
-      </header>
+        </header>
+      )}
 
-      <main className="mx-auto max-w-2xl p-4 space-y-4">
+      <main className={cn(
+        'mx-auto max-w-2xl space-y-4 px-4',
+        pickerMode ? 'py-4' : 'pb-4 pt-[calc(env(safe-area-inset-top,0px)+34px)]'
+      )}>
+        {!pickerMode && (
+          <AppPageHeader
+            eyebrow="Friends"
+            title="Player network"
+            subtitle="Search, invite, and manage FOM players."
+            metaItems={headerMetaItems}
+            className="px-0"
+          />
+        )}
+
         {pickerMode && (
-          <section className="rounded-[24px] border border-black/5 bg-white p-4">
+          <section className="rounded-[24px] bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)] ring-1 ring-black/[0.04]">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold tracking-tight text-ios-gray">Selected Players</p>
-                <p className="mt-1 text-[24px] leading-none font-display font-black tracking-tight text-on-surface tabular-nums">
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-ios-gray/72">Selected Players</p>
+                <p className="mt-1 text-[24px] font-semibold leading-none tracking-tight text-on-surface tabular-nums">
                   {selectedCount}
                 </p>
                 <p className="mt-2 max-w-sm text-[13px] leading-relaxed text-ios-gray">
@@ -454,7 +505,7 @@ export const FriendsScreen = ({
               </div>
               <span className={cn(
                 "shrink-0 rounded-full px-3 py-1.5 text-[11px] font-semibold tracking-tight",
-                selectedCount > 0 ? "bg-primary/[0.08] text-primary" : "bg-ios-gray/[0.08] text-ios-gray"
+                selectedCount > 0 ? "bg-[#ff5500]/[0.08] text-[#ff5500]" : "bg-ios-gray/[0.08] text-ios-gray"
               )}>
                 {selectedCount > 0 ? `${selectedCount} selected` : 'No players'}
               </span>
@@ -466,14 +517,14 @@ export const FriendsScreen = ({
                     key={friend.uid}
                     className="inline-flex items-center gap-2 rounded-full bg-ios-gray/[0.05] px-2.5 py-2"
                   >
-                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-white text-[11px] font-bold text-primary">
+                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-white text-[11px] font-semibold text-[#ff5500]">
                       {friend.photoURL ? (
                         <img src={friend.photoURL} className="h-full w-full object-cover" />
                       ) : (
                         (friend.displayName || 'F').slice(0, 1).toUpperCase()
                       )}
                     </div>
-                    <span className="max-w-[112px] truncate text-[12px] font-semibold text-on-surface">
+                    <span className="max-w-[112px] truncate text-[12px] font-medium text-on-surface">
                       {friend.displayName}
                     </span>
                   </div>
@@ -484,15 +535,15 @@ export const FriendsScreen = ({
         )}
 
         {!pickerMode && incomingRequests.length > 0 && (
-          <section className="rounded-[24px] border border-primary/10 bg-primary/[0.035] p-3.5">
+          <section className="rounded-[24px] bg-white p-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.03)] ring-1 ring-[#ff5500]/10">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <h2 className="text-[16px] font-bold tracking-tight text-on-surface">Friend Requests</h2>
+                <h2 className="text-[16px] font-semibold tracking-tight text-on-surface">Friend Requests</h2>
                 <p className="mt-1 text-[13px] leading-relaxed text-ios-gray">
                   Review incoming player requests before they join your network.
                 </p>
               </div>
-              <span className="shrink-0 rounded-full border border-primary/10 bg-white px-3 py-1.5 text-[11px] font-semibold tracking-tight text-primary">
+              <span className="shrink-0 rounded-full bg-[#ff5500]/[0.08] px-3 py-1.5 text-[11px] font-semibold tracking-tight text-[#ff5500]">
                 {incomingRequests.length} new
               </span>
             </div>
@@ -500,13 +551,13 @@ export const FriendsScreen = ({
               {incomingRequests.map((request) => {
                 const isProcessing = processingRequestId === request.requesterUid;
                 const requesterMmr = Number.isFinite(Number(request.requesterMmr))
-                  ? Math.max(0, Number(request.requesterMmr))
+                  ? Number(request.requesterMmr)
                   : 0;
                 return (
-                  <div key={request.requesterUid} className="rounded-[22px] border border-black/5 bg-white px-3.5 py-3.5">
+                  <div key={request.requesterUid} className="rounded-[20px] bg-ios-gray/[0.025] px-3.5 py-3.5 ring-1 ring-black/[0.03]">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-black/5 bg-ios-gray/10">
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-ios-gray/[0.08] ring-1 ring-black/[0.03]">
                           {request.requesterPhotoURL ? (
                             <img src={request.requesterPhotoURL} className="h-full w-full object-cover" />
                           ) : (
@@ -514,9 +565,9 @@ export const FriendsScreen = ({
                           )}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate text-[14px] font-bold text-on-surface">{request.requesterDisplayName}</p>
+                          <p className="truncate text-[14px] font-medium text-on-surface">{request.requesterDisplayName}</p>
                           <div className="mt-1 flex items-center gap-2">
-                            <RankBadge mmr={requesterMmr} size="sm" />
+                            <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-ios-gray ring-1 ring-black/[0.03]">{formatDisplayMmr(requesterMmr)} MMR</span>
                             <span className="truncate text-[11px] font-medium tracking-tight text-ios-gray">
                               @{request.requesterUsername || 'user'}
                             </span>
@@ -534,7 +585,7 @@ export const FriendsScreen = ({
                         <button
                           onClick={() => handleFriendRequestDecision(request, 'accepted')}
                           disabled={isProcessing}
-                          className="h-8 rounded-full bg-primary px-3 text-[11px] font-semibold tracking-tight text-white tap-target disabled:opacity-50"
+                          className="h-8 rounded-full bg-[#ff5500] px-3 text-[11px] font-semibold tracking-tight text-white tap-target disabled:opacity-50"
                         >
                           {isProcessing ? '...' : 'Accept'}
                         </button>

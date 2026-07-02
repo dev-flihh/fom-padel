@@ -20,6 +20,8 @@ export const createFreshTournamentDraft = (): Tournament => ({
   id: undefined,
   name: '',
   backgroundId: undefined,
+  toxicModeEnabled: false,
+  toxicIntensity: 'savage',
   startedAt: undefined,
   endedAt: undefined,
   players: [],
@@ -35,6 +37,8 @@ export const hasSetupDraftChanges = (tournament: Tournament) => {
   const trimmedVenue = (tournament.venueName || '').trim();
   const trimmedLocation = (tournament.location || '').trim();
   const normalizedScoringType = tournament.scoringType || 'Golden Point';
+  const normalizedToxicIntensity = tournament.toxicIntensity || 'savage';
+  const initialToxicIntensity = INITIAL_TOURNAMENT.toxicIntensity || 'savage';
 
   return (
     !tournament.startedAt &&
@@ -45,6 +49,8 @@ export const hasSetupDraftChanges = (tournament: Tournament) => {
       (tournament.players || []).length > 0 ||
       tournament.format !== INITIAL_TOURNAMENT.format ||
       (tournament.themeColorId || getDefaultMatchThemeColorId(tournament.format)) !== (INITIAL_TOURNAMENT.themeColorId || getDefaultMatchThemeColorId(INITIAL_TOURNAMENT.format)) ||
+      Boolean(tournament.toxicModeEnabled) !== Boolean(INITIAL_TOURNAMENT.toxicModeEnabled) ||
+      (Boolean(tournament.toxicModeEnabled) && normalizedToxicIntensity !== initialToxicIntensity) ||
       tournament.criteria !== INITIAL_TOURNAMENT.criteria ||
       normalizedScoringType !== 'Golden Point' ||
       tournament.courts !== INITIAL_TOURNAMENT.courts ||

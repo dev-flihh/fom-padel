@@ -3,6 +3,10 @@ import type { Dispatch, SetStateAction } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
 import type { Friend, Player, Tournament } from '../../types';
 
+type MatchPickerCandidate = Friend & {
+  relation?: 'friend' | 'search';
+};
+
 type Params = {
   userUid?: string | null;
   setAllPlayers: Dispatch<SetStateAction<Player[]>>;
@@ -20,7 +24,7 @@ export const useFriendMatchPickerActions = ({
   usersCollection,
   userFriendsCollection,
 }: Params) => {
-  const upsertPlayerFromFriend = (friend: Friend) => {
+  const upsertPlayerFromFriend = (friend: MatchPickerCandidate) => {
     const initials = friend.displayName
       .split(' ')
       .filter(Boolean)
@@ -71,7 +75,7 @@ export const useFriendMatchPickerActions = ({
     });
 
     const uid = auth.currentUser?.uid || userUid;
-    if (uid) {
+    if (uid && friend.relation !== 'search') {
       setDoc(
         doc(db, usersCollection, uid, userFriendsCollection, friend.uid),
         { lastPlayedAt: serverTimestamp() },

@@ -237,8 +237,15 @@ function Nav({ headerStyle = 'white', onNav, view }) {
     }}>
       <div style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }} onClick={() => onNav('home')}>
-          <img src="/fom-logotype-nav.png?v=20260421-logo2" alt="FOM" style={{ height: 34, width: 'auto', objectFit: 'contain', flexShrink: 0 }} />
+        <div
+          aria-label="FOM Play"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+          onClick={() => onNav('home')}
+        >
+          <img src="/assets/fom-logomark-color.png" alt="" aria-hidden="true" style={{ height: 36, width: 47, objectFit: 'contain', flexShrink: 0 }} />
+          <span style={{ color: '#111827', fontSize: 29, fontWeight: 800, lineHeight: 1, letterSpacing: 0 }}>
+            FOM<span style={{ color: '#ff5500' }}>Play</span>
+          </span>
         </div>
 
         {isMobile ? (
