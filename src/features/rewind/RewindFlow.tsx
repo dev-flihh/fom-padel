@@ -55,21 +55,35 @@ const isWebkit = (() => {
   return isIOS || isSafari;
 })();
 
-const EXPORT_PASSES = isWebkit ? 3 : 1;
-
-// Render the node to a blob, repeating on WebKit so embedded images are cached
-// and decoded before the final rasterization.
-const exportNodeToBlob = async (node: HTMLElement, options: ExportOptions): Promise<Blob | null> => {
-  let blob: Blob | null = null;
-  for (let pass = 0; pass < EXPORT_PASSES; pass += 1) {
-    blob = await htmlToImageBlob(node, options);
-  }
-  return blob;
-};
+// Warm-up passes only need to force WebKit to fetch+decode the embedded
+// images — render them at a tiny canvas so we don't stack full-res 1080×1920
+// canvases (~8MB each). iOS Safari has a hard canvas-memory budget; full-size
+// multi-pass across ~16 slides blows past it and Safari kills/reloads the tab.
+const WARMUP_PASSES = isWebkit ? 2 : 0;
+const WARMUP_CANVAS = { width: 36, height: 64 };
 
 const waitFrames = () => new Promise<void>((resolve) => (
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
 ));
+
+// Render the node to a blob. On WebKit, run cheap warm-up renders first so
+// every embedded image is decoded by the time the real (full-res) pass runs.
+const exportNodeToBlob = async (node: HTMLElement, options: ExportOptions): Promise<Blob | null> => {
+  for (let pass = 0; pass < WARMUP_PASSES; pass += 1) {
+    try {
+      await htmlToImageBlob(node, {
+        ...options,
+        canvasWidth: WARMUP_CANVAS.width,
+        canvasHeight: WARMUP_CANVAS.height,
+      });
+    } catch {
+      // Warm-up is best-effort; the final pass decides success.
+    }
+    // Yield a couple frames so Safari can settle/GC between rasterizations.
+    await waitFrames();
+  }
+  return htmlToImageBlob(node, options);
+};
 
 const fileSafe = (value: string) => (
   value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'fom-rewind'
