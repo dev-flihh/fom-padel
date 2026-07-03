@@ -77,7 +77,9 @@ export const ActiveMatchSummaryPanel = ({
 
     return (
   <>
-    {isReadOnly && (
+    {/* Owner's finished/saved match tidak lagi menampilkan chip read-only;
+        hanya guest lewat share link yang perlu tahu halaman ini view-only. */}
+    {isSharedViewer && (
       <section className="rounded-[18px] border border-black/[0.06] bg-ios-gray/[0.035] px-3.5 py-3">
         <div className="flex items-center gap-3">
           <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-ios-gray shadow-[inset_0_0_0_1px_rgba(17,24,39,0.04)]">
@@ -85,10 +87,10 @@ export const ActiveMatchSummaryPanel = ({
           </span>
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase leading-none tracking-[0.14em] text-on-surface/72">
-              {isSharedViewer ? 'Read-only shared match' : 'Read-only match'}
+              Read-only shared match
             </p>
             <p className="mt-1 text-[11.5px] font-semibold leading-snug text-on-surface/52">
-              {isSharedViewer ? 'Host controls are off. Scores update from the match link.' : 'Saved match details can be reviewed here.'}
+              Host controls are off. Scores update from the match link.
             </p>
           </div>
         </div>

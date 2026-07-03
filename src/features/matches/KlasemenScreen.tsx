@@ -535,13 +535,23 @@ export const KlasemenScreen = ({
                 FOM<span className="text-primary">Play</span>
               </span>
             </div>
-            <span className={cn(
-              'mt-0.5 inline-flex h-[23px] shrink-0 items-center justify-center rounded-full px-2.5 text-[10px] font-extrabold uppercase leading-none tracking-[0.08em]',
-              isTournamentEnded ? 'bg-[#111111] text-white' : 'bg-primary text-white'
-            )}>
-              {!isTournamentEnded && <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-white/90" />}
-              {isTournamentEnded ? 'Ended' : 'Live'}
-            </span>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onShare(tournament)}
+                className="tap-target inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/[0.08] text-primary"
+                aria-label="Share match link"
+              >
+                <Share2 size={15} strokeWidth={2.2} />
+              </button>
+              <span className={cn(
+                'mt-0.5 inline-flex h-[23px] shrink-0 items-center justify-center rounded-full px-2.5 text-[10px] font-extrabold uppercase leading-none tracking-[0.08em]',
+                isTournamentEnded ? 'bg-[#111111] text-white' : 'bg-primary text-white'
+              )}>
+                {!isTournamentEnded && <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-white/90" />}
+                {isTournamentEnded ? 'Ended' : 'Live'}
+              </span>
+            </div>
           </div>
 
           <h1 className="truncate text-[22px] font-display font-bold leading-[1.16] tracking-[-0.028em] text-on-surface">
@@ -595,18 +605,6 @@ export const KlasemenScreen = ({
                 Shame <span aria-hidden="true">🔥</span>
               </button>
             )}
-            <div className="flex-1" />
-            <div className="self-center pb-1.5">
-              <button
-                type="button"
-                onClick={() => onShare(tournament)}
-                className="tap-target inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full bg-primary/[0.08] px-3 text-primary"
-                aria-label="Share match link"
-              >
-                <Share2 size={16} strokeWidth={2.2} />
-                <span className="text-[12px] font-bold leading-none tracking-[-0.01em]">Share</span>
-              </button>
-            </div>
           </div>
         </section>
 
