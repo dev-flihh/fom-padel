@@ -37,6 +37,36 @@ const MAX_PHOTOS = 10;
 const EXPORT_VIEW = { width: 360, height: 640 };
 const EXPORT_CANVAS = { width: 1080, height: 1920 };
 
+type ExportOptions = Parameters<typeof htmlToImageBlob>[1];
+
+// iOS Safari / WebKit rasterizes html-to-image's <foreignObject> SVG *before*
+// the embedded images (gallery photos as big data URLs, remote avatars) finish
+// decoding, so photos come out blank on the first pass. Chrome/Android decodes
+// them in time, which is why the bug is iOS-only. Rendering a few times warms
+// WebKit's decode cache; the final pass includes every image. See
+// https://github.com/bubkoo/html-to-image/issues/361
+const isWebkit = (() => {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isIOS = /iP(hone|ad|od)/.test(ua)
+    // iPadOS 13+ reports as desktop; detect via touch-capable "Mac".
+    || (/Macintosh/.test(ua) && typeof document !== 'undefined' && 'ontouchend' in document);
+  const isSafari = /^((?!chrome|crios|android|fxios|edgios|edg).)*safari/i.test(ua);
+  return isIOS || isSafari;
+})();
+
+const EXPORT_PASSES = isWebkit ? 3 : 1;
+
+// Render the node to a blob, repeating on WebKit so embedded images are cached
+// and decoded before the final rasterization.
+const exportNodeToBlob = async (node: HTMLElement, options: ExportOptions): Promise<Blob | null> => {
+  let blob: Blob | null = null;
+  for (let pass = 0; pass < EXPORT_PASSES; pass += 1) {
+    blob = await htmlToImageBlob(node, options);
+  }
+  return blob;
+};
+
 const waitFrames = () => new Promise<void>((resolve) => (
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
 ));
@@ -252,7 +282,7 @@ export const RewindFlow = ({
             });
           }
         }));
-        const blob = await htmlToImageBlob(node, {
+        const blob = await exportNodeToBlob(node, {
           width: EXPORT_VIEW.width,
           height: EXPORT_VIEW.height,
           canvasWidth: EXPORT_CANVAS.width,
