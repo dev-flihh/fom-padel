@@ -5,7 +5,7 @@ import { formatDurationFromMs } from './matchTimeUtils';
 import { getPartnerMode } from './partnerMode';
 import { buildNextFixedMexicanoRound, buildNextFixedTeamRound, getActiveFixedTeams } from './fixedTeamScheduler';
 import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
-import type { Match, Player, Tournament, TournamentHistory } from '../../types';
+import type { Match, Player, Round, Tournament, TournamentHistory } from '../../types';
 
 type AddNotification = (
   title: string,
@@ -98,6 +98,162 @@ export const useRoundProgressionActions = ({
         userUid: user?.uid || null,
       });
     }
+  };
+
+  // Menutup match: set endedAt, tulis ke history, bersihkan draft aktif, dan
+  // sinkron ke share. Dipakai handleNextRound (Finish Match) maupun
+  // handleFinalizeCompletedMatch (auto-finalize match Americano yang semua
+  // rondenya sudah selesai tapi belum sempat difinalisasi).
+  const finalizeAndPersistTournament = async (finalizedRounds: Round[], now: number) => {
+    const finalizedTournamentId = typeof tournament.id === 'string' && tournament.id.trim()
+      ? tournament.id.trim()
+      : Math.random().toString(36).substr(2, 9);
+    const finalizedTournament: Tournament = {
+      ...tournament,
+      id: finalizedTournamentId,
+      rounds: finalizedRounds,
+      endedAt: now,
+    };
+    setTournament(finalizedTournament);
+
+    if (user) {
+      const historyItem: TournamentHistory = {
+        id: finalizedTournamentId,
+        userId: user.uid,
+        name: tournament.name,
+        format: tournament.format,
+        partnerMode: tournament.partnerMode || 'rotating',
+        fixedTeams: tournament.fixedTeams || [],
+        backgroundId: tournament.backgroundId,
+        themeColorId: tournament.themeColorId,
+        toxicModeEnabled: Boolean(tournament.toxicModeEnabled),
+        toxicIntensity: tournament.toxicIntensity || 'savage',
+        criteria: tournament.criteria,
+        scoringType: tournament.scoringType,
+        date: new Date(),
+        startedAt: tournament.startedAt,
+        endedAt: now,
+        courts: tournament.courts,
+        totalPoints: tournament.totalPoints,
+        numRounds: tournament.numRounds,
+        numPlayers: tournament.players.length,
+        rounds: finalizedRounds,
+        players: tournament.players,
+        courtChanges: normalizeCourtChanges(tournament.courtChanges),
+        venueName: tournament.venueName,
+        location: tournament.location,
+        statsVersion: 0,
+      };
+
+      try {
+        const tournamentSummary = {
+          id: historyItem.id,
+          userId: historyItem.userId,
+          name: historyItem.name,
+          format: historyItem.format,
+          ...(historyItem.partnerMode === 'fixed' ? { partnerMode: historyItem.partnerMode } : {}),
+          ...(historyItem.backgroundId ? { backgroundId: historyItem.backgroundId } : {}),
+          ...(historyItem.themeColorId ? { themeColorId: historyItem.themeColorId } : {}),
+          ...(historyItem.toxicModeEnabled ? { toxicModeEnabled: true } : {}),
+          ...(historyItem.toxicModeEnabled ? { toxicIntensity: historyItem.toxicIntensity || 'savage' } : {}),
+          ...(historyItem.criteria ? { criteria: historyItem.criteria } : {}),
+          ...(historyItem.scoringType ? { scoringType: historyItem.scoringType } : {}),
+          ...(typeof historyItem.startedAt === 'number' ? { startedAt: historyItem.startedAt } : {}),
+          ...(typeof historyItem.endedAt === 'number' ? { endedAt: historyItem.endedAt } : {}),
+          ...(Number.isFinite(Number(historyItem.courts)) ? { courts: Number(historyItem.courts) } : {}),
+          ...(Number.isFinite(Number(historyItem.totalPoints)) ? { totalPoints: Number(historyItem.totalPoints) } : {}),
+          numRounds: historyItem.numRounds,
+          numPlayers: historyItem.numPlayers,
+          ...(historyItem.venueName ? { venueName: historyItem.venueName } : {}),
+          ...(historyItem.location ? { location: historyItem.location } : {}),
+          statsVersion: 0,
+          hasDetail: true,
+          detailCollection: toTournamentDetailCollectionLabel,
+          date: serverTimestamp(),
+        };
+        await saveTournamentDetailAndSummary(
+          historyItem.id,
+          toFirestoreSafe(stripLargeInlineImages(stripTournamentPlayerAvatars(historyItem))),
+          tournamentSummary
+        );
+        recordDbMetric({
+          flow: 'finalize',
+          operation: 'write',
+          count: 2,
+          label: 'tournament_detail_and_summary',
+          dbRole: 'primary',
+          collection: 'tournament_details+tournaments',
+        });
+        watchTournamentStatsSync(historyItem.id);
+        setTournaments((prev) => [historyItem, ...prev.filter((item) => item.id !== historyItem.id)]);
+      } catch (err) {
+        recordDbError({
+          flow: 'finalize',
+          label: 'tournament_detail_and_summary',
+          err,
+          dbRole: 'primary',
+          collection: 'tournament_details+tournaments',
+        });
+        console.error('Error saving tournament:', err);
+        markTournamentStatsSyncError(historyItem.id);
+        try {
+          await persistActiveTournamentSnapshot(stripLargeInlineImages(stripTournamentPlayerAvatars(finalizedTournament)));
+        } catch (snapshotErr) {
+          console.error('Finalized tournament recovery snapshot error:', snapshotErr);
+        }
+        addNotification(
+          'History Save Failed',
+          'Final scores are still kept in this active match. Please try Finish Matches again before leaving.',
+          'system',
+          'error'
+        );
+        return;
+      }
+    } else {
+      addNotification('Login Required', 'Please log in before finishing matches so history can be saved.', 'system', 'error');
+      return;
+    }
+
+    addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
+    setSelectedKlasemenTournament(finalizedTournament);
+    await clearActiveTournamentSnapshot();
+    try {
+      await syncSharedMatchesSnapshot(finalizedTournament);
+    } catch (err) {
+      console.error('Shared match completion sync error:', err, {
+        authUid: auth.currentUser?.uid || null,
+        userUid: user?.uid || null,
+      });
+    }
+    onTournamentFinalized?.(finalizedTournamentId);
+  };
+
+  // Match Americano yang semua rondenya sudah 'completed' tapi belum
+  // difinalisasi (regresi lama, atau numRounds > jumlah ronde yang tergenerate
+  // sehingga tidak pernah kelihatan sebagai "selesai") — tutup & simpan ke
+  // history. Hanya Americano karena rondenya pre-generated: semua ronde selesai
+  // = match memang benar-benar selesai.
+  const handleFinalizeCompletedMatch = async () => {
+    if (tournament.format !== 'Americano') return;
+    if ((tournament as TournamentHistory).endedAt) return;
+    const rounds = tournament.rounds || [];
+    if (rounds.length === 0) return;
+    const allRoundsCompleted = rounds.every((round) => (
+      round.matches.length > 0 && round.matches.every((match) => match.status === 'completed')
+    ));
+    if (!allRoundsCompleted) return;
+    if (needsRegenerateFromRound !== null) return;
+
+    const now = Date.now();
+    const finalizedRounds = rounds.map((round) => ({
+      ...round,
+      matches: round.matches.map((match) => ({
+        ...match,
+        status: 'completed' as const,
+        duration: match.startedAt ? formatDurationFromMs(now - match.startedAt) : (match.duration || '00:00'),
+      })),
+    }));
+    await finalizeAndPersistTournament(finalizedRounds, now);
   };
 
   const handleStartAmericanoRound = async (roundId: number) => {
@@ -248,127 +404,7 @@ export const useRoundProgressionActions = ({
     });
 
     if (isConfiguredLastRound || shouldFinishBecauseNoPreparedRound) {
-      const finalizedTournamentId = typeof tournament.id === 'string' && tournament.id.trim()
-        ? tournament.id.trim()
-        : Math.random().toString(36).substr(2, 9);
-      const finalizedTournament: Tournament = {
-        ...tournament,
-        id: finalizedTournamentId,
-        rounds: finalizedRounds,
-        endedAt: now,
-      };
-      setTournament(finalizedTournament);
-
-      if (user) {
-        const historyItem: TournamentHistory = {
-          id: finalizedTournamentId,
-          userId: user.uid,
-          name: tournament.name,
-          format: tournament.format,
-          partnerMode: tournament.partnerMode || 'rotating',
-          fixedTeams: tournament.fixedTeams || [],
-          backgroundId: tournament.backgroundId,
-          themeColorId: tournament.themeColorId,
-          toxicModeEnabled: Boolean(tournament.toxicModeEnabled),
-          toxicIntensity: tournament.toxicIntensity || 'savage',
-          criteria: tournament.criteria,
-          scoringType: tournament.scoringType,
-          date: new Date(),
-          startedAt: tournament.startedAt,
-          endedAt: now,
-          courts: tournament.courts,
-          totalPoints: tournament.totalPoints,
-          numRounds: tournament.numRounds,
-          numPlayers: tournament.players.length,
-          rounds: finalizedRounds,
-          players: tournament.players,
-          courtChanges: normalizeCourtChanges(tournament.courtChanges),
-          venueName: tournament.venueName,
-          location: tournament.location,
-          statsVersion: 0,
-        };
-
-        try {
-          const tournamentSummary = {
-            id: historyItem.id,
-            userId: historyItem.userId,
-            name: historyItem.name,
-            format: historyItem.format,
-            ...(historyItem.partnerMode === 'fixed' ? { partnerMode: historyItem.partnerMode } : {}),
-            ...(historyItem.backgroundId ? { backgroundId: historyItem.backgroundId } : {}),
-            ...(historyItem.themeColorId ? { themeColorId: historyItem.themeColorId } : {}),
-            ...(historyItem.toxicModeEnabled ? { toxicModeEnabled: true } : {}),
-            ...(historyItem.toxicModeEnabled ? { toxicIntensity: historyItem.toxicIntensity || 'savage' } : {}),
-            ...(historyItem.criteria ? { criteria: historyItem.criteria } : {}),
-            ...(historyItem.scoringType ? { scoringType: historyItem.scoringType } : {}),
-            ...(typeof historyItem.startedAt === 'number' ? { startedAt: historyItem.startedAt } : {}),
-            ...(typeof historyItem.endedAt === 'number' ? { endedAt: historyItem.endedAt } : {}),
-            ...(Number.isFinite(Number(historyItem.courts)) ? { courts: Number(historyItem.courts) } : {}),
-            ...(Number.isFinite(Number(historyItem.totalPoints)) ? { totalPoints: Number(historyItem.totalPoints) } : {}),
-            numRounds: historyItem.numRounds,
-            numPlayers: historyItem.numPlayers,
-            ...(historyItem.venueName ? { venueName: historyItem.venueName } : {}),
-            ...(historyItem.location ? { location: historyItem.location } : {}),
-            statsVersion: 0,
-            hasDetail: true,
-            detailCollection: toTournamentDetailCollectionLabel,
-            date: serverTimestamp(),
-          };
-          await saveTournamentDetailAndSummary(
-            historyItem.id,
-            toFirestoreSafe(stripLargeInlineImages(stripTournamentPlayerAvatars(historyItem))),
-            tournamentSummary
-          );
-          recordDbMetric({
-            flow: 'finalize',
-            operation: 'write',
-            count: 2,
-            label: 'tournament_detail_and_summary',
-            dbRole: 'primary',
-            collection: 'tournament_details+tournaments',
-          });
-          watchTournamentStatsSync(historyItem.id);
-          setTournaments((prev) => [historyItem, ...prev]);
-        } catch (err) {
-          recordDbError({
-            flow: 'finalize',
-            label: 'tournament_detail_and_summary',
-            err,
-            dbRole: 'primary',
-            collection: 'tournament_details+tournaments',
-          });
-          console.error('Error saving tournament:', err);
-          markTournamentStatsSyncError(historyItem.id);
-          try {
-            await persistActiveTournamentSnapshot(stripLargeInlineImages(stripTournamentPlayerAvatars(finalizedTournament)));
-          } catch (snapshotErr) {
-            console.error('Finalized tournament recovery snapshot error:', snapshotErr);
-          }
-          addNotification(
-            'History Save Failed',
-            'Final scores are still kept in this active match. Please try Finish Matches again before leaving.',
-            'system',
-            'error'
-          );
-          return;
-        }
-      } else {
-        addNotification('Login Required', 'Please log in before finishing matches so history can be saved.', 'system', 'error');
-        return;
-      }
-
-      addNotification('Matches Completed!', `Congratulations to the winners of ${tournament.name}!`, 'achievement');
-      setSelectedKlasemenTournament(finalizedTournament);
-      await clearActiveTournamentSnapshot();
-      try {
-        await syncSharedMatchesSnapshot(finalizedTournament);
-      } catch (err) {
-        console.error('Shared match completion sync error:', err, {
-          authUid: auth.currentUser?.uid || null,
-          userUid: user?.uid || null,
-        });
-      }
-      onTournamentFinalized?.(finalizedTournamentId);
+      await finalizeAndPersistTournament(finalizedRounds, now);
       return;
     }
 
@@ -629,5 +665,6 @@ export const useRoundProgressionActions = ({
     handleNextRound,
     handleStartAmericanoRound,
     handleCompleteAmericanoRound,
+    handleFinalizeCompletedMatch,
   };
 };

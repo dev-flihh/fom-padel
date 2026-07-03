@@ -1175,6 +1175,7 @@ export default function App() {
     handleNextRound,
     handleStartAmericanoRound,
     handleCompleteAmericanoRound,
+    handleFinalizeCompletedMatch,
   } = useRoundProgressionActions({
     tournament,
     user,
@@ -2766,6 +2767,7 @@ export default function App() {
         onNextRound={() => { }}
         onStartAmericanoRound={() => { }}
         onCompleteAmericanoRound={() => { }}
+        onFinalizeCompletedMatch={() => { }}
         onUpdateRounds={() => false}
         onUpdateCourts={() => false}
         onUpdateToxicSettings={() => { }}
@@ -3011,6 +3013,7 @@ export default function App() {
             onNextRound={handleNextRound}
             onStartAmericanoRound={handleStartAmericanoRound}
             onCompleteAmericanoRound={handleCompleteAmericanoRound}
+            onFinalizeCompletedMatch={handleFinalizeCompletedMatch}
             onUpdateRounds={handleUpdateRounds}
             onUpdateCourts={handleUpdateCourts}
             onUpdateToxicSettings={handleUpdateToxicSettings}

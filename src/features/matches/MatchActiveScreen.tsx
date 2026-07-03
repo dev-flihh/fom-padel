@@ -34,6 +34,7 @@ type MatchActiveScreenProps = {
   onNextRound: () => void | Promise<void>;
   onStartAmericanoRound: (roundId: number) => void | Promise<void>;
   onCompleteAmericanoRound: (roundId: number, options?: { allowIncomplete?: boolean }) => void | Promise<void>;
+  onFinalizeCompletedMatch: () => void | Promise<void>;
   onUpdateRounds: (numRounds: number) => boolean;
   onUpdateCourts: (numCourts: number) => boolean;
   onUpdateToxicSettings: (settings: { toxicModeEnabled: boolean; toxicIntensity: ToxicIntensity }) => void;
@@ -195,6 +196,7 @@ export const MatchActiveScreen = ({
   onNextRound,
   onStartAmericanoRound,
   onCompleteAmericanoRound,
+  onFinalizeCompletedMatch,
   onUpdateRounds,
   onUpdateCourts,
   onUpdateToxicSettings,
@@ -557,6 +559,28 @@ export const MatchActiveScreen = ({
     hasSyncedActiveRoundRef.current = true;
     previousActiveRoundIdRef.current = activeRoundId;
   }, [activeRoundId, hasActiveTournament, roundIdsKey, scrollRoundCardIntoView]);
+
+  // Auto-finalize: match Americano milik host yang semua rondenya sudah
+  // selesai tapi belum sempat difinalisasi (regresi lama / numRounds >
+  // ronde tergenerate) ditutup & disimpan ke history saat dibuka lagi.
+  // Americano saja karena rondenya pre-generated → semua ronde selesai =
+  // match benar-benar selesai. Sekali per match (ref), bukan untuk viewer.
+  const autoFinalizeAttemptedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isReadOnly || isSharedViewer) return;
+    if (tournament.format !== 'Americano') return;
+    if ((tournament as TournamentHistory).endedAt) return;
+    const rounds = tournament.rounds || [];
+    if (rounds.length === 0) return;
+    const allRoundsCompleted = rounds.every((round) => (
+      round.matches.length > 0 && round.matches.every((match) => match.status === 'completed')
+    ));
+    if (!allRoundsCompleted) return;
+    const tournamentKey = String(tournament.id || '');
+    if (autoFinalizeAttemptedRef.current === tournamentKey) return;
+    autoFinalizeAttemptedRef.current = tournamentKey;
+    void onFinalizeCompletedMatch();
+  }, [tournament, isReadOnly, isSharedViewer, onFinalizeCompletedMatch]);
 
   const toggleRound = (roundId: number) => {
     setCollapsedRounds((prev) => {
