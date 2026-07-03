@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent, type TouchEvent } from 'react';
-import { toCanvas as htmlToImageCanvas } from 'html-to-image';
+import { toSvg as htmlToImageSvg } from 'html-to-image';
 import QRCode from 'qrcode';
 import { Download, MoreHorizontal, RefreshCw, Share2, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -36,7 +36,7 @@ export type RewindResult = {
 const MAX_PHOTOS = 10;
 const EXPORT_VIEW = { width: 360, height: 640 };
 
-type ExportOptions = Parameters<typeof htmlToImageCanvas>[1];
+type ExportOptions = Parameters<typeof htmlToImageSvg>[1];
 
 // iOS Safari / WebKit rasterizes html-to-image's <foreignObject> SVG *before*
 // the embedded images (gallery photos as big data URLs, remote avatars) finish
@@ -54,59 +54,62 @@ const isWebkit = (() => {
   return isIOS || isSafari;
 })();
 
-// iOS Safari also has a hard *total* canvas-memory budget: when the tab blows
-// past it, Safari kills and reloads the page (the "reload to homepage near the
-// end of generate" crash). Two mitigations here:
-//   1. Export at 2× (720×1280) on WebKit instead of 3× — still crisp for IG
-//      stories at 44% of the pixel memory.
-//   2. Free every canvas backing store deterministically (Safari only releases
-//      it on GC, unless dimensions are zeroed) — see exportNodeToBlob.
+// iOS Safari also has a hard *total* canvas/image-memory budget: when the tab
+// blows past it, Safari kills and reloads the page (the "reload to homepage
+// near the end of generate" crash). html-to-image's toBlob/toCanvas allocate a
+// fresh canvas + SVG image per call, so multi-pass × ~17 slides piled up ~50
+// rasterizations and crashed mid-run. Instead we drive the rasterization
+// ourselves with html-to-image's toSvg:
+//   - ONE canvas, created per generate run and reused for every slide;
+//   - ONE SVG + <img> per slide — the WebKit decode bug only needs the
+//     *drawImage* repeated, not the whole SVG rebuild;
+//   - the SVG image is released (src='') right after use.
 const EXPORT_CANVAS = isWebkit ? { width: 720, height: 1280 } : { width: 1080, height: 1920 };
-
-// Warm-up passes only need to force WebKit to fetch+decode the embedded
-// images — render them at a tiny canvas, not full-res.
-const WARMUP_PASSES = isWebkit ? 2 : 0;
-const WARMUP_CANVAS = { width: 36, height: 64 };
+const DRAW_PASSES = isWebkit ? 3 : 1;
 
 const waitFrames = () => new Promise<void>((resolve) => (
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
 ));
 
-// Rasterize once and release the canvas immediately: extract the blob, then
-// zero the canvas dimensions so Safari frees the backing store without
-// waiting for GC (the classic iOS canvas-leak workaround).
-const renderPassToBlob = async (
-  node: HTMLElement,
-  options: ExportOptions,
-  wantBlob: boolean,
-): Promise<Blob | null> => {
-  const canvas = await htmlToImageCanvas(node, options);
-  try {
-    if (!wantBlob) return null;
-    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-  } finally {
-    canvas.width = 0;
-    canvas.height = 0;
-  }
-};
+// A frame plus a real pause — WebKit needs wall-clock time to finish decoding
+// the SVG's embedded images before a redraw picks them up.
+const settle = (ms: number) => new Promise<void>((resolve) => (
+  requestAnimationFrame(() => window.setTimeout(resolve, ms))
+));
 
-// Render the node to a blob. On WebKit, run cheap warm-up renders first so
-// every embedded image is decoded by the time the real (full-res) pass runs.
-const exportNodeToBlob = async (node: HTMLElement, options: ExportOptions): Promise<Blob | null> => {
-  for (let pass = 0; pass < WARMUP_PASSES; pass += 1) {
-    try {
-      await renderPassToBlob(node, {
-        ...options,
-        canvasWidth: WARMUP_CANVAS.width,
-        canvasHeight: WARMUP_CANVAS.height,
-      }, false);
-    } catch {
-      // Warm-up is best-effort; the final pass decides success.
-    }
-    // Yield a couple frames so Safari can settle/GC between rasterizations.
-    await waitFrames();
+// Rasterize the slide DOM into the shared canvas and extract a PNG blob.
+const exportNodeToBlob = async (
+  node: HTMLElement,
+  canvas: HTMLCanvasElement,
+  options: ExportOptions,
+): Promise<Blob | null> => {
+  const svgUrl = await htmlToImageSvg(node, options);
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('SVG rasterization failed'));
+    image.src = svgUrl;
+  });
+  try {
+    await image.decode();
+  } catch {
+    // Some WebKit versions reject decode() for SVG — the draw passes handle it.
   }
-  return renderPassToBlob(node, options, true);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas context missing');
+  for (let pass = 0; pass < DRAW_PASSES; pass += 1) {
+    // WebKit rasterizes the SVG before its embedded images (gallery photos as
+    // big data URLs, remote avatars) finish decoding — the first draw can come
+    // out without photos. Redrawing after a pause picks them up; the last draw
+    // wins. See https://github.com/bubkoo/html-to-image/issues/361
+    if (pass > 0) await settle(120);
+    ctx.fillStyle = '#111111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  }
+  // Drop the decoded SVG bitmap promptly (iOS frees it with the src).
+  image.src = '';
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
 };
 
 const fileSafe = (value: string) => (
@@ -298,9 +301,15 @@ export const RewindFlow = ({
     setProgress({ current: 0, total: slidePayloads.length });
     setStep('generating');
 
+    // One shared canvas for the whole run — the only full-res canvas that ever
+    // exists, so total canvas memory stays flat across all slides.
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = EXPORT_CANVAS.width;
+    exportCanvas.height = EXPORT_CANVAS.height;
+
     const generated: GeneratedRewindSlide[] = [];
     for (let index = 0; index < slidePayloads.length; index += 1) {
-      if (generationRef.current !== generation) return; // superseded
+      if (generationRef.current !== generation) break; // superseded
       setProgress({ current: index + 1, total: slidePayloads.length });
       setRenderSlide(slidePayloads[index]);
       try {
@@ -320,12 +329,9 @@ export const RewindFlow = ({
             });
           }
         }));
-        const blob = await exportNodeToBlob(node, {
+        const blob = await exportNodeToBlob(node, exportCanvas, {
           width: EXPORT_VIEW.width,
           height: EXPORT_VIEW.height,
-          canvasWidth: EXPORT_CANVAS.width,
-          canvasHeight: EXPORT_CANVAS.height,
-          pixelRatio: 1,
           cacheBust: true,
           backgroundColor: '#111111',
         });
@@ -337,7 +343,7 @@ export const RewindFlow = ({
           url: URL.createObjectURL(blob),
         });
         // Breathe between slides so Safari can reclaim render memory before
-        // the next rasterization instead of accumulating across ~16 slides.
+        // the next rasterization instead of accumulating across ~17 slides.
         await waitFrames();
       } catch (err) {
         // FR-6.4: one failed slide is skipped, the rest continue.
@@ -348,8 +354,14 @@ export const RewindFlow = ({
         });
       }
     }
-    setRenderSlide(null);
+    // Release the shared canvas backing store deterministically (iOS quirk:
+    // it isn't freed until GC unless dimensions are zeroed).
+    exportCanvas.width = 0;
+    exportCanvas.height = 0;
+    // Superseded runs must not touch shared state — a newer generation owns
+    // renderSlide/step now.
     if (generationRef.current !== generation) return;
+    setRenderSlide(null);
     if (generated.length === 0) {
       setStep('error');
       return;
