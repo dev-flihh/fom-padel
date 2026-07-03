@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, Minus, Play, Plus, Zap } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { type Match, type MatchFormat, type Player, type Round } from '../../types';
 
@@ -348,20 +348,33 @@ const TeamName = ({
   const teamData = team === 'A' ? match.teamA : match.teamB;
   const canSwap = isActiveRound && !isReadOnly;
 
+  // Tiap nama adalah tombol swap masing-masing — dulu satu tombol gabungan
+  // yang selalu membuka swap untuk playerIndex 0, jadi pemain kedua di tim
+  // tidak pernah bisa diganti.
   return (
     <div className={cn('flex min-w-0 flex-col gap-2', team === 'A' ? 'items-start text-left' : 'items-end text-right')}>
-      <button
-        type="button"
-        onClick={() => canSwap && onOpenSwapPlayer({ matchId: match.id, team, playerIndex: 0, currentPlayer: teamData.players[0] })}
-        className={cn(
-          "line-clamp-2 max-w-full bg-transparent border-0 p-0 font-display text-[15px] font-bold leading-[1.16] tracking-[-0.018em] text-on-surface",
-          team === 'B' && 'text-right',
-          canSwap ? "cursor-pointer tap-target" : "cursor-default"
-        )}
-        disabled={!canSwap || !teamData.players[0]}
-      >
-        {teamData.players.map((player) => player.name.split(' ')[0]).join(' & ')}
-      </button>
+      <p className={cn(
+        'line-clamp-2 max-w-full font-display text-[15px] font-bold leading-[1.16] tracking-[-0.018em] text-on-surface',
+        team === 'B' && 'text-right'
+      )}>
+        {teamData.players.map((player, playerIndex) => (
+          <Fragment key={`${match.id}-${team}-${player.id}-${playerIndex}`}>
+            {playerIndex > 0 && <span aria-hidden="true"> & </span>}
+            <button
+              type="button"
+              onClick={() => canSwap && onOpenSwapPlayer({ matchId: match.id, team, playerIndex, currentPlayer: player })}
+              disabled={!canSwap}
+              className={cn(
+                'inline border-0 bg-transparent p-0 align-baseline font-display text-[15px] font-bold leading-[1.16] tracking-[-0.018em] text-on-surface',
+                canSwap ? 'cursor-pointer tap-target underline decoration-dotted decoration-ios-gray/35 underline-offset-[3px]' : 'cursor-default'
+              )}
+              aria-label={`Swap ${player.name} on court ${match.court}`}
+            >
+              {player.name.split(' ')[0]}
+            </button>
+          </Fragment>
+        ))}
+      </p>
     </div>
   );
 };
