@@ -1,0 +1,16 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import FormatPage from '../../components/pages/FormatPage.astro';
+import { getPages } from '../../i18n';
+import { breadcrumbSchema } from '../../i18n/pageSchema';
+
+const f = getPages('en').formats.items['match-play'];
+const crumb = breadcrumbSchema([
+  { name: 'Home', path: '/' },
+  { name: f.name, path: '/formats/match-play' },
+]);
+---
+
+<BaseLayout title={f.metaTitle} description={f.metaDesc} enPath="/formats/match-play" idPath="/id/format/match-play" schema={crumb}>
+  <FormatPage formatKey="match-play" />
+</BaseLayout>

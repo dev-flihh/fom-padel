@@ -1,0 +1,39 @@
+---
+import Icon from '../Icon.astro';
+import { getDict } from '../../i18n';
+
+const t = getDict(Astro.currentLocale);
+
+// Aksen warna mengikuti tema format di app (matchTheme.ts), dipakai tipis saja.
+const styles = [
+  { accent: 'text-americano', bar: 'bg-americano', icon: 'shuffle' },
+  { accent: 'text-primary', bar: 'bg-primary', icon: 'flame' },
+  { accent: 'text-matchplay', bar: 'bg-matchplay', icon: 'target' },
+];
+---
+
+<section id="formats" class="border-b border-outline">
+  <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
+    <div class="flex flex-wrap items-end justify-between gap-4" data-reveal>
+      <h2 class="heading max-w-xl text-3xl sm:text-5xl">{t.formats.title}</h2>
+      <a href="/blog" class="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
+        {t.formats.cta}
+        <Icon name="arrow-right" size={15} />
+      </a>
+    </div>
+    <div class="mt-10 grid gap-4 md:grid-cols-3">
+      {t.formats.cards.map((card, i) => (
+        <div class="overflow-hidden rounded-xl border border-outline bg-white shadow-sm" data-reveal>
+          <div class:list={['h-1', styles[i]!.bar]}></div>
+          <div class="p-6">
+            <div class:list={['flex h-10 w-10 items-center justify-center rounded-lg border border-outline bg-surface', styles[i]!.accent]}>
+              <Icon name={styles[i]!.icon} size={18} />
+            </div>
+            <h3 class="mt-4 text-base font-semibold text-ink">{card.name}</h3>
+            <p class="mt-1.5 text-sm leading-relaxed text-muted">{card.desc}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

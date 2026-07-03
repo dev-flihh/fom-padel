@@ -1,0 +1,71 @@
+---
+import Icon from './Icon.astro';
+import { getDict, localePath } from '../i18n';
+
+const locale = Astro.currentLocale;
+const t = getDict(locale);
+const p = (path: string) => localePath(path, locale);
+
+const isId = locale === 'id';
+const fmt = isId ? '/id/format/' : '/formats/';
+const columns = [
+  {
+    title: t.footer.product,
+    links: [
+      { label: t.footer.links.features, href: isId ? '/id/fitur' : '/features' },
+      { label: t.footer.links.toxicMode, href: isId ? '/id/toxic-mode' : '/toxic-mode' },
+      { label: t.footer.links.ranking, href: isId ? '/id/ranking' : '/ranking' },
+      { label: t.footer.links.rewind, href: `${p('/')}#rewind` },
+      { label: t.footer.links.openApp, href: '/app' },
+    ],
+  },
+  {
+    title: t.footer.formats,
+    links: [
+      { label: t.footer.links.americano, href: `${fmt}americano` },
+      { label: t.footer.links.mexicano, href: `${fmt}mexicano` },
+      { label: t.footer.links.matchPlay, href: `${fmt}match-play` },
+    ],
+  },
+  {
+    title: t.footer.resources,
+    links: [
+      { label: t.footer.links.blog, href: isId ? '/id/blog' : '/blog' },
+      { label: t.footer.links.faq, href: isId ? '/id/faq' : '/faq' },
+    ],
+  },
+];
+---
+
+<footer class="border-t border-outline bg-surface pb-24 sm:pb-10">
+  <div class="mx-auto grid max-w-6xl gap-10 px-4 py-14 sm:px-6 md:grid-cols-[1.4fr_repeat(3,1fr)]">
+    <div>
+      <img src="/fom-play-logo-light-cropped.png" alt="FOM Play" class="h-7 w-auto" />
+      <p class="mt-3 max-w-xs text-sm text-muted">{t.footer.tagline}</p>
+      <a
+        href={t.langSwitch.otherUrl}
+        class="mt-5 inline-flex h-9 items-center gap-1.5 rounded-md border border-outline bg-white px-3 text-xs font-medium text-muted transition-colors hover:border-gray-300 hover:text-ink"
+      >
+        <Icon name="globe" size={14} />
+        {t.footer.language}: <span class="font-semibold text-ink">{t.langSwitch.label}</span> → {t.langSwitch.other}
+      </a>
+    </div>
+
+    {columns.map((col) => (
+      <div>
+        <h3 class="text-sm font-semibold text-ink">{col.title}</h3>
+        <ul class="mt-3.5 grid gap-2.5 text-sm text-muted">
+          {col.links.map((link) => (
+            <li>
+              <a href={link.href} class="transition-colors hover:text-ink">{link.label}</a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    ))}
+  </div>
+  <div class="mx-auto flex max-w-6xl items-center justify-between border-t border-outline px-4 pt-6 text-xs text-gray-400 sm:px-6">
+    <span>{t.footer.copyright}</span>
+    <span>fomplay.asia</span>
+  </div>
+</footer>

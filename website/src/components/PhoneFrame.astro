@@ -1,0 +1,24 @@
+---
+// Bingkai HP untuk screenshot aplikasi asli. Screenshot sudah berisi UI penuh
+// (header + bottom nav app), jadi frame ini hanya bezel tipis + rounded.
+interface Props {
+  src: string;
+  alt: string;
+  class?: string;
+  /** lebar frame di layar (Tailwind width class) */
+  width?: string;
+}
+
+const { src, alt, class: className = '', width = 'w-[260px]' } = Astro.props;
+---
+
+<div class:list={['shrink-0', width, className]}>
+  <div class="rounded-[2rem] border border-gray-200/80 bg-white p-1.5 shadow-[0_24px_60px_-20px_rgba(17,24,39,0.35)]">
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      class="w-full rounded-[1.5rem] border border-outline"
+    />
+  </div>
+</div>

@@ -1,0 +1,11 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import ToxicModePage from '../../components/pages/ToxicModePage.astro';
+import { getPages } from '../../i18n';
+
+const m = getPages('id').toxic.meta;
+---
+
+<BaseLayout title={m.title} description={m.description} enPath="/toxic-mode" idPath="/id/toxic-mode">
+  <ToxicModePage />
+</BaseLayout>

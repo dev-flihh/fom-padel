@@ -1,0 +1,105 @@
+---
+import Icon from './Icon.astro';
+import { getDict, localePath } from '../i18n';
+
+interface Props {
+  altLocaleUrl?: string;
+}
+
+const locale = Astro.currentLocale;
+const t = getDict(locale);
+const { altLocaleUrl = t.langSwitch.otherUrl } = Astro.props;
+const p = (path: string) => localePath(path, locale);
+
+const isId = locale === 'id';
+const navItems = [
+  { label: t.nav.features, href: isId ? '/id/fitur' : '/features' },
+  { label: t.nav.toxicMode, href: isId ? '/id/toxic-mode' : '/toxic-mode' },
+  { label: t.nav.ranking, href: isId ? '/id/ranking' : '/ranking' },
+  { label: t.nav.formats, href: isId ? '/id/format/americano' : '/formats/americano' },
+  { label: t.nav.blog, href: isId ? '/id/blog' : '/blog' },
+];
+---
+
+<header class="sticky top-0 z-50 border-b border-outline bg-white/90 backdrop-blur-md">
+  <div class="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+    <a href={p('/')} class="flex shrink-0 items-center">
+      <img src="/fom-play-logo-light-cropped.png" alt="FOM Play" class="h-7 w-auto" />
+    </a>
+
+    <nav class="hidden items-center gap-1 text-sm font-medium text-muted md:flex">
+      {navItems.map((item) => (
+        <a href={item.href} class="rounded-md px-3 py-2 transition-colors hover:bg-surface hover:text-ink">
+          {item.label}
+        </a>
+      ))}
+    </nav>
+
+    <div class="flex items-center gap-2">
+      <a
+        href={altLocaleUrl}
+        class="inline-flex h-9 items-center gap-1.5 rounded-md border border-outline bg-white px-3 text-xs font-medium text-muted transition-colors hover:border-gray-300 hover:text-ink"
+        aria-label="Switch language"
+      >
+        <Icon name="globe" size={14} />
+        <span class="font-semibold text-ink">{t.langSwitch.label}</span>
+        <span class="text-gray-300">/</span>
+        <span>{t.langSwitch.other}</span>
+      </a>
+      <a
+        href="/app"
+        class="hidden h-9 items-center rounded-md bg-primary px-4 text-sm font-semibold text-white transition-colors hover:bg-primary-strong sm:inline-flex"
+      >
+        {t.nav.openApp}
+      </a>
+      <button
+        id="mobile-menu-btn"
+        class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-outline text-muted md:hidden"
+        aria-label="Menu"
+        aria-expanded="false"
+      >
+        <Icon name="menu" size={16} />
+      </button>
+    </div>
+  </div>
+
+  <nav id="mobile-menu" class="hidden border-t border-outline bg-white px-4 py-3 md:hidden">
+    <ul class="grid gap-0.5 text-sm font-medium text-gray-700">
+      {navItems.map((item) => (
+        <li>
+          <a href={item.href} class="block rounded-md px-3 py-2.5 hover:bg-surface">{item.label}</a>
+        </li>
+      ))}
+      <li>
+        <a href="/app" class="mt-2 block rounded-md bg-primary px-3 py-2.5 text-center font-semibold text-white">
+          {t.nav.openApp}
+        </a>
+      </li>
+    </ul>
+  </nav>
+</header>
+
+<!-- Sticky bottom CTA khusus mobile -->
+<div class="embed-hide fixed inset-x-0 bottom-0 z-40 border-t border-outline bg-white/95 p-3 backdrop-blur-md sm:hidden">
+  <a
+    href="/app"
+    class="block rounded-md bg-primary py-3 text-center text-sm font-semibold text-white transition-colors hover:bg-primary-strong"
+  >
+    {t.nav.openApp}
+  </a>
+</div>
+
+<script>
+  const btn = document.getElementById('mobile-menu-btn');
+  const menu = document.getElementById('mobile-menu');
+  btn?.addEventListener('click', () => {
+    const open = menu?.classList.toggle('hidden') === false;
+    btn.setAttribute('aria-expanded', String(open));
+  });
+  menu?.querySelectorAll('a').forEach((link) =>
+    link.addEventListener('click', () => {
+      menu.classList.add('hidden');
+      btn?.setAttribute('aria-expanded', 'false');
+    }),
+  );
+</script>

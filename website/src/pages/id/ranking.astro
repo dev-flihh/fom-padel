@@ -1,0 +1,12 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import RankingPage from '../../components/pages/RankingPage.astro';
+import { getPages } from '../../i18n';
+import { rankingFaqSchema } from '../../i18n/pageSchema';
+
+const m = getPages('id').ranking.meta;
+---
+
+<BaseLayout title={m.title} description={m.description} enPath="/ranking" idPath="/id/ranking" schema={rankingFaqSchema('id')}>
+  <RankingPage />
+</BaseLayout>

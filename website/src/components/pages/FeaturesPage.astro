@@ -1,0 +1,63 @@
+---
+import Icon from '../Icon.astro';
+import PhoneFrame from '../PhoneFrame.astro';
+import { getPages } from '../../i18n';
+
+const p = getPages(Astro.currentLocale).features;
+---
+
+<!-- Hero -->
+<section class="border-b border-outline">
+  <div class="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6 lg:py-20">
+    <span class="inline-flex items-center gap-2 rounded-full border border-outline bg-white px-3.5 py-1.5 text-xs font-medium text-muted">
+      <span class="h-1.5 w-1.5 rounded-full bg-primary"></span>
+      {p.eyebrow}
+    </span>
+    <h1 class="heading mx-auto mt-6 max-w-3xl text-4xl sm:text-6xl">{p.title}</h1>
+    <p class="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">{p.subtitle}</p>
+  </div>
+</section>
+
+<!-- Grup fitur -->
+{p.groups.map((group, gi) => (
+  <section class:list={['border-b border-outline', gi % 2 === 1 && 'bg-surface/50']}>
+    <div class="mx-auto max-w-6xl px-4 py-14 sm:px-6 lg:py-16">
+      <div class="grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+        <div class:list={gi % 2 === 1 ? 'lg:order-2' : ''}>
+          <h2 class="heading text-2xl sm:text-3xl" data-reveal>{group.title}</h2>
+          <div class="mt-6 grid gap-4 sm:grid-cols-2">
+            {group.cards.map((card) => (
+              <div class="rounded-xl border border-outline bg-white p-5 shadow-sm" data-reveal>
+                <div class="flex h-9 w-9 items-center justify-center rounded-lg border border-outline bg-surface text-primary">
+                  <Icon name={card.icon} size={16} />
+                </div>
+                <h3 class="mt-3.5 text-sm font-semibold text-ink">{card.title}</h3>
+                <p class="mt-1 text-sm leading-relaxed text-muted">{card.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <!-- Screenshot pendukung per grup -->
+        <div class:list={['flex justify-center', gi % 2 === 1 ? 'lg:order-1 lg:justify-start' : 'lg:justify-end']} data-reveal>
+          <PhoneFrame
+            src={gi === 0 ? '/screenshots/app-live.png' : gi === 1 ? '/screenshots/rewind-cover.png' : '/screenshots/app-hall-of-shame.png'}
+            alt="FOM Play app screen"
+            width="w-[220px] sm:w-[240px]"
+          />
+        </div>
+      </div>
+    </div>
+  </section>
+))}
+
+<!-- CTA -->
+<section class="px-4 py-16 sm:px-6 lg:py-20">
+  <div class="dot-grid-dark mx-auto max-w-5xl rounded-2xl bg-navy-deep px-6 py-14 text-center text-white sm:px-12">
+    <h2 class="heading mx-auto max-w-xl text-3xl text-white sm:text-4xl">{p.cta.title}</h2>
+    <p class="mt-3 text-white/60">{p.cta.subtitle}</p>
+    <a href="/app" class="mt-7 inline-flex h-12 items-center gap-2 rounded-md bg-primary px-8 text-sm font-semibold text-white transition-colors hover:bg-primary-strong">
+      {p.cta.button}
+      <Icon name="arrow-right" size={16} />
+    </a>
+  </div>
+</section>

@@ -1,0 +1,43 @@
+---
+import Icon from '../Icon.astro';
+import { getDict } from '../../i18n';
+
+const t = getDict(Astro.currentLocale);
+
+// Slide FOM Rewind asli hasil generate dari aplikasi (match "Fom Intense Weekend").
+const slides = [
+  { src: '/screenshots/rewind-cover.png', alt: 'FOM Rewind cover slide' },
+  { src: '/screenshots/rewind-numbers.png', alt: 'FOM Rewind the numbers slide' },
+  { src: '/screenshots/rewind-podium.png', alt: 'FOM Rewind podium slide' },
+  { src: '/screenshots/rewind-dreamteam.png', alt: 'FOM Rewind dream team slide' },
+  { src: '/screenshots/rewind-cupu.png', alt: 'FOM Rewind Cupu D’Or slide' },
+  { src: '/screenshots/rewind-champion.png', alt: 'FOM Rewind champion slide' },
+];
+---
+
+<section id="rewind" class="overflow-hidden border-b border-outline">
+  <div class="mx-auto max-w-6xl px-4 pt-16 sm:px-6 lg:pt-24">
+    <div class="max-w-2xl" data-reveal>
+      <span class="inline-flex items-center gap-2 rounded-full border border-outline bg-white px-3.5 py-1.5 text-xs font-medium text-muted">
+        <Icon name="camera" size={13} class="text-primary" />
+        {t.rewind.eyebrow}
+      </span>
+      <h2 class="heading mt-5 text-3xl sm:text-5xl">{t.rewind.title}</h2>
+      <p class="mt-4 max-w-xl text-base leading-relaxed text-muted sm:text-lg">{t.rewind.body}</p>
+    </div>
+  </div>
+
+  <!-- Carousel slide Rewind asli (scroll-snap horizontal) -->
+  <div class="flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 py-12 sm:px-6 lg:justify-center" data-reveal>
+    {slides.map((slide) => (
+      <div class="w-40 shrink-0 snap-center sm:w-44">
+        <img
+          src={slide.src}
+          alt={slide.alt}
+          loading="lazy"
+          class="w-full rounded-2xl border border-outline shadow-[0_18px_40px_-16px_rgba(17,24,39,0.4)]"
+        />
+      </div>
+    ))}
+  </div>
+</section>

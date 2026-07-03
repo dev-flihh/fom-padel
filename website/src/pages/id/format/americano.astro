@@ -1,0 +1,16 @@
+---
+import BaseLayout from '../../../layouts/BaseLayout.astro';
+import FormatPage from '../../../components/pages/FormatPage.astro';
+import { getPages } from '../../../i18n';
+import { breadcrumbSchema } from '../../../i18n/pageSchema';
+
+const f = getPages('id').formats.items.americano;
+const crumb = breadcrumbSchema([
+  { name: 'Home', path: '/id/' },
+  { name: f.name, path: '/id/format/americano' },
+]);
+---
+
+<BaseLayout title={f.metaTitle} description={f.metaDesc} enPath="/formats/americano" idPath="/id/format/americano" schema={crumb}>
+  <FormatPage formatKey="americano" />
+</BaseLayout>

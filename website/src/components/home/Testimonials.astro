@@ -1,0 +1,28 @@
+---
+import { getDict } from '../../i18n';
+
+const t = getDict(Astro.currentLocale);
+---
+
+<!-- Testimoni placeholder — ganti dengan quote asli komunitas di Fase 3 (plan §8). -->
+<section class="border-b border-outline bg-surface/50">
+  <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
+    <h2 class="heading max-w-xl text-3xl sm:text-5xl" data-reveal>{t.testimonials.title}</h2>
+    <div class="mt-10 grid gap-4 md:grid-cols-3">
+      {t.testimonials.items.map((item) => (
+        <figure class="flex flex-col justify-between rounded-xl border border-outline bg-white p-6 shadow-sm" data-reveal>
+          <blockquote class="text-sm leading-relaxed text-gray-700 sm:text-base">“{item.quote}”</blockquote>
+          <figcaption class="mt-6 flex items-center gap-3 border-t border-outline pt-4">
+            <span class="flex h-9 w-9 items-center justify-center rounded-full bg-surface text-xs font-bold text-gray-400">
+              {item.role.slice(0, 1)}
+            </span>
+            <span>
+              <span class="block text-sm font-semibold text-ink">{item.name}</span>
+              <span class="block text-xs text-gray-400">{item.role}</span>
+            </span>
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+  </div>
+</section>

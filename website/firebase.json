@@ -1,0 +1,26 @@
+{
+  "hosting": {
+    "public": "dist",
+    "cleanUrls": true,
+    "trailingSlash": false,
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "redirects": [
+      { "source": "/fitur", "destination": "/id/fitur", "type": 301 },
+      { "source": "/format/americano", "destination": "/id/format/americano", "type": 301 },
+      { "source": "/format/mexicano", "destination": "/id/format/mexicano", "type": 301 },
+      { "source": "/format/match-play", "destination": "/id/format/match-play", "type": 301 },
+      { "source": "/edukasi/perbedaan-americano-vs-mexicano", "destination": "/id/blog/americano-vs-mexicano", "type": 301 },
+      { "source": "/blog/articles/americano-vs-mexicano", "destination": "/id/blog/americano-vs-mexicano", "type": 301 },
+      { "source": "/blog/articles/cara-mulai-turnamen-padel", "destination": "/id/blog/cara-mulai-turnamen-padel", "type": 301 },
+      { "source": "/blog/articles/kenapa-live-scoring-padel-penting", "destination": "/id/blog/kenapa-live-scoring-padel-penting", "type": 301 },
+      { "source": "/blog/articles/ranking-mmr-fom-play", "destination": "/id/blog/ranking-mmr-fom-play", "type": 301 },
+      { "source": "/blog/articles/klasemen-otomatis-padel", "destination": "/id/blog/klasemen-otomatis-padel", "type": 301 }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(png|jpg|jpeg|webp|avif|woff2)",
+        "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+      }
+    ]
+  }
+}

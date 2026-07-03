@@ -1,0 +1,28 @@
+---
+import Icon from '../Icon.astro';
+import { getDict } from '../../i18n';
+
+const t = getDict(Astro.currentLocale);
+---
+
+<section class="px-4 py-16 sm:px-6 lg:py-24">
+  <div
+    class="dot-grid-dark relative mx-auto max-w-6xl overflow-hidden rounded-2xl bg-navy-deep px-6 py-16 text-center text-white sm:px-12 lg:py-20"
+    data-reveal
+  >
+    <img src="/fom-play-logo-dark-cropped.png" alt="" class="mx-auto h-8 w-auto opacity-90" />
+    <h2 class="heading relative mx-auto mt-6 max-w-2xl text-3xl text-white sm:text-5xl">
+      {t.finalCta.title}
+    </h2>
+    <p class="relative mx-auto mt-4 max-w-xl text-base text-white/60 sm:text-lg">
+      {t.finalCta.subtitle}
+    </p>
+    <a
+      href="/app"
+      class="relative mt-8 inline-flex h-12 items-center gap-2 rounded-md bg-primary px-8 text-sm font-semibold text-white transition-colors hover:bg-primary-strong"
+    >
+      {t.finalCta.cta}
+      <Icon name="arrow-right" size={16} />
+    </a>
+  </div>
+</section>

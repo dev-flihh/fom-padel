@@ -1,0 +1,108 @@
+---
+import '../styles/global.css';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import { getDict } from '../i18n';
+
+interface Props {
+  title?: string;
+  description?: string;
+  /** Path root-relative versi EN & ID dari halaman ini (untuk canonical + hreflang + switcher). */
+  enPath?: string;
+  idPath?: string;
+  /** Gambar OG (root-relative). Default: og-default.png */
+  ogImage?: string;
+  /** JSON-LD tambahan khusus halaman (object; akan di-stringify). */
+  schema?: Record<string, unknown> | Record<string, unknown>[];
+}
+
+const SITE = 'https://fomplay.asia';
+const locale = Astro.currentLocale;
+const t = getDict(locale);
+const {
+  title = t.meta.title,
+  description = t.meta.description,
+  enPath = '/',
+  idPath = '/id/',
+  ogImage = '/og-default.png',
+  schema,
+} = Astro.props;
+
+const currentPath = locale === 'id' ? idPath : enPath;
+const altLocaleUrl = locale === 'id' ? enPath : idPath;
+const canonical = SITE + currentPath;
+const ogImageUrl = SITE + ogImage;
+
+// JSON-LD dasar untuk seluruh situs.
+const orgSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'FOM Play',
+  url: SITE,
+  logo: `${SITE}/fom-play-logo-light-cropped.png`,
+};
+const schemaList = [orgSchema, ...(Array.isArray(schema) ? schema : schema ? [schema] : [])];
+---
+
+<html lang={locale ?? 'en'}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/png" href="/fom-logomark-color.png" />
+    <link rel="canonical" href={canonical} />
+
+    <!-- Bilingual: hreflang EN root + ID /id/, x-default = EN -->
+    <link rel="alternate" hreflang="en" href={SITE + enPath} />
+    <link rel="alternate" hreflang="id" href={SITE + idPath} />
+    <link rel="alternate" hreflang="x-default" href={SITE + enPath} />
+
+    <!-- Open Graph / Twitter -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FOM Play" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImageUrl} />
+    <meta property="og:locale" content={locale === 'id' ? 'id_ID' : 'en_US'} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageUrl} />
+
+    <script type="application/ld+json" set:html={JSON.stringify(schemaList)} />
+
+    <!-- Mode embed: saat ?embed=1, sembunyikan header/footer/CTA (untuk webview app).
+         Dijalankan sinkron di <head> supaya tidak ada kedip. -->
+    <script is:inline>
+      try {
+        if (new URLSearchParams(window.location.search).get('embed') === '1') {
+          document.documentElement.classList.add('embed');
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <Header altLocaleUrl={altLocaleUrl} />
+    <main>
+      <slot />
+    </main>
+    <Footer />
+
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add('is-revealed');
+              observer.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.12 },
+      );
+      document.querySelectorAll('[data-reveal]').forEach((el) => observer.observe(el));
+    </script>
+  </body>
+</html>

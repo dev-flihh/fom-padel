@@ -1,0 +1,96 @@
+---
+import Icon from '../Icon.astro';
+import PhoneFrame from '../PhoneFrame.astro';
+import { getDict } from '../../i18n';
+
+const t = getDict(Astro.currentLocale);
+---
+
+<section id="toxic" class="dot-grid-dark bg-navy-deep text-white">
+  <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
+    <div class="grid items-center gap-10 lg:grid-cols-[1.1fr_0.9fr]">
+      <div>
+        <div class="max-w-xl" data-reveal>
+          <span class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-white/70">
+            <Icon name="flame" size={13} class="text-primary-strong" />
+            {t.toxic.eyebrow}
+          </span>
+          <h2 class="heading mt-5 text-3xl text-white sm:text-5xl">{t.toxic.title}</h2>
+          <p class="mt-4 text-base leading-relaxed text-white/60 sm:text-lg">{t.toxic.body}</p>
+        </div>
+
+        <!-- Ticker Zona Cupu -->
+        <div class="mt-8 rounded-xl border border-white/10 bg-white/[0.04] p-4" data-reveal>
+          <div class="flex items-center gap-2 text-[11px] font-semibold tracking-wider text-rose-300 uppercase">
+            <span class="ticker-dot h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+            {t.toxic.tickerLabel}
+          </div>
+          <div class="ticker-items mt-2 h-6 overflow-hidden text-sm font-medium text-white/80 sm:text-base">
+            {t.toxic.tickerItems.map((item) => (
+              <p class="truncate">{item}</p>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <!-- HP: Hall of Shame asli -->
+      <div class="flex justify-center lg:justify-end" data-reveal>
+        <PhoneFrame src="/screenshots/app-hall-of-shame.png" alt="FOM Play Hall of Shame — King of Cupu" width="w-[240px] sm:w-[260px]" />
+      </div>
+    </div>
+
+    <!-- 3 level intensitas -->
+    <div class="mt-6 grid gap-4 md:grid-cols-3">
+      {t.toxic.levels.map((level, i) => (
+        <div
+          class:list={[
+            'rounded-xl border p-6',
+            i === 2 ? 'border-primary/50 bg-primary/[0.07]' : 'border-white/10 bg-white/[0.03]',
+          ]}
+          data-reveal
+        >
+          <div class="flex items-center justify-between">
+            <p class="text-base font-semibold text-white">{level.name}</p>
+            <div class="flex gap-1">
+              {[0, 1, 2].map((dot) => (
+                <span
+                  class:list={[
+                    'h-1 w-4 rounded-full',
+                    dot <= i ? 'bg-primary-strong' : 'bg-white/15',
+                  ]}
+                ></span>
+              ))}
+            </div>
+          </div>
+          <p class="mt-2 text-sm leading-relaxed text-white/55">{level.desc}</p>
+          <p class="mt-4 rounded-lg border border-white/10 bg-black/25 p-3.5 text-sm leading-snug text-white/80 italic">
+            {level.sample}
+          </p>
+        </div>
+      ))}
+    </div>
+
+    <!-- Trofi Cupu D'Or + CTA -->
+    <div class="mt-6 flex flex-col gap-5 rounded-xl border border-white/10 bg-white/[0.03] p-6 md:flex-row md:items-center" data-reveal>
+      <div class="flex flex-1 items-center gap-4">
+        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-primary/40 bg-primary/15 text-primary-strong">
+          <Icon name="trophy" size={22} />
+        </div>
+        <div>
+          <p class="text-base font-semibold text-white">{t.toxic.trophyTitle}</p>
+          <p class="mt-0.5 text-sm leading-relaxed text-white/55">{t.toxic.trophyDesc}</p>
+        </div>
+      </div>
+      <div class="flex flex-col items-start gap-2 md:items-end">
+        <a
+          href="/toxic-mode"
+          class="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-5 text-sm font-semibold text-white transition-colors hover:bg-primary-strong"
+        >
+          {t.toxic.cta}
+          <Icon name="arrow-right" size={15} />
+        </a>
+        <p class="text-xs text-white/40">{t.toxic.ethics}</p>
+      </div>
+    </div>
+  </div>
+</section>

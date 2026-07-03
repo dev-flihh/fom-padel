@@ -1,0 +1,12 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import FaqPage from '../components/pages/FaqPage.astro';
+import { getPages } from '../i18n';
+import { faqPageSchema } from '../i18n/pageSchema';
+
+const m = getPages('en').faq.meta;
+---
+
+<BaseLayout title={m.title} description={m.description} enPath="/faq" idPath="/id/faq" schema={faqPageSchema('en')}>
+  <FaqPage />
+</BaseLayout>

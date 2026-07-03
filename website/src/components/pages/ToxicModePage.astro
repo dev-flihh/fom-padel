@@ -1,0 +1,137 @@
+---
+import Icon from '../Icon.astro';
+import PhoneFrame from '../PhoneFrame.astro';
+import { getPages } from '../../i18n';
+
+const t = getPages(Astro.currentLocale).toxic;
+---
+
+<!-- Hero gelap -->
+<section class="dot-grid-dark border-b border-outline bg-navy-deep text-white">
+  <div class="mx-auto max-w-4xl px-4 py-20 text-center sm:px-6 lg:py-28">
+    <span class="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-white/70">
+      <Icon name="flame" size={13} class="text-primary-strong" />
+      {t.heroEyebrow}
+    </span>
+    <h1 class="heading mx-auto mt-6 max-w-2xl text-4xl text-white sm:text-6xl">
+      {t.heroTitle1}
+      <span class="text-primary-strong">{t.heroTitle2}</span>
+    </h1>
+    <p class="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-white/60 sm:text-lg">{t.heroBody}</p>
+    <div class="mt-8 flex flex-wrap justify-center gap-3">
+      <a href="/app" class="inline-flex h-11 items-center gap-2 rounded-md bg-primary px-6 text-sm font-semibold text-white transition-colors hover:bg-primary-strong">
+        {t.ctaTonight}
+        <Icon name="arrow-right" size={16} />
+      </a>
+      <a href="#levels" class="inline-flex h-11 items-center rounded-md border border-white/20 px-6 text-sm font-semibold text-white/90 transition-colors hover:border-white/40">
+        {t.ctaPoison}
+      </a>
+    </div>
+
+    <div class="mx-auto mt-12 max-w-xl rounded-xl border border-white/10 bg-white/[0.04] p-4 text-left">
+      <div class="flex items-center gap-2 text-[11px] font-semibold tracking-wider text-rose-300 uppercase">
+        <span class="ticker-dot h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+        {t.tickerLabel}
+      </div>
+      <div class="ticker-items mt-2 h-6 overflow-hidden text-sm font-medium text-white/80">
+        {t.tickerItems.map((item) => <p class="truncate">{item}</p>)}
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Screenshot asli aplikasi -->
+<section class="border-b border-outline bg-surface/50">
+  <div class="mx-auto max-w-5xl px-4 py-16 sm:px-6">
+    <div class="flex items-end justify-center gap-4 sm:gap-6">
+      <PhoneFrame src="/screenshots/app-live.png" alt="Live Zona Cupu ticker in the FOM Play app" class="mb-8 hidden sm:block" width="w-[200px]" />
+      <PhoneFrame src="/screenshots/app-hall-of-shame.png" alt="Hall of Shame with the King of Cupu" width="w-[230px] sm:w-[240px]" />
+      <PhoneFrame src="/screenshots/rewind-cupu.png" alt="Cupu D’Or award slide" class="mb-8 hidden sm:block" width="w-[200px]" />
+    </div>
+    <p class="mt-8 text-center text-sm text-muted">{t.screensNote}</p>
+  </div>
+</section>
+
+<!-- 3 level -->
+<section id="levels" class="border-b border-outline">
+  <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
+    <h2 class="heading max-w-2xl text-3xl sm:text-5xl" data-reveal>{t.levelsTitle}</h2>
+    <div class="mt-10 grid gap-4 md:grid-cols-3">
+      {t.levels.map((level, i) => (
+        <div class:list={['rounded-xl border p-6 shadow-sm', i === 2 ? 'border-primary/40 bg-primary/[0.03]' : 'border-outline bg-white']} data-reveal>
+          <div class="flex items-center justify-between">
+            <p class="text-lg font-semibold text-ink">{level.name}</p>
+            <span class="rounded-full border border-outline bg-surface px-3 py-1 text-[11px] font-medium text-gray-500">{level.tagline}</span>
+          </div>
+          <div class="mt-3 flex gap-1">
+            {[0, 1, 2].map((dot) => <span class:list={['h-1 w-5 rounded-full', dot <= i ? 'bg-primary' : 'bg-outline']}></span>)}
+          </div>
+          <p class="mt-3 text-sm leading-relaxed text-muted">{level.desc}</p>
+          <div class="mt-5 grid gap-2">
+            {level.samples.map((sample) => (
+              <p class="rounded-lg border border-outline bg-surface p-3.5 text-sm leading-snug text-gray-700 italic">{sample}</p>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- Awards -->
+<section class="border-b border-outline bg-surface/50">
+  <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
+    <h2 class="heading max-w-2xl text-3xl sm:text-5xl" data-reveal>{t.awardsTitle}</h2>
+    <p class="mt-4 max-w-2xl text-muted" data-reveal>{t.awardsBody}</p>
+    <div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {t.awards.map((award, i) => (
+        <div class:list={['rounded-xl border p-6 shadow-sm', i === 0 ? 'border-primary/40 bg-white' : 'border-outline bg-white']} data-reveal>
+          <div class:list={['flex h-10 w-10 items-center justify-center rounded-lg border border-outline bg-surface', i === 0 ? 'text-primary' : 'text-gray-500']}>
+            <Icon name={award.icon} size={18} />
+          </div>
+          <h3 class="mt-4 text-base font-semibold text-ink">{award.name}</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-muted">{award.desc}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- Etika + FAQ -->
+<section class="border-b border-outline">
+  <div class="mx-auto max-w-3xl px-4 py-16 sm:px-6">
+    <div class="rounded-xl border border-outline bg-white p-8 text-center shadow-sm" data-reveal>
+      <div class="mx-auto flex h-10 w-10 items-center justify-center rounded-lg border border-outline bg-surface text-primary">
+        <Icon name="users" size={18} />
+      </div>
+      <h2 class="heading mt-4 text-2xl">{t.ethicsTitle}</h2>
+      <p class="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-muted">{t.ethicsBody}</p>
+    </div>
+
+    <div class="mt-6 divide-y divide-outline rounded-xl border border-outline bg-white shadow-sm" data-reveal>
+      {t.faqs.map((item) => (
+        <details class="faq-item px-5 py-4">
+          <summary class="flex items-center justify-between gap-4 text-sm font-semibold text-ink sm:text-base">
+            {item.q}
+            <span class="faq-chevron shrink-0 text-gray-400"><Icon name="chevron-down" size={16} /></span>
+          </summary>
+          <p class="mt-3 text-sm leading-relaxed text-muted">{item.a}</p>
+        </details>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="px-4 py-16 sm:px-6">
+  <div class="dot-grid-dark mx-auto max-w-4xl rounded-2xl bg-navy-deep px-6 py-14 text-center text-white sm:px-12">
+    <h2 class="heading mx-auto max-w-xl text-3xl text-white sm:text-4xl">
+      {t.ctaTitle1} <span class="text-primary-strong">{t.ctaTitleEm}</span> {t.ctaTitle2}
+    </h2>
+    <p class="mt-4 text-white/60">{t.ctaSub}</p>
+    <a href="/app" class="mt-8 inline-flex h-12 items-center gap-2 rounded-md bg-primary px-8 text-sm font-semibold text-white transition-colors hover:bg-primary-strong">
+      {t.ctaButton}
+      <Icon name="arrow-right" size={16} />
+    </a>
+  </div>
+</section>

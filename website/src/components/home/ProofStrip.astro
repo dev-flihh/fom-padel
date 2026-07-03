@@ -1,0 +1,17 @@
+---
+import { getDict } from '../../i18n';
+
+const t = getDict(Astro.currentLocale);
+---
+
+<!-- Angka masih placeholder — ganti dengan data asli sebelum cutover (plan §3). -->
+<section class="border-b border-outline">
+  <div class="mx-auto grid max-w-6xl grid-cols-2 divide-x divide-outline md:grid-cols-4" data-reveal>
+    {t.proof.items.map((item) => (
+      <div class="px-4 py-8 text-center sm:py-10">
+        <p class="heading text-3xl sm:text-4xl">{item.value}</p>
+        <p class="mt-1.5 text-xs font-medium text-muted sm:text-sm">{item.label}</p>
+      </div>
+    ))}
+  </div>
+</section>

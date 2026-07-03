@@ -1,0 +1,131 @@
+---
+import Icon from '../Icon.astro';
+import PhoneFrame from '../PhoneFrame.astro';
+import { getPages } from '../../i18n';
+
+const p = getPages(Astro.currentLocale).ranking;
+
+// Leaderboard contoh (data ilustrasi; nama realistis).
+const board = [
+  { rank: 1, name: 'Dinda P.', city: 'Jakarta', mmr: 2140, delta: '+24' },
+  { rank: 2, name: 'Kevin S.', city: 'Bandung', mmr: 2087, delta: '+12' },
+  { rank: 3, name: 'Sasha R.', city: 'Jakarta', mmr: 2031, delta: '−8' },
+  { rank: 4, name: 'Yoga A.', city: 'Surabaya', mmr: 1988, delta: '+31' },
+  { rank: 5, name: 'Marco T.', city: 'Bali', mmr: 1954, delta: '+5' },
+];
+---
+
+<!-- Hero -->
+<section class="border-b border-outline">
+  <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-20">
+    <div>
+      <span class="inline-flex items-center gap-2 rounded-full border border-outline bg-white px-3.5 py-1.5 text-xs font-medium text-muted">
+        <Icon name="trending-up" size={13} class="text-primary" />
+        {p.eyebrow}
+      </span>
+      <h1 class="heading mt-6 text-4xl sm:text-6xl">{p.title}</h1>
+      <p class="mt-5 max-w-lg text-base leading-relaxed text-muted sm:text-lg">{p.subtitle}</p>
+    </div>
+    <!-- Kartu leaderboard -->
+    <div class="rounded-xl border border-outline bg-white p-5 shadow-sm sm:p-6" data-reveal>
+      <div class="flex items-center justify-between">
+        <p class="text-sm font-semibold text-ink">Top players</p>
+        <div class="flex rounded-md border border-outline bg-surface p-0.5 text-xs font-medium">
+          <span class="inline-flex items-center gap-1 rounded bg-white px-3 py-1.5 font-semibold text-ink shadow-sm">
+            <Icon name="globe" size={12} /> Global
+          </span>
+          <span class="inline-flex items-center gap-1 px-3 py-1.5 text-gray-400">
+            <Icon name="map-pin" size={12} /> Jakarta
+          </span>
+        </div>
+      </div>
+      <div class="mt-4 divide-y divide-outline rounded-lg border border-outline">
+        {board.map((row) => (
+          <div class:list={['flex items-center gap-3 px-3.5 py-3', row.rank === 1 && 'bg-primary/[0.03]']}>
+            <span class:list={['flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold', row.rank === 1 ? 'bg-primary text-white' : 'bg-surface text-gray-500']}>{row.rank}</span>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-semibold text-ink">{row.name}</p>
+              <p class="text-[11px] text-gray-400">{row.city}</p>
+            </div>
+            <div class="text-right">
+              <p class="text-sm font-bold text-ink">{row.mmr}</p>
+              <p class="text-[10px] tracking-wide text-gray-400 uppercase">MMR</p>
+            </div>
+            <span class:list={['w-11 rounded-md py-1 text-center text-xs font-bold', row.delta.startsWith('+') ? 'bg-americano/10 text-americano' : 'bg-rosefom/10 text-rosefom']}>{row.delta}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Tiers -->
+<section class="border-b border-outline bg-surface/50">
+  <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
+    <div class="max-w-2xl" data-reveal>
+      <h2 class="heading text-3xl sm:text-4xl">{p.tiersTitle}</h2>
+      <p class="mt-3 text-muted">{p.tiersBody}</p>
+    </div>
+    <div class="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
+      {p.tiers.map((tier, i) => (
+        <div class:list={['rounded-xl border p-4 text-center', i === 6 ? 'border-primary/40 bg-primary/[0.05]' : 'border-outline bg-white']} data-reveal>
+          <div class:list={['mx-auto flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold', i === 6 ? 'bg-primary text-white' : 'bg-surface text-gray-500']}>{i + 1}</div>
+          <p class="mt-2.5 text-sm font-semibold text-ink">{tier.name}</p>
+          <p class="mt-1 text-xs leading-snug text-muted">{tier.desc}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- How it works + phone -->
+<section class="border-b border-outline">
+  <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1.1fr_0.9fr] lg:py-20">
+    <div>
+      <h2 class="heading text-3xl sm:text-4xl" data-reveal>{p.how.title}</h2>
+      <div class="mt-8 grid gap-4">
+        {p.how.steps.map((step, i) => (
+          <div class="flex gap-4 rounded-xl border border-outline bg-white p-5 shadow-sm" data-reveal>
+            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/[0.06] text-sm font-bold text-primary">{i + 1}</span>
+            <div>
+              <h3 class="text-sm font-semibold text-ink">{step.name}</h3>
+              <p class="mt-1 text-sm leading-relaxed text-muted">{step.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+    <div class="flex justify-center lg:justify-end" data-reveal>
+      <PhoneFrame src="/screenshots/app-hall-of-shame.png" alt="FOM Play standings and ranking" width="w-[230px] sm:w-[250px]" />
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="border-b border-outline bg-surface/50">
+  <div class="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:py-20">
+    <div class="divide-y divide-outline rounded-xl border border-outline bg-white shadow-sm" data-reveal>
+      {p.faq.map((item) => (
+        <details class="faq-item px-5 py-4">
+          <summary class="flex items-center justify-between gap-4 text-sm font-semibold text-ink sm:text-base">
+            {item.q}
+            <span class="faq-chevron shrink-0 text-gray-400"><Icon name="chevron-down" size={16} /></span>
+          </summary>
+          <p class="mt-3 text-sm leading-relaxed text-muted">{item.a}</p>
+        </details>
+      ))}
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="px-4 py-16 sm:px-6 lg:py-20">
+  <div class="dot-grid-dark mx-auto max-w-5xl rounded-2xl bg-navy-deep px-6 py-14 text-center text-white sm:px-12">
+    <h2 class="heading mx-auto max-w-xl text-3xl text-white sm:text-4xl">{p.cta.title}</h2>
+    <p class="mt-3 text-white/60">{p.cta.subtitle}</p>
+    <a href="/app" class="mt-7 inline-flex h-12 items-center gap-2 rounded-md bg-primary px-8 text-sm font-semibold text-white transition-colors hover:bg-primary-strong">
+      {p.cta.button}
+      <Icon name="arrow-right" size={16} />
+    </a>
+  </div>
+</section>

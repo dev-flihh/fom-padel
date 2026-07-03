@@ -1,0 +1,56 @@
+---
+import Icon from '../Icon.astro';
+import { getArticles, entrySlug } from '../../lib/blog';
+
+const isId = Astro.currentLocale === 'id';
+const lang = isId ? 'id' : 'en';
+const base = isId ? '/id/blog' : '/blog';
+
+const copy = isId
+  ? {
+      eyebrow: 'Blog FOM Play',
+      title: 'Pahami game-nya, jalanin mabarnya.',
+      subtitle: 'Panduan getting-started, bedah fitur, dan cerita dari komunitas FOM.',
+    }
+  : {
+      eyebrow: 'FOM Play Blog',
+      title: 'Learn the game, run the night.',
+      subtitle: 'Getting-started guides, feature deep-dives, and stories from the FOM community.',
+    };
+
+const articles = await getArticles(lang);
+---
+
+<section class="border-b border-outline bg-surface/50">
+  <div class="mx-auto max-w-6xl px-4 py-14 sm:px-6 lg:py-20">
+    <span class="inline-flex items-center gap-2 rounded-full border border-outline bg-white px-3.5 py-1.5 text-xs font-medium text-muted">
+      <span class="h-1.5 w-1.5 rounded-full bg-primary"></span>
+      {copy.eyebrow}
+    </span>
+    <h1 class="heading mt-5 max-w-xl text-3xl sm:text-5xl">{copy.title}</h1>
+    <p class="mt-4 max-w-xl text-muted">{copy.subtitle}</p>
+  </div>
+</section>
+
+<section class="mx-auto max-w-6xl px-4 py-12 sm:px-6 lg:py-16">
+  <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+    {articles.map((article) => (
+      <a href={`${base}/${entrySlug(article)}`} class="group flex flex-col rounded-xl border border-outline bg-white p-6 shadow-sm transition-colors hover:border-gray-300">
+        <div class="flex h-10 w-10 items-center justify-center rounded-lg border border-outline bg-surface text-primary">
+          <Icon name={article.data.icon} size={18} />
+        </div>
+        <div class="mt-4 flex items-center gap-2 text-xs font-medium text-muted">
+          <span>{article.data.category}</span>
+          <span class="text-gray-300">·</span>
+          <span class="text-gray-400">{article.data.readTime}</span>
+        </div>
+        <h2 class="mt-1.5 text-base leading-snug font-semibold text-ink group-hover:text-primary">{article.data.title}</h2>
+        <p class="mt-2 flex-1 text-sm leading-relaxed text-muted">{article.data.description}</p>
+        <p class="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
+          {isId ? 'Baca' : 'Read'}
+          <Icon name="arrow-right" size={13} />
+        </p>
+      </a>
+    ))}
+  </div>
+</section>

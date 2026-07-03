@@ -1,0 +1,27 @@
+---
+import { render } from 'astro:content';
+import ArticleLayout from '../../layouts/ArticleLayout.astro';
+import { getArticles, entrySlug } from '../../lib/blog';
+
+export async function getStaticPaths() {
+  const articles = await getArticles('en');
+  return articles.map((entry) => ({ params: { slug: entrySlug(entry) }, props: { entry } }));
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+const d = entry.data;
+---
+
+<ArticleLayout
+  title={d.title}
+  description={d.description}
+  category={d.category}
+  date={d.date}
+  isoDate={d.isoDate}
+  readTime={d.readTime}
+  icon={d.icon}
+  slug={entrySlug(entry)}
+>
+  <Content />
+</ArticleLayout>

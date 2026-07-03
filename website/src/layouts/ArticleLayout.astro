@@ -1,0 +1,133 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import Icon from '../components/Icon.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  category: string;
+  date: string;
+  readTime: string;
+  icon: string;
+  /** slug tanpa /blog/ (mis. "turn-on-toxic-mode") untuk hreflang EN/ID. */
+  slug: string;
+  isoDate?: string;
+}
+
+const { title, description, category, date, readTime, icon, slug, isoDate } = Astro.props;
+
+const isId = Astro.currentLocale === 'id';
+const enPath = `/blog/${slug}`;
+const idPath = `/id/blog/${slug}`;
+const blogHref = isId ? '/id/blog' : '/blog';
+const homeHref = isId ? '/id/' : '/';
+const ui = isId
+  ? {
+      home: 'Home',
+      blog: 'Blog',
+      team: 'Tim FOM Play',
+      ctaTitle: 'Siap coba di court?',
+      ctaSub: 'Buka FOM Play dan jalanin mabar malam ini. Gratis.',
+      ctaButton: 'Buka FOM Play',
+      related: 'Artikel terkait',
+      soon: 'Segera hadir',
+      rel1: 'Mulai Mabar Padel Pertamamu dalam 5 Menit',
+      rel2: 'Memahami MMR dan Tier Ranking',
+    }
+  : {
+      home: 'Home',
+      blog: 'Blog',
+      team: 'FOM Play Team',
+      ctaTitle: 'Ready to try it on court?',
+      ctaSub: 'Open FOM Play and run tonight’s game. It’s free.',
+      ctaButton: 'Open FOM Play',
+      related: 'Related articles',
+      soon: 'Coming soon',
+      rel1: 'Host Your First Padel Game in 5 Minutes',
+      rel2: 'Understanding Your MMR & Rank Tiers',
+    };
+const articleSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'Article',
+  headline: title,
+  description,
+  datePublished: isoDate ?? undefined,
+  author: { '@type': 'Organization', name: 'FOM Play' },
+  publisher: {
+    '@type': 'Organization',
+    name: 'FOM Play',
+    logo: { '@type': 'ImageObject', url: 'https://fomplay.asia/fom-play-logo-light-cropped.png' },
+  },
+  mainEntityOfPage: `https://fomplay.asia${enPath}`,
+};
+---
+
+<BaseLayout
+  title={`${title} | FOM Play Blog`}
+  description={description}
+  enPath={enPath}
+  idPath={idPath}
+  schema={articleSchema}
+>
+  <article class="mx-auto max-w-2xl px-4 py-12 sm:px-6 lg:py-16">
+    <!-- Breadcrumb -->
+    <nav class="flex items-center gap-1.5 text-xs font-medium text-gray-400">
+      <a href={homeHref} class="hover:text-ink">{ui.home}</a>
+      <span>/</span>
+      <a href={blogHref} class="hover:text-ink">{ui.blog}</a>
+      <span>/</span>
+      <span class="text-gray-500">{category}</span>
+    </nav>
+
+    <!-- Header artikel -->
+    <header class="mt-8">
+      <span class="inline-flex items-center gap-2 rounded-full border border-outline bg-surface px-3 py-1 text-xs font-medium text-gray-600">
+        <Icon name={icon} size={13} class="text-primary" />
+        {category}
+      </span>
+      <h1 class="heading mt-4 text-3xl sm:text-4xl">{title}</h1>
+      <p class="mt-4 text-base leading-relaxed text-muted sm:text-lg">{description}</p>
+      <div class="mt-6 flex items-center gap-2.5 border-b border-outline pb-6 text-xs font-medium text-gray-400">
+        <img src="/fom-logomark-color.png" alt="" class="h-6 w-auto" />
+        <span class="text-gray-600">{ui.team}</span>
+        <span>·</span>
+        <time>{date}</time>
+        <span>·</span>
+        <span>{readTime}</span>
+      </div>
+    </header>
+
+    <!-- Isi -->
+    <div class="prose-fom mt-8">
+      <slot />
+    </div>
+
+    <!-- CTA box (disembunyikan saat mode embed di app) -->
+    <aside class="embed-hide dot-grid-dark mt-12 rounded-xl bg-navy-deep p-7 text-center text-white">
+      <p class="heading text-xl text-white">{ui.ctaTitle}</p>
+      <p class="mt-2 text-sm text-white/60">{ui.ctaSub}</p>
+      <a
+        href="/app"
+        class="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-primary px-6 text-sm font-semibold text-white transition-colors hover:bg-primary-strong"
+      >
+        {ui.ctaButton}
+        <Icon name="arrow-right" size={15} />
+      </a>
+    </aside>
+
+    <!-- Artikel terkait (disembunyikan saat mode embed) -->
+    <footer class="embed-hide mt-12 border-t border-outline pt-8">
+      <p class="text-sm font-semibold text-ink">{ui.related}</p>
+      <div class="mt-4 grid gap-3 sm:grid-cols-2">
+        <a href={blogHref} class="rounded-xl border border-outline bg-white p-4 text-sm font-semibold text-ink shadow-sm transition-colors hover:border-gray-300">
+          {ui.rel1}
+          <span class="mt-1 block text-[11px] font-medium text-gray-400">{ui.soon}</span>
+        </a>
+        <a href={blogHref} class="rounded-xl border border-outline bg-white p-4 text-sm font-semibold text-ink shadow-sm transition-colors hover:border-gray-300">
+          {ui.rel2}
+          <span class="mt-1 block text-[11px] font-medium text-gray-400">{ui.soon}</span>
+        </a>
+      </div>
+    </footer>
+  </article>
+</BaseLayout>
