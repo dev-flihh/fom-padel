@@ -567,6 +567,15 @@ export const MatchActiveScreen = ({
     });
   };
 
+  // Ronde yang tab-nya sedang dibuka (kartu ter-expand). Render pertama
+  // collapsedRounds masih kosong (semua terbuka) → fallback ke ronde aktif
+  // dari status match supaya stepper tidak menyorot semua tab.
+  const focusedRoundId = useMemo(() => {
+    const openRounds = tournament.rounds.filter((round) => !collapsedRounds.has(round.id));
+    if (openRounds.length === 1) return openRounds[0].id;
+    return activeRoundId;
+  }, [activeRoundId, collapsedRounds, tournament.rounds]);
+
   const focusRound = (roundId: number) => {
     setCollapsedRounds(new Set(tournament.rounds.filter((round) => round.id !== roundId).map((round) => round.id)));
     scrollRoundCardIntoView(roundId);
@@ -906,8 +915,7 @@ export const MatchActiveScreen = ({
         <ActiveMatchRoundStepper
           rounds={tournament.rounds}
           totalRounds={totalRounds}
-          activeRoundId={activeRoundId}
-          collapsedRounds={collapsedRounds}
+          focusedRoundId={focusedRoundId}
           needsRegenerateFromRound={needsRegenerateFromRound}
           onSelectRound={focusRound}
         />

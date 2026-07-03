@@ -1,18 +1,20 @@
 import { cn } from '../../lib/utils';
 import type { Round } from '../../types';
 
+// Tab ronde punya 3 kondisi:
+// 1. Fokus (tab-nya sedang dibuka)          → oranye + underline solid
+// 2. Complete (semua skor sudah masuk)      → gelap redup + underline tipis
+// 3. Incomplete (belum diinput, tidak buka) → abu muted tanpa underline
 export const ActiveMatchRoundStepper = ({
   rounds,
   totalRounds,
-  activeRoundId,
-  collapsedRounds,
+  focusedRoundId,
   needsRegenerateFromRound,
   onSelectRound,
 }: {
   rounds: Round[];
   totalRounds: number;
-  activeRoundId: number | null;
-  collapsedRounds: Set<number>;
+  focusedRoundId: number | null;
   needsRegenerateFromRound?: number | null;
   onSelectRound: (roundId: number) => void;
 }) => {
@@ -27,8 +29,7 @@ export const ActiveMatchRoundStepper = ({
         {roundSlots.map((roundId) => {
           const round = roundById.get(roundId);
           const isCompleted = Boolean(round && round.matches.length > 0 && round.matches.every((match) => match.status === 'completed'));
-          const isActive = Boolean(round && (round.id === activeRoundId || round.matches.some((match) => match.status === 'active')));
-          const isOpen = Boolean(round && !collapsedRounds.has(round.id));
+          const isFocused = Boolean(round && round.id === focusedRoundId);
           const needsRegenerate = Boolean(round && needsRegenerateFromRound !== null && needsRegenerateFromRound !== undefined && round.id >= needsRegenerateFromRound);
 
           return (
@@ -39,7 +40,7 @@ export const ActiveMatchRoundStepper = ({
               disabled={!round}
               className={cn(
                 'tap-target relative min-w-[24px] shrink-0 border-0 bg-transparent px-0 pb-0.5 text-center tabular-nums transition-all active:scale-[0.98]',
-                isActive
+                isFocused
                   ? 'text-on-surface'
                   : needsRegenerate
                     ? 'text-amber-700'
@@ -48,22 +49,15 @@ export const ActiveMatchRoundStepper = ({
                     : 'text-ios-gray/34',
                 !round && 'opacity-55 active:scale-100'
               )}
-              aria-pressed={isOpen}
+              aria-pressed={isFocused}
               aria-label={round ? `Open round ${round.id}` : `Round ${roundId} is not generated yet`}
             >
-              <span className={cn(
-                'block leading-none tabular-nums',
-                isActive
-                  ? 'font-display text-[15px] font-bold tracking-[-0.01em]'
-                  : isCompleted
-                    ? 'font-display text-[15px] font-bold tracking-[-0.01em]'
-                    : 'font-display text-[15px] font-bold tracking-[-0.01em]'
-              )}>
+              <span className="block font-display text-[15px] font-bold leading-none tracking-[-0.01em] tabular-nums">
                 {String(roundId).padStart(2, '0')}
               </span>
               <span className={cn(
                 'mx-auto mt-1 block h-[2.5px] w-3.5 rounded-full',
-                isActive
+                isFocused
                   ? 'bg-[#E65E14]'
                   : needsRegenerate
                     ? 'bg-amber-500'
@@ -75,7 +69,7 @@ export const ActiveMatchRoundStepper = ({
                 <span className="absolute -right-1 top-0 h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
               )}
               <span className="sr-only">
-                {needsRegenerate ? 'Needs regeneration' : isOpen ? 'Open' : 'Round'}
+                {needsRegenerate ? 'Needs regeneration' : isFocused ? 'Open' : isCompleted ? 'Completed' : 'Round'}
               </span>
             </button>
           );
