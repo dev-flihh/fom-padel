@@ -11,3 +11,8 @@ test-results/
 *.tar.gz
 .env*
 !.env.example
+
+# Deploy gabungan (generated oleh scripts/build-web-cutover.mjs)
+deploy/
+# Astro type-gen cache
+website/.astro/

@@ -297,6 +297,10 @@ const isAdminEmail = (email?: string | null) => (
 // without rewriting the app surface.
 const NOTIFICATIONS_ENABLED = false;
 
+// Panduan/tutorial dari blog (blog-index.json) di dashboard. Bisa dimatikan
+// cepat kalau website belum live.
+const TUTORIALS_ENABLED = true;
+
 const normalizePlayerSource = (player: Player, currentUid?: string | null): Player => {
   const id = (player?.id || '').trim();
   if (!id) return player;
@@ -2862,6 +2866,7 @@ export default function App() {
             isHistoryLoading={isHistoryLoadingForUi}
             isRoomsLoading={visibleRoomsLoading}
             renderLogo={(className) => <AppLogo className={className} />}
+            tutorialsEnabled={TUTORIALS_ENABLED}
           />
         )}
         {screen === 'leaderboard' && (

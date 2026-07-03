@@ -12,6 +12,8 @@ import {
 import { collection, getDocs, orderBy, query, Timestamp, where } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { InstallAppButton } from '../../components/app/InstallAppButton';
+import { TutorialWebviewSheet } from '../tutorials/TutorialWebviewSheet';
+import { detectTutorialLocale, type Tutorial } from '../tutorials/tutorialsApi';
 import { cn } from '../../lib/utils';
 import { PLAYER_MATCH_LEDGER_COLLECTION } from '../../services/firestoreCollections';
 import { Tournament, TournamentHistory } from '../../types';
@@ -35,36 +37,62 @@ const motivationalLines = [
   { lead: 'Go', accent: 'climb the ranks.' },
 ];
 
+// Kartu "Learn the game" dipetakan ke artikel blog terbaru (slug), dibuka
+// sebagai in-app webview (embed). Hero + daftar bernomor di bawah.
+const LEARN_HERO = {
+  slug: 'host-your-first-game',
+  category: 'Getting Started',
+  title: 'Run your first match in 5 minutes',
+  read: '5 min read',
+};
 const learnArticles = [
   {
     number: '01',
     category: 'Formats',
     title: 'How Americano & Mexicano work',
-    read: '5 min read',
-    href: '/blog/articles/americano-vs-mexicano/',
+    read: '4 min read',
+    slug: 'setting-up-americano',
   },
   {
     number: '02',
     category: 'Setup',
     title: 'Create a room & invite players',
-    read: '3 min read',
-    href: '/blog/articles/cara-mulai-turnamen-padel/',
+    read: '4 min read',
+    slug: 'rooms-and-split-bill',
   },
   {
     number: '03',
     category: 'Scoring',
-    title: 'Live scoring, step by step',
-    read: '4 min read',
-    href: '/blog/articles/kenapa-live-scoring-padel-penting/',
+    title: 'Share live scores with anyone',
+    read: '3 min read',
+    slug: 'share-live-scores',
   },
   {
     number: '04',
     category: 'Ranking',
     title: 'How MMR & tiers are calculated',
-    read: '3 min read',
-    href: '/blog/articles/ranking-mmr-fom-play/',
+    read: '4 min read',
+    slug: 'understanding-mmr',
   },
 ];
+
+// Bentuk objek Tutorial (embedUrl deterministik) dari slug artikel.
+const TUTORIAL_SITE = 'https://fomplay.asia';
+const buildLearnTutorial = (slug: string, title: string, category: string): Tutorial => {
+  const lang = detectTutorialLocale();
+  const path = lang === 'id' ? `/id/blog/${slug}` : `/blog/${slug}`;
+  return {
+    slug,
+    lang,
+    title,
+    description: '',
+    category,
+    appFeature: null,
+    embeddable: true,
+    url: `${TUTORIAL_SITE}${path}`,
+    embedUrl: `${TUTORIAL_SITE}${path}?embed=1`,
+  };
+};
 
 const avatarColors = ['#E65E14', '#2a6fdb', '#0e8a6f', '#8E8E93'];
 
@@ -273,6 +301,7 @@ export const DashboardScreen = ({
   isHistoryLoading,
   isRoomsLoading,
   renderLogo,
+  tutorialsEnabled,
 }: {
   onStartMatch: () => void,
   tournament: Tournament,
@@ -291,6 +320,7 @@ export const DashboardScreen = ({
   isHistoryLoading: boolean,
   isRoomsLoading: boolean,
   renderLogo: (className: string) => React.ReactNode,
+  tutorialsEnabled?: boolean,
 }) => {
   const activeRound = tournament.rounds?.find(r => r && r.matches && r.matches.some(m => m && m.status === 'active'));
   const activeMatches = activeRound ? activeRound.matches.filter(m => m && m.status === 'active') : [];
@@ -304,6 +334,7 @@ export const DashboardScreen = ({
   const [isMmrDeltaLoading, setIsMmrDeltaLoading] = useState(false);
   const [quoteIndex, setQuoteIndex] = useState(0);
   const [isQuoteSwapping, setIsQuoteSwapping] = useState(false);
+  const [activeLearn, setActiveLearn] = useState<Tutorial | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const quoteSwapTimeoutRef = useRef<number | null>(null);
   const mmrDeltaLabel = `${mmrDelta7d >= 0 ? '+' : ''}${mmrDelta7d.toLocaleString()} this week`;
@@ -632,9 +663,10 @@ export const DashboardScreen = ({
 
         <div className="mt-5 h-px bg-white/22" />
 
-        <a
-          href="/blog/articles/cara-mulai-turnamen-padel/"
-          className="group relative mt-7 block min-h-[236px] overflow-hidden rounded-[26px] bg-on-surface text-left tap-target active:scale-[0.99]"
+        <button
+          type="button"
+          onClick={() => setActiveLearn(buildLearnTutorial(LEARN_HERO.slug, LEARN_HERO.title, LEARN_HERO.category))}
+          className="group relative mt-7 block w-full min-h-[236px] overflow-hidden rounded-[26px] bg-on-surface text-left tap-target active:scale-[0.99]"
         >
           <img
             src="/assets/match-hero.jpg"
@@ -654,16 +686,17 @@ export const DashboardScreen = ({
             </span>
             <span className="mt-4 inline-flex items-center gap-2 text-[13px] font-semibold leading-none text-white/78">
               <Clock3 size={15} strokeWidth={2.1} />
-              3 min read
+              {LEARN_HERO.read}
             </span>
           </span>
-        </a>
+        </button>
 
         <div className="mt-5">
           {learnArticles.map((article) => (
-            <a
+            <button
               key={article.number}
-              href={article.href}
+              type="button"
+              onClick={() => setActiveLearn(buildLearnTutorial(article.slug, article.title, article.category))}
               className="flex min-h-[88px] w-full items-center gap-4 border-t border-white/12 py-4 text-left tap-target first:border-t-0 active:opacity-70"
             >
               <span className="w-[2.4rem] shrink-0 font-display text-[28px] font-bold leading-none tracking-[-0.04em] text-white/24 tabular-nums">
@@ -681,10 +714,12 @@ export const DashboardScreen = ({
                 </span>
               </span>
               <ChevronRight size={21} strokeWidth={2.2} className="shrink-0 text-white/38" />
-            </a>
+            </button>
           ))}
         </div>
       </div>
+
+      <TutorialWebviewSheet tutorial={activeLearn} onClose={() => setActiveLearn(null)} />
     </section>
   );
 

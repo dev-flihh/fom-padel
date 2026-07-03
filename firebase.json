@@ -8,9 +8,14 @@
     "rules": "storage.rules"
   },
   "hosting": {
-    "public": "dist",
+    "comment": "Deploy GABUNGAN: website marketing (website/) di root + turunan, aplikasi FOM (SPA) di /app (rewrite -> /archive.html). predeploy membangun app + website lalu menggabung ke deploy/ via scripts/build-web-cutover.mjs. JANGAN kembalikan public ke 'dist' — itu akan menghapus website dari fomplay.asia.",
+    "public": "deploy",
+    "cleanUrls": true,
+    "trailingSlash": false,
     "predeploy": [
-      "npm run build"
+      "npm run build",
+      "npm --prefix website run build",
+      "node scripts/build-web-cutover.mjs"
     ],
     "ignore": [
       "firebase.json",
@@ -18,141 +23,33 @@
       "**/node_modules/**"
     ],
     "redirects": [
-      {
-        "source": "/blog-next",
-        "destination": "/",
-        "type": 302
-      },
-      {
-        "source": "/blog-next/**",
-        "destination": "/",
-        "type": 302
-      },
-      {
-        "source": "/archive",
-        "destination": "/",
-        "type": 302
-      },
-      {
-        "source": "/archive/**",
-        "destination": "/",
-        "type": 302
-      }
-    ],
-    "headers": [
-      {
-        "source": "/",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "**/*.html",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/archive.html",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/app",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/app/**",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/sw.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/manifest.webmanifest",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      }
+      { "source": "/fitur", "destination": "/id/fitur", "type": 301 },
+      { "source": "/format/americano", "destination": "/id/format/americano", "type": 301 },
+      { "source": "/format/mexicano", "destination": "/id/format/mexicano", "type": 301 },
+      { "source": "/format/match-play", "destination": "/id/format/match-play", "type": 301 },
+      { "source": "/edukasi/**", "destination": "/id/blog", "type": 301 },
+      { "source": "/blog/articles/**", "destination": "/id/blog", "type": 301 },
+      { "source": "/blog-next", "destination": "/", "type": 302 },
+      { "source": "/blog-next/**", "destination": "/", "type": 302 },
+      { "source": "/archive", "destination": "/", "type": 302 },
+      { "source": "/archive/**", "destination": "/", "type": 302 }
     ],
     "rewrites": [
-      {
-        "source": "/fitur",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/format/americano",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/format/mexicano",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/format/match-play",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/edukasi/perbedaan-americano-vs-mexicano",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/ranking",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/faq",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/archive",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/archive/**",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/app",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/app/**",
-        "destination": "/archive.html"
-      },
-      {
-        "source": "/m/**",
-        "destination": "/archive.html"
-      }
+      { "source": "/app", "destination": "/archive.html" },
+      { "source": "/app/**", "destination": "/archive.html" },
+      { "source": "/m/**", "destination": "/archive.html" }
+    ],
+    "headers": [
+      { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "**/*.html", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "/archive.html", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "/app", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "/app/**", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "/sw.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "/manifest.webmanifest", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "/blog-index.json", "headers": [{ "key": "Access-Control-Allow-Origin", "value": "*" }, { "key": "Cache-Control", "value": "public, max-age=1800" }] },
+      { "source": "/_astro/**", "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }] },
+      { "source": "**/*.@(png|jpg|jpeg|webp|avif|svg|woff2)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }] }
     ]
   },
   "firestore": [
