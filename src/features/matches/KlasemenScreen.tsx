@@ -1038,7 +1038,7 @@ export const KlasemenScreen = ({
               const champion = officialRows[0];
               const isChampionExpanded = expandedStandingPlayerId === champion.id;
               const isChampionHighlighted = highlightedOfficialStandingPlayerId === champion.id;
-              const championRoundHistory = buildOfficialRoundHistory(tournamentRounds, champion.id, Boolean(champion.isTeamRow));
+              const championRoundHistory = buildOfficialRoundHistory(tournamentRounds, champion.id, Boolean(champion.isTeamRow), champion.partnerId);
               const championDetailId = getOfficialPlayerDetailId(champion.id);
               return (
                 <div className="mx-5 mt-2.5">
@@ -1149,7 +1149,7 @@ export const KlasemenScreen = ({
                 const isExpanded = expandedStandingPlayerId === player.id;
                 const isHighlighted = highlightedOfficialStandingPlayerId === player.id;
                 const isCurrentUserStanding = player.id === myOfficialRow?.id;
-                const roundHistory = buildOfficialRoundHistory(tournamentRounds, player.id, Boolean(player.isTeamRow));
+                const roundHistory = buildOfficialRoundHistory(tournamentRounds, player.id, Boolean(player.isTeamRow), player.partnerId);
                 const playerDetailId = getOfficialPlayerDetailId(player.id);
                 const previousRank = previousOfficialRankById.get(player.id);
                 const officialMovement = getRankMovement(rankNumber, previousRank, previousOfficialRankById.size > 0);
@@ -2553,12 +2553,16 @@ const formatPlayerNames = (players: Player[]) => (
   players.map((player) => getShortPlayerName(player.name)).join(' & ')
 );
 
-const buildOfficialRoundHistory = (rounds: Round[], playerId: string, omitTeammate = false): OfficialRoundHistoryItem[] => {
+const buildOfficialRoundHistory = (rounds: Round[], playerId: string, omitTeammate = false, partnerId?: string): OfficialRoundHistoryItem[] => {
   const history: OfficialRoundHistoryItem[] = [];
+  // Baris tim (fix partner): cocokkan lewat anchor ATAU partner supaya ronde
+  // sebelum swap anchor tetap terbaca sebagai riwayat tim.
+  const memberIds = new Set([playerId, partnerId].filter(Boolean) as string[]);
+  const isMember = (candidate: { id: string }) => memberIds.has(candidate.id);
 
   rounds.forEach((round) => {
     const byePlayers = round.playersBye || [];
-    if (byePlayers.some((player) => player.id === playerId)) {
+    if (byePlayers.some(isMember)) {
       history.push({
         roundId: round.id,
         courtLabel: 'BYE',
@@ -2570,12 +2574,12 @@ const buildOfficialRoundHistory = (rounds: Round[], playerId: string, omitTeamma
     }
 
     const match = (round.matches || []).find((candidate) => (
-      candidate.teamA.players.some((player) => player.id === playerId) ||
-      candidate.teamB.players.some((player) => player.id === playerId)
+      candidate.teamA.players.some(isMember) ||
+      candidate.teamB.players.some(isMember)
     ));
     if (!match) return;
 
-    const isTeamA = match.teamA.players.some((player) => player.id === playerId);
+    const isTeamA = match.teamA.players.some(isMember);
     const playerTeam = isTeamA ? match.teamA : match.teamB;
     const opponentTeam = isTeamA ? match.teamB : match.teamA;
     const scoreFor = Number(playerTeam.score || 0);

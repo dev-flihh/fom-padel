@@ -194,10 +194,84 @@ export const compareStandingsPlayers = (a: StandingsPlayer, b: StandingsPlayer) 
   return a.name.localeCompare(b.name, 'id-ID');
 };
 
+// Pasangan efektif untuk klasemen mode fixed: diturunkan dari rounds
+// (pasangan yang paling sering benar-benar main bareng), karena fixedTeams
+// tersimpan bisa basi / tidak sinkron dengan lapangan (mis. hasil edit setup
+// atau bug swap lama). Fallback ke fixedTeams saat belum ada ronde.
+const deriveEffectiveFixedTeams = (
+  tournament: Tournament | TournamentHistory
+): Array<{ playerIds: string[] }> => {
+  const stored = (tournament.fixedTeams || []).filter((team) => (team.playerIds || []).length >= 2);
+  const pairCounts = new Map<string, { ids: [string, string]; count: number }>();
+  (tournament.rounds || []).forEach((round) => {
+    (round.matches || []).forEach((match) => {
+      [match.teamA, match.teamB].forEach((side) => {
+        const sidePlayers = side?.players || [];
+        for (let i = 0; i < sidePlayers.length; i += 1) {
+          for (let j = i + 1; j < sidePlayers.length; j += 1) {
+            const idA = sidePlayers[i]?.id;
+            const idB = sidePlayers[j]?.id;
+            if (!idA || !idB || idA === idB) continue;
+            const ids = [idA, idB].sort() as [string, string];
+            const key = ids.join('|');
+            const record = pairCounts.get(key) || { ids, count: 0 };
+            record.count += 1;
+            pairCounts.set(key, record);
+          }
+        }
+      });
+    });
+  });
+  if (pairCounts.size === 0) return stored;
+
+  // Urutan anggota mengikuti urutan roster supaya nama tim stabil.
+  const rosterIndexById = new Map((tournament.players || []).map((player, index) => [player.id, index]));
+  const orderPair = (ids: [string, string]): string[] => {
+    const indexA = rosterIndexById.get(ids[0]) ?? Number.MAX_SAFE_INTEGER;
+    const indexB = rosterIndexById.get(ids[1]) ?? Number.MAX_SAFE_INTEGER;
+    return indexA <= indexB ? [ids[0], ids[1]] : [ids[1], ids[0]];
+  };
+
+  // Seri jumlah kemunculan (mis. anchor lama vs baru sama-sama 1 ronde
+  // setelah swap) dimenangkan pasangan yang tercatat di fixedTeams tersimpan
+  // — itu deklarasi pairing terkini (swap ikut meng-update-nya).
+  const storedPairKeys = new Set(
+    stored
+      .map((team) => [...(team.playerIds || [])].sort().join('|'))
+      .filter(Boolean)
+  );
+  const claimed = new Set<string>();
+  const derived: Array<{ playerIds: string[] }> = [];
+  [...pairCounts.values()]
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      const aStored = storedPairKeys.has(a.ids.join('|')) ? 1 : 0;
+      const bStored = storedPairKeys.has(b.ids.join('|')) ? 1 : 0;
+      return bStored - aStored;
+    })
+    .forEach(({ ids }) => {
+      if (claimed.has(ids[0]) || claimed.has(ids[1])) return;
+      claimed.add(ids[0]);
+      claimed.add(ids[1]);
+      derived.push({ playerIds: orderPair(ids) });
+    });
+  // Tim tersimpan yang belum pernah main (kedua anggota belum terpakai)
+  // tetap dipertahankan.
+  stored.forEach((team) => {
+    const [idA, idB] = team.playerIds || [];
+    if (!idA || !idB || claimed.has(idA) || claimed.has(idB)) return;
+    claimed.add(idA);
+    claimed.add(idB);
+    derived.push({ playerIds: [idA, idB] });
+  });
+  return derived;
+};
+
 // Klasemen tim untuk partnerMode 'fixed': satu baris per pasangan tetap.
-// Stats diambil dari anggota dengan jumlah match terbanyak (stats individunya
-// identik dengan stats tim karena mereka selalu main bersama); id baris tetap
-// id pemain anchor supaya round history & expand existing tetap jalan.
+// Stats tim dihitung langsung dari rounds (bukan disalin dari stats individu
+// anchor) supaya tetap akurat setelah pemain di-swap di tengah match: sisi
+// match diatribusikan ke tim yang anggotanya (saat ini) paling banyak ikut
+// bermain di sisi itu, jadi poin ronde lama tetap milik slot tim tersebut.
 export const buildOfficialTeamStandings = ({
   tournament,
   officialStandings,
@@ -205,24 +279,103 @@ export const buildOfficialTeamStandings = ({
   tournament: Tournament | TournamentHistory;
   officialStandings: OfficialStandingsData;
 }): OfficialStandingsData => {
-  const fixedTeams = tournament.fixedTeams || [];
+  const fixedTeams = deriveEffectiveFixedTeams(tournament);
   if (fixedTeams.length === 0) return officialStandings;
 
   const playerById = new Map(officialStandings.players.map((player) => [player.id, player]));
   const claimedIds = new Set<string>();
   const teamRows: StandingsPlayer[] = [];
 
-  fixedTeams.forEach((team) => {
+  const teamIndexByMemberId = new Map<string, number>();
+  fixedTeams.forEach((team, teamIndex) => {
+    (team.playerIds || []).forEach((playerId) => {
+      if (playerId) teamIndexByMemberId.set(playerId, teamIndex);
+    });
+  });
+
+  type TeamAggregate = { matches: number; w: number; l: number; d: number; pointsDiff: number; totalPoints: number };
+  const statsByTeamIndex = new Map<number, TeamAggregate>();
+  const getTeamAggregate = (teamIndex: number): TeamAggregate => {
+    const existing = statsByTeamIndex.get(teamIndex);
+    if (existing) return existing;
+    const created: TeamAggregate = { matches: 0, w: 0, l: 0, d: 0, pointsDiff: 0, totalPoints: 0 };
+    statsByTeamIndex.set(teamIndex, created);
+    return created;
+  };
+
+  const attributeSideToTeam = (sidePlayers: Array<{ id: string }>) => {
+    const memberCounts = new Map<number, number>();
+    sidePlayers.forEach((player) => {
+      const teamIndex = teamIndexByMemberId.get(player.id);
+      if (teamIndex === undefined) return;
+      memberCounts.set(teamIndex, (memberCounts.get(teamIndex) || 0) + 1);
+    });
+    let bestTeamIndex: number | null = null;
+    let bestCount = 0;
+    memberCounts.forEach((count, teamIndex) => {
+      if (count > bestCount) {
+        bestTeamIndex = teamIndex;
+        bestCount = count;
+      }
+    });
+    return bestTeamIndex;
+  };
+
+  // Pemain yang sudah di-swap keluar dari tim: seluruh penampilannya sudah
+  // teratribusi ke baris tim, jadi jangan tampil lagi sebagai baris individu
+  // nyasar (poinnya bakal terlihat dobel). Pemain di sisi yang TIDAK
+  // teratribusi ke tim mana pun tetap tampil individual sebagai pengaman.
+  const attributedSidePlayerIds = new Set<string>();
+  const unattributedSidePlayerIds = new Set<string>();
+
+  if (officialStandings.hasCountableScore) {
+    (tournament.rounds || []).forEach((round) => {
+      (round.matches || []).forEach((match) => {
+        const scoreA = Number(match.teamA?.score || 0);
+        const scoreB = Number(match.teamB?.score || 0);
+        const hasLiveScore = scoreA > 0 || scoreB > 0;
+        const shouldCountStandingScore = match.status === 'completed' || hasLiveScore;
+        if (!shouldCountStandingScore) return;
+
+        ([
+          [match.teamA?.players || [], scoreA, scoreB],
+          [match.teamB?.players || [], scoreB, scoreA],
+        ] as const).forEach(([sidePlayers, scoreFor, scoreAgainst]) => {
+          const teamIndex = attributeSideToTeam(sidePlayers);
+          if (teamIndex === null) {
+            sidePlayers.forEach((player) => unattributedSidePlayerIds.add(player.id));
+            return;
+          }
+          sidePlayers.forEach((player) => attributedSidePlayerIds.add(player.id));
+          const aggregate = getTeamAggregate(teamIndex);
+          aggregate.totalPoints += scoreFor;
+          aggregate.pointsDiff += scoreFor - scoreAgainst;
+          if (match.status === 'completed') {
+            if (scoreFor > scoreAgainst) aggregate.w += 1;
+            else if (scoreFor < scoreAgainst) aggregate.l += 1;
+            else aggregate.d += 1;
+          }
+        });
+      });
+    });
+    statsByTeamIndex.forEach((aggregate) => {
+      aggregate.matches = aggregate.w + aggregate.l + aggregate.d;
+    });
+  }
+
+  fixedTeams.forEach((team, teamIndex) => {
     const [firstId, secondId] = team.playerIds || [];
     const first = firstId ? playerById.get(firstId) : undefined;
     const second = secondId ? playerById.get(secondId) : undefined;
     if (!first || !second || first.id === second.id) return;
     claimedIds.add(first.id);
     claimedIds.add(second.id);
-    const anchor = second.matches > first.matches ? second : first;
-    const partner = anchor === first ? second : first;
+    const anchor = first;
+    const partner = second;
+    const aggregate = statsByTeamIndex.get(teamIndex);
     teamRows.push({
       ...anchor,
+      ...(aggregate || { matches: 0, w: 0, l: 0, d: 0, pointsDiff: 0, totalPoints: 0 }),
       name: `${anchor.name} & ${partner.name}`,
       isTeamRow: true,
       partnerId: partner.id,
@@ -232,8 +385,14 @@ export const buildOfficialTeamStandings = ({
     });
   });
 
-  // Pemain tanpa tim (edge: data lama / roster berubah) tetap tampil individual.
-  const leftoverPlayers = officialStandings.players.filter((player) => !claimedIds.has(player.id));
+  // Pemain tanpa tim (edge: data lama / roster berubah) tetap tampil
+  // individual — kecuali bekas anggota tim yang seluruh penampilannya sudah
+  // terhitung di baris tim (hasil swap), itu disembunyikan.
+  const leftoverPlayers = officialStandings.players.filter((player) => {
+    if (claimedIds.has(player.id)) return false;
+    const onlyPlayedAsTeamSubstitute = attributedSidePlayerIds.has(player.id) && !unattributedSidePlayerIds.has(player.id);
+    return !onlyPlayedAsTeamSubstitute;
+  });
 
   return {
     hasCountableScore: officialStandings.hasCountableScore,

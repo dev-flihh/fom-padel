@@ -352,6 +352,26 @@ export const buildToxicStandings = ({
   if (!hasCountableScore || sortedPlayers.length === 0) return emptyData;
 
   const byId = new Map(sortedPlayers.map((player) => [player.id, player]));
+  // Mode fixed: baris = tim. Kejadian di lapangan bisa tercatat atas nama
+  // anggota mana pun (termasuk anchor lama sebelum swap), jadi setiap id
+  // anggota dipetakan ke id baris timnya dan di-dedupe per sisi match agar
+  // satu tim tidak dihitung dua kali.
+  const rowIdByMemberId = new Map<string, string>();
+  sortedPlayers.forEach((player) => {
+    rowIdByMemberId.set(player.id, player.id);
+    if (player.isTeamRow && player.partnerId) {
+      rowIdByMemberId.set(player.partnerId, player.id);
+    }
+  });
+  const resolveRowId = (playerId: string) => rowIdByMemberId.get(playerId);
+  const resolveUniqueRowIds = (players: Array<{ id: string }>) => {
+    const rowIds = new Set<string>();
+    players.forEach((player) => {
+      const rowId = resolveRowId(player.id);
+      if (rowId) rowIds.add(rowId);
+    });
+    return [...rowIds];
+  };
   const byesByPlayer = new Map<string, number>();
   const closeLossesByPlayer = new Map<string, number>();
   const biggestLossByPlayer = new Map<string, number>();
@@ -373,9 +393,8 @@ export const buildToxicStandings = ({
   const sortedRounds = [...rounds].sort((a, b) => Number(a.id || 0) - Number(b.id || 0));
   let latestProgressRound: Round | null = null;
   sortedRounds.forEach((round) => {
-    (round.playersBye || []).forEach((player) => {
-      if (!byId.has(player.id)) return;
-      byesByPlayer.set(player.id, (byesByPlayer.get(player.id) || 0) + 1);
+    resolveUniqueRowIds(round.playersBye || []).forEach((rowId) => {
+      byesByPlayer.set(rowId, (byesByPlayer.get(rowId) || 0) + 1);
     });
 
     const hasRoundProgress = (round.matches || []).some(hasMatchScoreProgress);
@@ -388,14 +407,15 @@ export const buildToxicStandings = ({
       const diff = scoreA - scoreB;
       const teamAPlayers = match.teamA?.players || [];
       const teamBPlayers = match.teamB?.players || [];
-      const registerTeamPairs = (teamPlayers: typeof teamAPlayers, teamDiff: number) => {
-        const eligiblePlayers = teamPlayers.filter((player) => byId.has(player.id));
-        for (let outerIndex = 0; outerIndex < eligiblePlayers.length; outerIndex += 1) {
-          for (let innerIndex = outerIndex + 1; innerIndex < eligiblePlayers.length; innerIndex += 1) {
-            const playerA = eligiblePlayers[outerIndex];
-            const playerB = eligiblePlayers[innerIndex];
-            const key = getPairKey(playerA.id, playerB.id);
-            const sortedIds = [playerA.id, playerB.id].sort() as [string, string];
+      const teamARowIds = resolveUniqueRowIds(teamAPlayers);
+      const teamBRowIds = resolveUniqueRowIds(teamBPlayers);
+      const registerTeamPairs = (rowIds: string[], teamDiff: number) => {
+        for (let outerIndex = 0; outerIndex < rowIds.length; outerIndex += 1) {
+          for (let innerIndex = outerIndex + 1; innerIndex < rowIds.length; innerIndex += 1) {
+            const rowIdA = rowIds[outerIndex];
+            const rowIdB = rowIds[innerIndex];
+            const key = getPairKey(rowIdA, rowIdB);
+            const sortedIds = [rowIdA, rowIdB].sort() as [string, string];
             const existing = pairStatsByKey.get(key) || {
               playerIds: sortedIds,
               together: 0,
@@ -412,36 +432,36 @@ export const buildToxicStandings = ({
         }
       };
 
-      registerTeamPairs(teamAPlayers, diff);
-      registerTeamPairs(teamBPlayers, -diff);
+      registerTeamPairs(teamARowIds, diff);
+      registerTeamPairs(teamBRowIds, -diff);
 
-      [...teamAPlayers, ...teamBPlayers].forEach((player) => {
-        if (!byId.has(player.id)) return;
-        countableAppearancesByPlayer.set(player.id, (countableAppearancesByPlayer.get(player.id) || 0) + 1);
+      [...teamARowIds, ...teamBRowIds].forEach((rowId) => {
+        countableAppearancesByPlayer.set(rowId, (countableAppearancesByPlayer.get(rowId) || 0) + 1);
       });
 
       if (diff === 0) {
-        [...teamAPlayers, ...teamBPlayers].forEach((player) => {
-          if (!byId.has(player.id) || match.status !== 'completed') return;
-          currentLossStreakByPlayer.set(player.id, 0);
-        });
+        if (match.status === 'completed') {
+          [...teamARowIds, ...teamBRowIds].forEach((rowId) => {
+            currentLossStreakByPlayer.set(rowId, 0);
+          });
+        }
         return;
       }
 
-      const losingPlayers = diff > 0 ? teamBPlayers : teamAPlayers;
+      const losingRowIds = diff > 0 ? teamBRowIds : teamARowIds;
+      const winningRowIds = diff > 0 ? teamARowIds : teamBRowIds;
       const winningPlayers = diff > 0 ? teamAPlayers : teamBPlayers;
       const margin = Math.abs(diff);
-      losingPlayers.forEach((player) => {
-        if (!byId.has(player.id)) return;
+      losingRowIds.forEach((rowId) => {
         if (margin <= 2) {
-          closeLossesByPlayer.set(player.id, (closeLossesByPlayer.get(player.id) || 0) + 1);
+          closeLossesByPlayer.set(rowId, (closeLossesByPlayer.get(rowId) || 0) + 1);
         }
-        biggestLossByPlayer.set(player.id, Math.max(biggestLossByPlayer.get(player.id) || 0, margin));
-        const existingLossEvidence = biggestLossEvidenceByPlayer.get(player.id);
+        biggestLossByPlayer.set(rowId, Math.max(biggestLossByPlayer.get(rowId) || 0, margin));
+        const existingLossEvidence = biggestLossEvidenceByPlayer.get(rowId);
         if (!existingLossEvidence || margin > existingLossEvidence.margin) {
           const scoreFor = diff > 0 ? scoreB : scoreA;
           const scoreAgainst = diff > 0 ? scoreA : scoreB;
-          biggestLossEvidenceByPlayer.set(player.id, {
+          biggestLossEvidenceByPlayer.set(rowId, {
             roundId: round.id,
             score: `${scoreFor}-${scoreAgainst}`,
             margin,
@@ -449,15 +469,16 @@ export const buildToxicStandings = ({
           });
         }
         if (match.status === 'completed') {
-          const nextStreak = (currentLossStreakByPlayer.get(player.id) || 0) + 1;
-          currentLossStreakByPlayer.set(player.id, nextStreak);
-          maxLossStreakByPlayer.set(player.id, Math.max(maxLossStreakByPlayer.get(player.id) || 0, nextStreak));
+          const nextStreak = (currentLossStreakByPlayer.get(rowId) || 0) + 1;
+          currentLossStreakByPlayer.set(rowId, nextStreak);
+          maxLossStreakByPlayer.set(rowId, Math.max(maxLossStreakByPlayer.get(rowId) || 0, nextStreak));
         }
       });
-      winningPlayers.forEach((player) => {
-        if (!byId.has(player.id) || match.status !== 'completed') return;
-        currentLossStreakByPlayer.set(player.id, 0);
-      });
+      if (match.status === 'completed') {
+        winningRowIds.forEach((rowId) => {
+          currentLossStreakByPlayer.set(rowId, 0);
+        });
+      }
     });
   });
 
