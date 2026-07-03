@@ -16,22 +16,44 @@ const formatDiff = (value: number) => (value > 0 ? `+${value}` : String(value));
 
 const diffColorDark = (value: number) => (value > 0 ? 'text-[#1FB65A]' : value < 0 ? 'text-[#FF6B66]' : 'text-white/60');
 
-const Avatar = ({ player, size, className, gold }: { player: RewindPlayerRef; size: number; className?: string; gold?: boolean }) => (
-  <div
-    className={cn(
-      'flex shrink-0 items-center justify-center overflow-hidden rounded-full font-black text-white',
-      gold ? 'bg-[linear-gradient(135deg,#E8C45A,#B7861F)] text-[#16110a]' : 'bg-[#E65E14]',
-      className,
-    )}
-    style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}
-  >
-    {player.avatar ? (
-      <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
-    ) : (
-      <span>{player.initials}</span>
-    )}
-  </div>
-);
+const Avatar = ({ player, size, className, gold }: { player: RewindPlayerRef; size: number; className?: string; gold?: boolean }) => {
+  const core = (
+    <div
+      className={cn(
+        'flex shrink-0 items-center justify-center overflow-hidden rounded-full font-black text-white',
+        gold ? 'bg-[linear-gradient(135deg,#E8C45A,#B7861F)] text-[#16110a]' : 'bg-[#E65E14]',
+        className,
+      )}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}
+    >
+      {player.avatar ? (
+        <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
+      ) : (
+        <span>{player.initials}</span>
+      )}
+    </div>
+  );
+  // Mode fixed: ref tim membawa wajah partner → tampilkan badge di pojok
+  // avatar utama supaya kedua pemain kelihatan.
+  const hasPartner = Boolean(player.partnerAvatar || player.partnerInitials);
+  if (!hasPartner) return core;
+  const badgeSize = Math.max(20, Math.round(size * 0.46));
+  return (
+    <div className="relative shrink-0">
+      {core}
+      <div
+        className="absolute -bottom-1 -right-1 flex items-center justify-center overflow-hidden rounded-full bg-[#8E8E93] font-black text-white ring-2 ring-[#111111]"
+        style={{ width: badgeSize, height: badgeSize, fontSize: Math.round(badgeSize * 0.42) }}
+      >
+        {player.partnerAvatar ? (
+          <img className="h-full w-full object-cover" src={player.partnerAvatar} alt="" referrerPolicy="no-referrer" />
+        ) : (
+          <span>{player.partnerInitials}</span>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const Footer = ({ light, shortLink }: { light?: boolean; shortLink: string }) => (
   <div className="relative flex shrink-0 items-center justify-between">

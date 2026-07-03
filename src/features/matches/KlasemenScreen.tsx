@@ -1377,10 +1377,20 @@ export const KlasemenScreen = ({
                       {[award.player, award.secondaryPlayer].map((awardPlayer) => (
                         awardPlayer ? (
                           <div key={awardPlayer.id} className="flex min-w-0 items-center gap-1.5 rounded-full border border-[#D4A017]/16 bg-white/58 py-1 pl-1 pr-2">
-                            <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#F1E3BE] text-[7.5px] font-black text-[#8A6A1F]">
-                              {awardPlayer.avatar ? (
-                                <img className="h-full w-full object-cover" src={awardPlayer.avatar} alt="" referrerPolicy="no-referrer" />
-                              ) : awardPlayer.initials}
+                            {/* Mode fixed: satu entri award = satu tim → tampilkan dua wajah. */}
+                            <span className="flex shrink-0 -space-x-1.5">
+                              <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#F1E3BE] text-[7.5px] font-black text-[#8A6A1F]">
+                                {awardPlayer.avatar ? (
+                                  <img className="h-full w-full object-cover" src={awardPlayer.avatar} alt="" referrerPolicy="no-referrer" />
+                                ) : awardPlayer.initials}
+                              </span>
+                              {awardPlayer.isTeamRow && awardPlayer.partnerId && (
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#F1E3BE] text-[7.5px] font-black text-[#8A6A1F] ring-2 ring-white/80">
+                                  {awardPlayer.partnerAvatar ? (
+                                    <img className="h-full w-full object-cover" src={awardPlayer.partnerAvatar} alt="" referrerPolicy="no-referrer" />
+                                  ) : (awardPlayer.partnerInitials || '?').slice(0, 1)}
+                                </span>
+                              )}
                             </span>
                             <span className="min-w-0 truncate text-[10.5px] font-extrabold text-on-surface/84">{awardPlayer.name}</span>
                           </div>

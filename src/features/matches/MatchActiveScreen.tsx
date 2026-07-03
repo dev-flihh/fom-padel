@@ -125,6 +125,8 @@ const E2E_ACTIVE_MATCH_FRIENDS: Friend[] = [
   { uid: 'e2e-friend-nanda', displayName: 'Nanda Rally', mmr: 1485 },
 ];
 
+const getRoundCardDomId = (roundId: number) => `active-round-card-${roundId}`;
+
 const FOCUSABLE_DIALOG_SELECTOR = [
   'button:not([disabled])',
   '[href]',
@@ -528,6 +530,20 @@ export const MatchActiveScreen = ({
     tournament.rounds.map((round) => round.id).join('|')
   ), [tournament.rounds]);
 
+  const scrollRoundCardIntoView = useCallback((roundId: number) => {
+    window.requestAnimationFrame(() => {
+      const card = document.getElementById(getRoundCardDomId(roundId));
+      if (!card) return;
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      card.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' });
+    });
+  }, []);
+
+  // Transisi ronde: begitu ronde lain jadi aktif (mis. habis tekan Start
+  // Round), fokuskan viewport ke kartunya supaya pergantian tidak bikin
+  // bingung. Load pertama tidak di-scroll.
+  const previousActiveRoundIdRef = useRef<number | null>(null);
+  const hasSyncedActiveRoundRef = useRef(false);
   useEffect(() => {
     if (!hasActiveTournament || activeRoundId === null) return;
     const collapsed = new Set<number>();
@@ -535,7 +551,12 @@ export const MatchActiveScreen = ({
       if (round.id !== activeRoundId) collapsed.add(round.id);
     });
     setCollapsedRounds(collapsed);
-  }, [activeRoundId, hasActiveTournament, roundIdsKey]);
+    if (hasSyncedActiveRoundRef.current && previousActiveRoundIdRef.current !== activeRoundId) {
+      scrollRoundCardIntoView(activeRoundId);
+    }
+    hasSyncedActiveRoundRef.current = true;
+    previousActiveRoundIdRef.current = activeRoundId;
+  }, [activeRoundId, hasActiveTournament, roundIdsKey, scrollRoundCardIntoView]);
 
   const toggleRound = (roundId: number) => {
     setCollapsedRounds((prev) => {
@@ -548,6 +569,16 @@ export const MatchActiveScreen = ({
 
   const focusRound = (roundId: number) => {
     setCollapsedRounds(new Set(tournament.rounds.filter((round) => round.id !== roundId).map((round) => round.id)));
+    scrollRoundCardIntoView(roundId);
+  };
+
+  // Americano: habis Complete Round N, ronde N+1 tadinya tersembunyi total
+  // (kartu collapsed tidak dirender) — buka & scroll ke sana supaya CTA
+  // "Start Round N+1" langsung kelihatan.
+  const focusNextRoundAfterComplete = (completedRoundId: number) => {
+    const nextRound = tournament.rounds.find((round) => round.id === completedRoundId + 1);
+    if (!nextRound) return;
+    focusRound(nextRound.id);
   };
 
   const handleAdjustMatchScore = (match: Match, team: 'A' | 'B', delta: number) => {
@@ -694,7 +725,7 @@ export const MatchActiveScreen = ({
     }));
 
     if (incompleteMatches.length === 0) {
-      void onCompleteAmericanoRound(roundId);
+      void Promise.resolve(onCompleteAmericanoRound(roundId)).then(() => focusNextRoundAfterComplete(roundId));
       return;
     }
 
@@ -715,10 +746,12 @@ export const MatchActiveScreen = ({
 
   const handleConfirmIncompleteRound = async () => {
     if (!incompleteRoundConfirm || isCompletingIncompleteRound) return;
+    const completedRoundId = incompleteRoundConfirm.roundId;
     setIsCompletingIncompleteRound(true);
     try {
-      await onCompleteAmericanoRound(incompleteRoundConfirm.roundId, { allowIncomplete: true });
+      await onCompleteAmericanoRound(completedRoundId, { allowIncomplete: true });
       setIncompleteRoundConfirm(null);
+      focusNextRoundAfterComplete(completedRoundId);
     } finally {
       setIsCompletingIncompleteRound(false);
     }
@@ -884,7 +917,12 @@ export const MatchActiveScreen = ({
           const isCollapsed = collapsedRounds.has(round.id);
 
           return (
-            <div key={round.id} className={!isCollapsed ? 'mt-2.5' : undefined}>
+            <div
+              key={round.id}
+              id={getRoundCardDomId(round.id)}
+              className={!isCollapsed ? 'mt-2.5' : undefined}
+              style={{ scrollMarginTop: 'calc(var(--app-safe-top, 0px) + 16px)' }}
+            >
               <ActiveMatchRoundCard
                 round={round}
                 format={tournament.format}

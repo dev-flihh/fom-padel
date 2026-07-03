@@ -31,6 +31,10 @@ export type RewindPlayerRef = {
   name: string;
   avatar?: string;
   initials: string;
+  // Mode fixed: satu ref = satu tim; wajah partner ditampilkan sebagai badge
+  // menempel di avatar utama (lihat komponen Avatar di RewindSlideTemplates).
+  partnerAvatar?: string;
+  partnerInitials?: string;
 };
 
 export type RewindMetaCell = { label: string; value: string };
@@ -121,11 +125,19 @@ const expandTeamMemberRefs = (row: TeamExpandable): RewindPlayerRef[] => {
   ];
 };
 
-const toPlayerRef = (player: { id: string; name: string; avatar?: string; initials: string }): RewindPlayerRef => ({
+const toPlayerRef = (player: TeamExpandable): RewindPlayerRef => ({
   id: player.id,
   name: player.name,
   avatar: player.avatar,
   initials: player.initials,
+  // Baris tim (mode fixed) tetap satu ref, tapi bawa wajah partner supaya
+  // slide podium/my-card bisa menampilkan kedua pemain.
+  ...(player.isTeamRow && player.partnerId
+    ? {
+        partnerAvatar: player.partnerAvatar,
+        partnerInitials: (player.partnerInitials || player.partnerName || '?').slice(0, 1),
+      }
+    : {}),
 });
 
 const getShortName = (name = '') => name.trim().split(/\s+/)[0] || name;
@@ -589,7 +601,9 @@ export const buildRewindData = ({
         label: award.label,
         emoji: award.emoji,
         playerNames: awardPlayers.map((p) => p.name).join(' & '),
-        players: awardPlayers.map(toPlayerRef),
+        // Mode fixed: entri award bisa berupa tim → pecah jadi dua wajah
+        // supaya slide awards menampilkan kedua pemain.
+        players: awardPlayers.flatMap((p) => (p.isTeamRow ? expandTeamMemberRefs(p) : [toPlayerRef(p)])),
         note: renderRewindAwardNote(award.id, intensity, {
           byeCount: award.id === 'sultan-of-bye' ? evidence.get(award.player.id)?.byes : undefined,
           from: glowDown?.firstRank,
