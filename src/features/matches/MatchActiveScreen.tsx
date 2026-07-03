@@ -862,7 +862,6 @@ export const MatchActiveScreen = ({
           courts={tournament.courts}
           completedRounds={completedRounds}
           totalRounds={totalRounds}
-          toxicModeEnabled={Boolean(tournament.toxicModeEnabled)}
           isReadOnly={isReadOnly}
           needsRegenerateFromRound={needsRegenerateFromRound}
           onOpenFomPlay={() => window.open(fomPlayUrl, '_blank', 'noopener,noreferrer')}

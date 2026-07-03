@@ -2,6 +2,7 @@ import { AlertTriangle, ChevronDown, Lock, Share2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { type MatchFormat } from '../../types';
 import { AppLogo } from '../../components/app/AppLogo';
+import { formatElapsedForStat } from './matchTimeUtils';
 
 type StatsSyncBadge = {
   tone: string;
@@ -15,11 +16,11 @@ export const ActiveMatchSummaryPanel = ({
   infoShadowClass,
   matchName,
   locationDateLabel,
+  totalElapsed,
   format,
   totalPlayerCount,
   completedRounds,
   totalRounds,
-  toxicModeEnabled,
   isReadOnly,
   needsRegenerateFromRound,
   onOpenSettings,
@@ -39,7 +40,6 @@ export const ActiveMatchSummaryPanel = ({
   courts: number;
   completedRounds: number;
   totalRounds: number;
-  toxicModeEnabled: boolean;
   isReadOnly: boolean;
   needsRegenerateFromRound: number | null;
   onOpenFomPlay: () => void;
@@ -63,10 +63,16 @@ export const ActiveMatchSummaryPanel = ({
       ...placeParts,
       datePart,
     ].filter(Boolean);
+    const totalElapsedStat = totalElapsed && totalElapsed !== '00:00'
+      ? formatElapsedForStat(totalElapsed)
+      : '';
     const detailLineTwo = [
       format,
       totalPlayerCount > 0 ? `${totalPlayerCount} players` : '',
-      toxicModeEnabled ? 'Shame on' : ''
+      statusLabel === 'Ended'
+        ? `${totalRounds} rounds`
+        : `Round ${currentRoundLabel}/${totalRounds || 0}`,
+      totalElapsedStat,
     ].filter(Boolean);
 
     return (
@@ -168,16 +174,11 @@ export const ActiveMatchSummaryPanel = ({
         {detailLineTwo.length > 0 && <p>{detailLineTwo.join(' · ')}</p>}
       </div>
 
-      <div className="mt-4.5 flex items-center gap-3">
-        <div className="h-1 max-w-[66%] flex-1 overflow-hidden rounded-full bg-black/[0.045]">
-          <div
-            className="h-full rounded-full bg-[#E65E14]"
-            style={{ width: `${progressPercent}%` }}
-          />
-        </div>
-        <span className="shrink-0 text-[10px] font-black uppercase leading-none tracking-[0.15em] text-on-surface/52 tabular-nums">
-          Round {currentRoundLabel} of {totalRounds || 0}
-        </span>
+      <div className="mt-4.5 h-1 overflow-hidden rounded-full bg-black/[0.045]">
+        <div
+          className="h-full rounded-full bg-[#E65E14]"
+          style={{ width: `${progressPercent}%` }}
+        />
       </div>
     </section>
 

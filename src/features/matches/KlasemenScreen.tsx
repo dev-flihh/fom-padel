@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils';
 import { fetchToxicCopyConfig } from '../../services/toxicCopyRemoteConfig';
 import { type Player, type Round, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
 import { getMatchThemeColor } from '../tournaments/matchTheme';
-import { formatDurationFromMs, getTournamentElapsedMs } from './matchTimeUtils';
+import { formatDurationFromMs, formatElapsedForStat, getTournamentElapsedMs } from './matchTimeUtils';
 import { buildOfficialStandings, buildOfficialTeamStandings, hasMatchScoreProgress, type StandingsPlayer } from './standingsUtils';
 import { isFixedPartnerTournament } from './partnerMode';
 import type { ToxicCopyConfig } from './toxicCopyConfig';
@@ -242,7 +242,6 @@ export const KlasemenScreen = ({
     : isTournamentEnded
       ? 'Final'
       : '0:00';
-  const totalStandingPoints = sortedPlayers.reduce((sum, player) => sum + player.totalPoints, 0);
 
   const standingsThemeColor = getMatchThemeColor(tournament.format, tournament.themeColorId);
   const infoTheme = standingsThemeColor;
@@ -280,14 +279,10 @@ export const KlasemenScreen = ({
     tournament.format,
     isFixedPartnerMode ? 'Fix Partner' : '',
     `${sortedPlayers.length} players`,
-    toxicModeEnabled ? 'Shame on' : '',
-  ].filter(Boolean);
-  const standingsDetailLineStats = [
     isTournamentEnded
       ? `${totalRounds || displayedRoundCount} rounds`
       : `Round ${displayedRoundCount}/${totalRounds || 0}`,
     totalElapsedMs > 0 ? totalElapsedStat : '',
-    totalStandingPoints > 0 ? `${totalStandingPoints} pts` : '',
   ].filter(Boolean);
   const shouldShowOfficialStandings = hasCountableStandingScore && officialRows.length > 0;
   const officialDisplayPlayers = shouldShowOfficialStandings ? officialRows : [];
@@ -548,9 +543,6 @@ export const KlasemenScreen = ({
           <div className="mt-2 flex flex-col gap-0.5 text-[9.5px] font-extrabold uppercase leading-[1.5] tracking-[0.12em] text-ios-gray/68">
             {standingsDetailLineOne.length > 0 && <p>{standingsDetailLineOne.join(' · ')}</p>}
             {standingsDetailLineTwo.length > 0 && <p>{standingsDetailLineTwo.join(' · ')}</p>}
-            {standingsDetailLineStats.length > 0 && (
-              <p className="text-on-surface/72">{standingsDetailLineStats.join(' · ')}</p>
-            )}
           </div>
 
           <div
@@ -717,48 +709,6 @@ export const KlasemenScreen = ({
           </div>
         )}
 
-        {isToxicTabActive && toxicStandings.tickerMessage && (
-          <section
-            className="toxic-ticker relative isolate overflow-hidden rounded-[18px] border border-[#B7861F]/45 bg-[#151008] px-3.5 py-3 text-[#E8C45A] shadow-[0_8px_20px_rgba(17,16,8,0.10)]"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-            aria-label={toxicTickerAnnouncement}
-          >
-            <div className="pointer-events-none absolute inset-y-[-60%] right-[-18%] -z-10 w-[44%] rotate-[18deg] bg-[linear-gradient(90deg,transparent,rgba(232,196,90,0.12),transparent)]" />
-            <div className="flex items-start gap-2.5">
-              <span className="toxic-live-ticker-dot mt-[5px] h-2 w-2 shrink-0 rounded-full bg-[#E8C45A] shadow-[0_0_0_5px_rgba(232,196,90,0.12)]" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <p className="shrink-0 text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-[#C9A14A]">
-                    Live Shame
-                  </p>
-                  {toxicTickerEvidenceChips.length > 0 && (
-                    <span className="shrink-0 rounded-full border border-[#C9A14A]/22 bg-[#C9A14A]/10 px-1.5 py-0.5 text-[8px] font-black uppercase leading-none tracking-[0.06em] text-[#F4D77B]">
-                      Evidence
-                    </span>
-                  )}
-                </div>
-                <p className="mt-1 line-clamp-2 text-[12.5px] font-bold italic leading-snug text-[#F6DFA0]">
-                  {toxicStandings.tickerMessage}
-                </p>
-                {toxicTickerEvidenceChips.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {toxicTickerEvidenceChips.map((chip) => (
-                      <span
-                        key={chip}
-                        className="rounded-full border border-[#C9A14A]/24 bg-white/[0.06] px-2 py-1 text-[9px] font-black uppercase leading-none tracking-[0.04em] text-[#F4D77B]"
-                      >
-                        {chip}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
         {isToxicTabActive && (
           <section
             id={STANDINGS_PANEL_TOXIC_ID}
@@ -798,12 +748,54 @@ export const KlasemenScreen = ({
                 </p>
               </div>
             ) : (
-              <>
-                <div className="flex items-center justify-between gap-3 px-5">
-                  <p className="min-w-0 truncate text-[9px] font-black uppercase leading-none tracking-[0.18em] text-[#8A6A1F]">
+              <div className="relative overflow-hidden border-t border-[#C9A14A]/35 bg-[#131008] shadow-[inset_0_1px_0_rgba(255,215,128,0.16)]">
+                {toxicStandings.tickerMessage && (
+                  <div
+                    className="toxic-ticker relative isolate overflow-hidden border-b border-[#C9A14A]/16 px-5 py-3.5 text-[#E8C45A]"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    aria-label={toxicTickerAnnouncement}
+                  >
+                    <div className="pointer-events-none absolute inset-y-[-60%] right-[-18%] -z-10 w-[44%] rotate-[18deg] bg-[linear-gradient(90deg,transparent,rgba(232,196,90,0.12),transparent)]" />
+                    <div className="flex items-start gap-2.5">
+                      <span className="toxic-live-ticker-dot mt-[5px] h-2 w-2 shrink-0 rounded-full bg-[#E8C45A] shadow-[0_0_0_5px_rgba(232,196,90,0.12)]" aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <p className="shrink-0 text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-[#C9A14A]">
+                            Live Shame
+                          </p>
+                          {toxicTickerEvidenceChips.length > 0 && (
+                            <span className="shrink-0 rounded-full border border-[#C9A14A]/22 bg-[#C9A14A]/10 px-1.5 py-0.5 text-[8px] font-black uppercase leading-none tracking-[0.06em] text-[#F4D77B]">
+                              Evidence
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-[12.5px] font-bold italic leading-snug text-[#F6DFA0]">
+                          {toxicStandings.tickerMessage}
+                        </p>
+                        {toxicTickerEvidenceChips.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {toxicTickerEvidenceChips.map((chip) => (
+                              <span
+                                key={chip}
+                                className="rounded-full border border-[#C9A14A]/24 bg-white/[0.06] px-2 py-1 text-[9px] font-black uppercase leading-none tracking-[0.04em] text-[#F4D77B]"
+                              >
+                                {chip}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-3 px-5 pt-4">
+                  <p className="min-w-0 truncate text-[9px] font-black uppercase leading-none tracking-[0.18em] text-[#C9A14A]">
                     {isTournamentEnded ? 'Final Hall of Shame' : 'Hall of Shame'}
                   </p>
-                  <span className="shrink-0 rounded-full border border-[#D4A017]/35 bg-[#FFF7E0] px-2 py-1 text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-[#9A6500]">
+                  <span className="shrink-0 rounded-full border border-[#C9A14A]/30 bg-white/[0.06] px-2 py-1 text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-[#E8C45A]">
                     {toxicIntensityLabel}
                   </span>
                 </div>
@@ -813,7 +805,7 @@ export const KlasemenScreen = ({
                   data-ceremony-run-id={toxicConfettiRunId}
                   data-toxic-hero-layout={hasCoKingHero ? 'duo' : 'solo'}
                   className={cn(
-                    'toxic-ceremony-card relative mt-3 overflow-hidden border-y border-[#C9A14A]/40 bg-[#131008] text-center shadow-[inset_0_1px_0_rgba(255,215,128,0.16)]',
+                    'toxic-ceremony-card relative mt-3 overflow-hidden bg-[#131008] text-center',
                     hasCoKingHero ? 'px-6 py-6' : 'px-6 py-7'
                   )}
                 >
@@ -933,7 +925,7 @@ export const KlasemenScreen = ({
                 </div>
 
                 {toxicStandings.rows.length >= 3 && (
-                  <div className="relative mx-5 mt-3.5 overflow-hidden rounded-[22px] bg-[#141414] px-4 pb-0 pt-4 shadow-[0_10px_26px_rgba(17,16,8,0.12)]">
+                  <div className="relative overflow-hidden border-t border-[#C9A14A]/14 px-5 pb-0 pt-4">
                     <div className="absolute inset-0 opacity-[0.03] bg-[url('/assets/fom-logomark-app.png')] bg-[length:54px_54px] rotate-[-8deg] scale-125" />
                     <div className="relative z-10">
                       <div className="flex items-center justify-between gap-3">
@@ -947,7 +939,7 @@ export const KlasemenScreen = ({
                           Top 3
                         </span>
                       </div>
-                      <div className="-mx-4 mt-2.5 overflow-hidden border-y border-[#C9A14A]/16 py-1">
+                      <div className="-mx-5 mt-2.5 overflow-hidden border-y border-[#C9A14A]/16 py-1">
                         <div className="fom-marquee flex w-max gap-6">
                           {[0, 1].map((copyIndex) => (
                             <span key={copyIndex} className="text-[7px] font-black uppercase leading-none tracking-[0.22em] text-[#E8C45A]/65 whitespace-nowrap">
@@ -964,7 +956,7 @@ export const KlasemenScreen = ({
                     </div>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </section>
         )}
@@ -1302,34 +1294,34 @@ export const KlasemenScreen = ({
         )}
 
         {isToxicTabActive && toxicStandings.awardCards.length > 0 && (
-          <section className="space-y-3 pt-5">
+          <section className="-mx-6 space-y-3 border-t border-[#C9A14A]/14 bg-[#131008] px-6 pb-5 pt-5">
             <div className="flex items-start justify-between gap-3 px-1">
               <div className="min-w-0">
-                <h3 className="text-[9px] font-black uppercase leading-none tracking-[0.16em] text-[#8A6A1F]">Amunisi Grup WA</h3>
-                <p className="mt-1 text-[10.5px] font-semibold italic leading-snug text-ios-gray/58">
+                <h3 className="text-[9px] font-black uppercase leading-none tracking-[0.16em] text-[#C9A14A]">Amunisi Grup WA</h3>
+                <p className="mt-1 text-[10.5px] font-semibold italic leading-snug text-[#D8C792]/70">
                   Versi story siap share ada di FOM Rewind.
                 </p>
               </div>
               <div className="mt-[-1px] flex shrink-0 flex-col items-end gap-1.5">
-                <span className="rounded-full border border-[#D4A017]/30 bg-[#FFF7E0] px-2 py-1 text-[7px] font-black uppercase leading-none tracking-[0.12em] text-[#A06B00]">
+                <span className="rounded-full border border-[#C9A14A]/28 bg-white/[0.06] px-2 py-1 text-[7px] font-black uppercase leading-none tracking-[0.12em] text-[#E8C45A]">
                   {toxicStandings.awardCards.length} Award
                 </span>
                 {toxicStandings.awardCards.length > 1 && (
-                  <span className="text-[7px] font-black uppercase leading-none tracking-[0.12em] text-[#B7861F]/62">
+                  <span className="text-[7px] font-black uppercase leading-none tracking-[0.12em] text-[#C9A14A]/62">
                     Swipe →
                   </span>
                 )}
               </div>
             </div>
-            <div className="relative -mx-5">
+            <div className="relative -mx-6">
               {toxicStandings.awardCards.length > 1 && (
                 <>
-                  <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-5 bg-[linear-gradient(90deg,#FFFFFF_0%,rgba(255,255,255,0)_100%)]" />
-                  <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-[linear-gradient(270deg,#FFFFFF_0%,rgba(255,255,255,0)_100%)]" />
+                  <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-5 bg-[linear-gradient(90deg,#131008_0%,rgba(19,16,8,0)_100%)]" />
+                  <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-[linear-gradient(270deg,#131008_0%,rgba(19,16,8,0)_100%)]" />
                 </>
               )}
               <div className={cn(
-                'flex snap-x snap-mandatory scroll-px-5 gap-3 overflow-x-auto px-5 pb-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+                'flex snap-x snap-mandatory scroll-px-6 gap-3 overflow-x-auto px-6 pb-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
                 toxicStandings.awardCards.length === 1 && 'justify-center'
               )}
               onScroll={(event) => {
@@ -1396,14 +1388,14 @@ export const KlasemenScreen = ({
                       className={cn(
                         'h-1.5 rounded-full transition-all motion-reduce:transition-none',
                         index === activeAwardCardIndex
-                          ? 'w-5 bg-[#B7861F]'
-                          : 'w-1.5 bg-[#D4A017]/28'
+                          ? 'w-5 bg-[#E8C45A]'
+                          : 'w-1.5 bg-white/[0.18]'
                       )}
                       aria-hidden="true"
                     />
                   ))}
                 </div>
-                <p className="shrink-0 text-[7.5px] font-black uppercase leading-none tracking-[0.12em] text-[#B7861F]/54">
+                <p className="shrink-0 text-[7.5px] font-black uppercase leading-none tracking-[0.12em] text-[#C9A14A]/58">
                   {activeAwardCardIndex + 1}/{toxicStandings.awardCards.length}
                 </p>
               </div>
@@ -1412,30 +1404,30 @@ export const KlasemenScreen = ({
         )}
 
         {isToxicTabActive && !toxicStandings.isEmpty && (
-          <section className="-mx-6 pt-7">
-            <div className="border-t border-[#D4A017]/14 px-5 pb-2 pt-4">
+          <section className="-mx-6 bg-[#131008]">
+            <div className="border-t border-[#C9A14A]/14 px-5 pb-2 pt-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[9px] font-black uppercase leading-none tracking-[0.18em] text-[#8A6A1F]">Full Shame Table</p>
-                  <p className="mt-1 text-[11px] font-semibold italic leading-snug text-ios-gray/62">
+                  <p className="text-[9px] font-black uppercase leading-none tracking-[0.18em] text-[#C9A14A]">Full Shame Table</p>
+                  <p className="mt-1 text-[11px] font-semibold italic leading-snug text-[#D8C792]/68">
                     Semua korban, dari paling cupu ke paling aman.
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
-                  <span className="rounded-full border border-[#D4A017]/25 bg-[#FFF7E0] px-2 py-1 text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-[#9A6500]">
+                  <span className="rounded-full border border-[#C9A14A]/28 bg-white/[0.06] px-2 py-1 text-[7.5px] font-black uppercase leading-none tracking-[0.08em] text-[#E8C45A]">
                     {toxicStandings.rows.length} players
                   </span>
-                  <span className="text-[7px] font-black uppercase leading-none tracking-[0.12em] text-ios-gray/42">
+                  <span className="text-[7px] font-black uppercase leading-none tracking-[0.12em] text-white/38">
                     Worst first
                   </span>
                 </div>
               </div>
             </div>
             <div className="flex items-center gap-3.5 px-5 pb-1">
-              <div className="min-w-0 flex-1 text-[8px] font-extrabold uppercase leading-none tracking-[0.14em] text-[#C5C5CA]">
+              <div className="min-w-0 flex-1 text-[8px] font-extrabold uppercase leading-none tracking-[0.14em] text-white/40">
                 Player / Roast
               </div>
-              <div className="w-[58px] text-right text-[8px] font-extrabold uppercase leading-none tracking-[0.08em] text-[#C5C5CA]">
+              <div className="w-[58px] text-right text-[8px] font-extrabold uppercase leading-none tracking-[0.08em] text-white/40">
                 Pts / Diff
               </div>
             </div>
@@ -1456,11 +1448,11 @@ export const KlasemenScreen = ({
                       type="button"
                       id={getToxicPlayerRowId(player.id)}
                       className={cn(
-                        'relative flex w-full items-start gap-3.5 border-b border-black/[0.05] px-5 py-3 text-left transition-colors active:bg-[#F7F7FA]',
-                        isExpanded && 'border-b-transparent bg-[#FAFAFB]',
-                        isHighlighted && 'toxic-row-highlight-pulse z-[1] rounded-[18px] ring-2 ring-[#D4A017]/52 ring-offset-2 ring-offset-white',
-                        isKing && 'bg-[linear-gradient(90deg,#FFF6D8_0%,#FFFBEF_48%,#FFFFFF_100%)] before:absolute before:inset-y-3 before:left-0 before:w-[3px] before:rounded-r-full before:bg-[#D4A017]',
-                        isOfficialChampion && !isKing && !isExpanded && 'bg-[#FAFAFB]'
+                        'relative flex w-full items-start gap-3.5 border-b border-white/[0.05] px-5 py-3 text-left transition-colors active:bg-white/[0.04]',
+                        isExpanded && 'border-b-transparent bg-white/[0.04]',
+                        isHighlighted && 'toxic-row-highlight-pulse z-[1] rounded-[18px] ring-2 ring-[#E8C45A]/55 ring-offset-2 ring-offset-[#131008]',
+                        isKing && 'bg-[linear-gradient(90deg,rgba(232,196,90,0.15)_0%,rgba(232,196,90,0.05)_48%,rgba(232,196,90,0)_100%)] before:absolute before:inset-y-3 before:left-0 before:w-[3px] before:rounded-r-full before:bg-[#E8C45A]',
+                        isOfficialChampion && !isKing && !isExpanded && 'bg-white/[0.03]'
                       )}
                       aria-expanded={isExpanded}
                       aria-controls={detailId}
@@ -1469,11 +1461,11 @@ export const KlasemenScreen = ({
                     >
                       <div className="flex w-[28px] shrink-0 flex-col items-start">
                         {isKing && (
-                          <span className="mb-0.5 text-[11px] leading-none text-[#B7861F]" aria-hidden="true">👑</span>
+                          <span className="mb-0.5 text-[11px] leading-none text-[#E8C45A]" aria-hidden="true">👑</span>
                         )}
                         <span className={cn(
                           'text-[19px] font-extrabold leading-none tabular-nums',
-                          isKing ? 'text-[#B7861F]' : i <= 2 ? 'text-on-surface' : 'text-[#C5C5CA]'
+                          isKing ? 'text-[#E8C45A]' : i <= 2 ? 'text-white' : 'text-white/32'
                         )}>
                           {String(rankNumber).padStart(2, '0')}
                         </span>
@@ -1492,7 +1484,7 @@ export const KlasemenScreen = ({
                       />
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
-                          <p className="min-w-0 flex-1 truncate text-[15px] font-bold leading-tight text-on-surface">
+                          <p className="min-w-0 flex-1 truncate text-[15px] font-bold leading-tight text-white">
                             {player.name}
                           </p>
                         </div>
@@ -1505,8 +1497,8 @@ export const KlasemenScreen = ({
                           <span className={cn(
                             'rounded-full border px-2 py-1 text-[8px] font-black uppercase leading-none tracking-[0.06em]',
                             isOfficialChampion
-                              ? 'border-primary/16 bg-primary/[0.07] text-primary'
-                              : 'border-black/[0.055] bg-white/72 text-ios-gray/68'
+                              ? 'border-primary/40 bg-primary/[0.16] text-[#FFAF87]'
+                              : 'border-white/[0.09] bg-white/[0.06] text-white/55'
                           )}>
                             Official #{player.normalRank}
                           </span>
@@ -1515,14 +1507,14 @@ export const KlasemenScreen = ({
                             className={cn(
                               'rounded-full border px-2 py-1 text-[8px] font-black uppercase leading-none tracking-[0.06em]',
                               primaryEvidenceChip.tone === 'danger'
-                                ? 'border-red-200/75 bg-red-50 text-error'
+                                ? 'border-red-400/25 bg-red-500/[0.12] text-[#F49E9E]'
                                 : primaryEvidenceChip.tone === 'good'
-                                  ? 'border-emerald-200/75 bg-emerald-50 text-[#1E8E3E]'
+                                  ? 'border-emerald-400/25 bg-emerald-500/[0.12] text-[#8ED6A5]'
                                   : isKing
-                                    ? 'border-[#D4A017]/30 bg-white/64 text-[#8A6A1F]'
+                                    ? 'border-[#C9A14A]/30 bg-[#C9A14A]/[0.12] text-[#E8C45A]'
                                     : isOfficialChampion
-                                      ? 'border-primary/12 bg-white text-primary/78'
-                                      : 'border-black/[0.06] bg-ios-gray/[0.045] text-ios-gray/72'
+                                      ? 'border-primary/30 bg-primary/[0.10] text-[#FFAF87]'
+                                      : 'border-white/[0.08] bg-white/[0.06] text-white/55'
                             )}
                           >
                             {primaryEvidenceChip.label}
@@ -1530,10 +1522,10 @@ export const KlasemenScreen = ({
                         </div>
                       </div>
                       <div className="w-[58px] shrink-0 text-right">
-                        <p className="text-[20px] font-extrabold leading-none text-on-surface tabular-nums">
+                        <p className="text-[20px] font-extrabold leading-none text-white tabular-nums">
                           {player.totalPoints}
                         </p>
-                        <p className={cn('mt-1 text-[12px] font-bold leading-none tabular-nums', player.pointsDiff > 0 ? 'text-[#1E8E3E]' : player.pointsDiff < 0 ? 'text-error' : 'text-ios-gray')}>
+                        <p className={cn('mt-1 text-[12px] font-bold leading-none tabular-nums', player.pointsDiff > 0 ? 'text-[#7BCB92]' : player.pointsDiff < 0 ? 'text-[#F49E9E]' : 'text-white/45')}>
                           {player.pointsDiff > 0 ? `+${player.pointsDiff}` : player.pointsDiff}
                         </p>
                       </div>
@@ -1541,8 +1533,8 @@ export const KlasemenScreen = ({
                         size={13}
                         strokeWidth={2.4}
                         className={cn(
-                          'absolute bottom-3 right-2 text-ios-gray/34 transition-transform motion-reduce:transition-none',
-                          isExpanded && 'rotate-180 text-[#B7861F]'
+                          'absolute bottom-3 right-2 text-white/28 transition-transform motion-reduce:transition-none',
+                          isExpanded && 'rotate-180 text-[#E8C45A]'
                         )}
                         aria-hidden="true"
                       />
@@ -1557,32 +1549,32 @@ export const KlasemenScreen = ({
                         id={detailId}
                         role="region"
                         aria-label={`${player.name} shame evidence`}
-                        className="standings-detail-reveal border-b border-black/[0.05] bg-[#FAFAFB] px-5 pb-3"
+                        className="standings-detail-reveal border-b border-white/[0.05] bg-white/[0.03] px-5 pb-3"
                       >
-                        <div className="rounded-[18px] border border-black/[0.055] bg-white p-3 shadow-[0_8px_22px_rgba(15,23,42,0.035)]">
+                        <div className="rounded-[18px] border border-white/[0.07] bg-white/[0.035] p-3">
                           <div className="grid grid-cols-4 gap-1.5">
-                            <OfficialDetailStat label="W" value={player.w} tone={player.w > player.l ? 'win' : 'default'} />
-                            <OfficialDetailStat label="L" value={player.l} tone={player.l > player.w ? 'loss' : 'default'} />
-                            <OfficialDetailStat label="D" value={player.d} />
-                            <OfficialDetailStat label="M" value={player.matches} />
+                            <OfficialDetailStat label="W" value={player.w} tone={player.w > player.l ? 'win' : 'default'} dark />
+                            <OfficialDetailStat label="L" value={player.l} tone={player.l > player.w ? 'loss' : 'default'} dark />
+                            <OfficialDetailStat label="D" value={player.d} dark />
+                            <OfficialDetailStat label="M" value={player.matches} dark />
                           </div>
-                          <p className="mt-3 text-[11.5px] font-semibold italic leading-snug text-ios-gray">
+                          <p className="mt-3 text-[11.5px] font-semibold italic leading-snug text-[#D8C792]">
                             “{player.roast}”
                           </p>
                           {whyReasons.length > 0 && (
-                            <div className="mt-3 rounded-[15px] border border-[#D4A017]/18 bg-[#FFFBEF] px-3 py-2.5">
+                            <div className="mt-3 rounded-[15px] border border-[#C9A14A]/20 bg-[#C9A14A]/[0.07] px-3 py-2.5">
                               <div className="flex items-center justify-between gap-2">
-                                <p className="text-[7.6px] font-black uppercase leading-none tracking-[0.16em] text-[#B7861F]">
+                                <p className="text-[7.6px] font-black uppercase leading-none tracking-[0.16em] text-[#E8C45A]">
                                   Why am I here?
                                 </p>
-                                <span className="rounded-full bg-white/70 px-2 py-1 text-[7px] font-black uppercase leading-none tracking-[0.1em] text-[#8A6A1F]/64">
+                                <span className="rounded-full bg-white/[0.08] px-2 py-1 text-[7px] font-black uppercase leading-none tracking-[0.1em] text-[#E8C45A]/60">
                                   Data-driven
                                 </span>
                               </div>
                               <div className="mt-2 space-y-1.5">
                                 {whyReasons.map((reason) => (
-                                  <div key={reason} className="flex gap-2 text-[10.5px] font-semibold leading-snug text-[#6F5B34]">
-                                    <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#D4A017]" aria-hidden="true" />
+                                  <div key={reason} className="flex gap-2 text-[10.5px] font-semibold leading-snug text-[#D8C792]">
+                                    <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#E8C45A]" aria-hidden="true" />
                                     <span>{reason}</span>
                                   </div>
                                 ))}
@@ -1596,12 +1588,12 @@ export const KlasemenScreen = ({
                                 className={cn(
                                   'min-w-0 rounded-[13px] border px-2 py-2',
                                   card.tone === 'danger'
-                                    ? 'border-red-200/70 bg-red-50 text-error'
+                                    ? 'border-red-400/25 bg-red-500/[0.10] text-[#F49E9E]'
                                     : card.tone === 'good'
-                                      ? 'border-emerald-200/70 bg-emerald-50 text-[#1E8E3E]'
+                                      ? 'border-emerald-400/25 bg-emerald-500/[0.10] text-[#8ED6A5]'
                                       : card.tone === 'gold'
-                                        ? 'border-[#D4A017]/24 bg-[#FFF7E0] text-[#8A6A1F]'
-                                        : 'border-black/[0.055] bg-[#FAFAFB] text-on-surface'
+                                        ? 'border-[#C9A14A]/26 bg-[#C9A14A]/[0.10] text-[#E8C45A]'
+                                        : 'border-white/[0.07] bg-white/[0.04] text-white/85'
                                 )}
                               >
                                 <p className="truncate text-[7px] font-black uppercase leading-none tracking-[0.12em] opacity-60">
@@ -1617,12 +1609,12 @@ export const KlasemenScreen = ({
                             ))}
                           </div>
                           {evidenceTimeline.length > 0 && (
-                            <div className="mt-3 rounded-[15px] border border-black/[0.055] bg-[#FAFAFB] p-2.5">
+                            <div className="mt-3 rounded-[15px] border border-white/[0.06] bg-white/[0.025] p-2.5">
                               <div className="flex items-center justify-between gap-3">
-                                <p className="text-[7.6px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/62">
+                                <p className="text-[7.6px] font-black uppercase leading-none tracking-[0.16em] text-white/45">
                                   Evidence timeline
                                 </p>
-                                <p className="text-[8px] font-bold leading-none text-ios-gray/46">
+                                <p className="text-[8px] font-bold leading-none text-white/35">
                                   {evidenceTimeline.length} rounds
                                 </p>
                               </div>
@@ -1631,37 +1623,37 @@ export const KlasemenScreen = ({
                                   <div
                                     key={`${player.id}-toxic-timeline-${item.roundId}-${item.scoreLabel}`}
                                     className={cn(
-                                      'min-w-[118px] max-w-[138px] snap-start rounded-[13px] border bg-white px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]',
+                                      'min-w-[118px] max-w-[138px] snap-start rounded-[13px] border bg-white/[0.04] px-2.5 py-2',
                                       item.tone === 'danger'
-                                        ? 'border-red-200/70 bg-red-50/72'
+                                        ? 'border-red-400/25 bg-red-500/[0.10]'
                                         : item.tone === 'good'
-                                          ? 'border-emerald-200/70 bg-emerald-50/72'
+                                          ? 'border-emerald-400/25 bg-emerald-500/[0.10]'
                                           : item.tone === 'gold'
-                                            ? 'border-[#D4A017]/24 bg-[#FFF7E0]'
-                                            : 'border-black/[0.05]'
+                                            ? 'border-[#C9A14A]/26 bg-[#C9A14A]/[0.10]'
+                                            : 'border-white/[0.06]'
                                     )}
                                   >
                                     <div className="flex items-center justify-between gap-1.5">
-                                      <span className="text-[7.5px] font-black uppercase leading-none tracking-[0.1em] text-ios-gray/58 tabular-nums">
+                                      <span className="text-[7.5px] font-black uppercase leading-none tracking-[0.1em] text-white/45 tabular-nums">
                                         R{item.roundId}
                                       </span>
-                                      <span className={cn('inline-flex min-w-[24px] justify-center rounded-full px-1.5 py-1 text-[7px] font-black uppercase leading-none', getRoundResultChipClass(item.resultLabel))}>
+                                      <span className={cn('inline-flex min-w-[24px] justify-center rounded-full px-1.5 py-1 text-[7px] font-black uppercase leading-none', getRoundResultChipClass(item.resultLabel, true))}>
                                         {item.resultLabel}
                                       </span>
                                     </div>
                                     <p className={cn(
                                       'mt-1.5 truncate text-[12px] font-black leading-tight tracking-[-0.01em]',
                                       item.tone === 'danger'
-                                        ? 'text-error'
+                                        ? 'text-[#F49E9E]'
                                         : item.tone === 'good'
-                                          ? 'text-[#1E7A38]'
+                                          ? 'text-[#8ED6A5]'
                                           : item.tone === 'gold'
-                                            ? 'text-[#8A6A1F]'
-                                            : 'text-on-surface'
+                                            ? 'text-[#E8C45A]'
+                                            : 'text-white/90'
                                     )}>
                                       {item.title}
                                     </p>
-                                    <p className="mt-1 truncate text-[8.5px] font-semibold leading-tight text-ios-gray/68">
+                                    <p className="mt-1 truncate text-[8.5px] font-semibold leading-tight text-white/48">
                                       {item.detail}
                                     </p>
                                   </div>
@@ -1670,9 +1662,9 @@ export const KlasemenScreen = ({
                             </div>
                           )}
                           {player.award && (
-                            <div className="mt-3 rounded-[14px] border border-[#D4A017]/18 bg-[#FFFBEF] px-3 py-2.5">
-                              <p className="text-[7.6px] font-black uppercase leading-none tracking-[0.16em] text-[#B7861F]">Award Reason</p>
-                              <p className="mt-1.5 text-[10.5px] font-semibold italic leading-snug text-[#7A6A4C]">
+                            <div className="mt-3 rounded-[14px] border border-[#C9A14A]/20 bg-[#C9A14A]/[0.07] px-3 py-2.5">
+                              <p className="text-[7.6px] font-black uppercase leading-none tracking-[0.16em] text-[#E8C45A]">Award Reason</p>
+                              <p className="mt-1.5 text-[10.5px] font-semibold italic leading-snug text-[#D8C792]">
                                 {player.award.note}
                               </p>
                             </div>
@@ -1684,10 +1676,10 @@ export const KlasemenScreen = ({
                                 className={cn(
                                   'rounded-full border px-2 py-1 text-[8px] font-black uppercase leading-none tracking-[0.06em]',
                                   chip.tone === 'danger'
-                                    ? 'border-red-200/75 bg-red-50 text-error'
+                                    ? 'border-red-400/25 bg-red-500/[0.12] text-[#F49E9E]'
                                     : chip.tone === 'good'
-                                      ? 'border-emerald-200/75 bg-emerald-50 text-[#1E8E3E]'
-                                      : 'border-black/[0.06] bg-ios-gray/[0.045] text-ios-gray/72'
+                                      ? 'border-emerald-400/25 bg-emerald-500/[0.12] text-[#8ED6A5]'
+                                      : 'border-white/[0.08] bg-white/[0.06] text-white/55'
                                 )}
                               >
                                 {chip.label}
@@ -1707,12 +1699,23 @@ export const KlasemenScreen = ({
         )}
 
         {isToxicTabActive && (
-          <div className="mx-auto mt-3 flex w-fit max-w-full items-center justify-center gap-1.5 rounded-full border border-[#D4A017]/18 bg-[#FFFBEF] px-3 py-2 text-center text-[#8A6A1F]">
-            <Flame size={12} strokeWidth={2.4} className="shrink-0" />
-            <p className="text-[9.5px] font-bold leading-snug">
-              All roasts are about this match only. Jangan baper, ya.
-            </p>
-          </div>
+          toxicStandings.isEmpty ? (
+            <div className="mx-auto mt-3 flex w-fit max-w-full items-center justify-center gap-1.5 rounded-full border border-[#D4A017]/18 bg-[#FFFBEF] px-3 py-2 text-center text-[#8A6A1F]">
+              <Flame size={12} strokeWidth={2.4} className="shrink-0" />
+              <p className="text-[9.5px] font-bold leading-snug">
+                All roasts are about this match only. Jangan baper, ya.
+              </p>
+            </div>
+          ) : (
+            <div className="-mx-6 border-b border-[#C9A14A]/35 bg-[#131008] px-6 pb-6 pt-2">
+              <div className="mx-auto flex w-fit max-w-full items-center justify-center gap-1.5 rounded-full border border-[#C9A14A]/22 bg-white/[0.05] px-3 py-2 text-center text-[#E8C45A]/90">
+                <Flame size={12} strokeWidth={2.4} className="shrink-0" />
+                <p className="text-[9.5px] font-bold leading-snug">
+                  All roasts are about this match only. Jangan baper, ya.
+                </p>
+              </div>
+            </div>
+          )
         )}
 
         <div className={cn('pb-8', isToxicTabActive ? 'pt-2' : 'pt-6')} />
@@ -1825,20 +1828,23 @@ const RankMovementBadge = ({
 }) => {
   if (!movement) return null;
 
+  // Mode toxic tampil di atas panggung gelap (#131008), jadi butuh palet gelap.
   const isToxic = mode === 'toxic';
   const badgeClass = movement.kind === 'up'
     ? isToxic
-      ? 'border-[#D4A017]/34 bg-[#FFF7E0] text-[#8A6A1F]'
+      ? 'border-[#C9A14A]/30 bg-[#C9A14A]/[0.12] text-[#E8C45A]'
       : 'border-emerald-200/75 bg-emerald-50 text-[#1E7A38]'
     : movement.kind === 'down'
       ? isToxic
-        ? 'border-emerald-200/75 bg-emerald-50 text-[#1E7A38]'
+        ? 'border-emerald-400/25 bg-emerald-500/[0.12] text-[#8ED6A5]'
         : 'border-red-200/75 bg-red-50 text-error'
       : movement.kind === 'new'
         ? isToxic
-          ? 'border-[#D4A017]/24 bg-white/72 text-[#8A6A1F]'
+          ? 'border-white/[0.10] bg-white/[0.07] text-white/60'
           : 'border-primary/14 bg-primary/[0.07] text-primary'
-        : 'border-black/[0.055] bg-ios-gray/[0.045] text-ios-gray/68';
+        : isToxic
+          ? 'border-white/[0.10] bg-white/[0.06] text-white/55'
+          : 'border-black/[0.055] bg-ios-gray/[0.045] text-ios-gray/68';
 
   return (
     <span
@@ -1923,10 +1929,14 @@ const ToxicPodiumColumn = ({
 }) => {
   if (!player) return null;
 
+  // Mahkota parodi seremoni cupu: raja dapat mahkota beneran,
+  // runner-up dapat topi miring, peringkat 3 dapat sandal jepit.
   const podiumCopy = {
     1: {
       badge: 'EMAS AIR MATA',
       quote: 'Podium tertinggi, pencapaian terendah.',
+      crown: '👑',
+      crownClass: 'right-[-9px] top-[-12px] rotate-[22deg] text-[17px]',
       avatarClass: 'h-10 w-10 border-[2px] border-[#E8C45A] bg-[#2A2415] text-[#E8C45A]',
       nameClass: 'text-[12px] font-extrabold text-white',
       labelClass: 'text-[#E8C45A]',
@@ -1935,6 +1945,8 @@ const ToxicPodiumColumn = ({
     2: {
       badge: 'PERAK NYARIS RAJA',
       quote: 'Selangkah lagi takhta. Untungnya gagal.',
+      crown: '🧢',
+      crownClass: 'left-[-6px] top-[-7px] rotate-[-24deg] text-[13px] -scale-x-100',
       avatarClass: 'h-9 w-9 border-white/30 bg-[#2C2C2E] text-white',
       nameClass: 'text-[11.5px] font-bold text-white',
       labelClass: 'text-white/55',
@@ -1943,6 +1955,8 @@ const ToxicPodiumColumn = ({
     3: {
       badge: 'PERUNGGU PENGHIBUR',
       quote: 'Salah arah, tapi tetap naik podium.',
+      crown: '🩴',
+      crownClass: 'right-[-6px] top-[-8px] rotate-[30deg] text-[13px]',
       avatarClass: 'h-9 w-9 border-[#A77B33]/60 bg-[#241C0F] text-[#C99C5F]',
       nameClass: 'text-[11.5px] font-bold text-white',
       labelClass: 'text-[#C99C5F]',
@@ -1957,12 +1971,10 @@ const ToxicPodiumColumn = ({
         <ToxicAvatar
           player={player}
           partner={player.isTeamRow ? { avatar: player.partnerAvatar, initials: player.partnerInitials, name: player.partnerName } : null}
-          partnerRingClassName="ring-[#141414]"
+          partnerRingClassName="ring-[#131008]"
           className={cn('text-[12px]', podiumCopy.avatarClass)}
         />
-        {place === 1 && (
-          <span className="absolute right-[-9px] top-[-12px] rotate-[22deg] text-[17px] leading-none" aria-hidden="true">👑</span>
-        )}
+        <span className={cn('absolute leading-none', podiumCopy.crownClass)} aria-hidden="true">{podiumCopy.crown}</span>
       </div>
       <p className={cn('mt-1.5 max-w-full truncate leading-tight', podiumCopy.nameClass)}>
         {getShortPlayerName(player.name)}
@@ -1991,7 +2003,7 @@ const formatToxicPodiumDiff = (value: number) => (value > 0 ? `+${value}` : Stri
 const getToxicAwardChipClass = (isGold?: boolean) => (
   isGold
     ? 'border-[#d4a017]/55 bg-[linear-gradient(135deg,#fbe7a2,#e3b341)] text-[#6b4e00]'
-    : 'border-ios-gray/20 bg-ios-gray/10 text-ios-gray'
+    : 'border-white/[0.10] bg-white/[0.07] text-white/62'
 );
 
 const formatToxicPodiumRecord = (player: ToxicStandingRow) => `${player.w}W-${player.l}L`;
@@ -2381,16 +2393,22 @@ const OfficialDetailStat = ({
   label,
   value,
   tone = 'default',
+  dark = false,
 }: {
   label: string;
   value: string | number;
   tone?: 'default' | 'win' | 'loss';
+  dark?: boolean;
 }) => (
-  <div className="rounded-[12px] bg-ios-gray/[0.04] px-2.5 py-2 text-center">
-    <p className="text-[8px] font-black uppercase leading-none tracking-[0.14em] text-ios-gray/58">{label}</p>
+  <div className={cn('rounded-[12px] px-2.5 py-2 text-center', dark ? 'bg-white/[0.05]' : 'bg-ios-gray/[0.04]')}>
+    <p className={cn('text-[8px] font-black uppercase leading-none tracking-[0.14em]', dark ? 'text-white/45' : 'text-ios-gray/58')}>{label}</p>
     <p className={cn(
       'mt-1.5 text-[17px] font-extrabold leading-none tabular-nums',
-      tone === 'win' ? 'text-[#1E8E3E]' : tone === 'loss' ? 'text-error' : 'text-on-surface'
+      tone === 'win'
+        ? (dark ? 'text-[#8ED6A5]' : 'text-[#1E8E3E]')
+        : tone === 'loss'
+          ? (dark ? 'text-[#F49E9E]' : 'text-error')
+          : (dark ? 'text-white' : 'text-on-surface')
     )}>
       {value}
     </p>
@@ -2556,7 +2574,14 @@ const buildOfficialRoundHistory = (rounds: Round[], playerId: string, omitTeamma
   return history.reverse();
 };
 
-const getRoundResultChipClass = (resultLabel: OfficialRoundHistoryItem['resultLabel']) => {
+const getRoundResultChipClass = (resultLabel: OfficialRoundHistoryItem['resultLabel'], dark = false) => {
+  if (dark) {
+    if (resultLabel === 'W') return 'bg-emerald-500/[0.16] text-[#8ED6A5]';
+    if (resultLabel === 'L') return 'bg-red-500/[0.16] text-[#F49E9E]';
+    if (resultLabel === 'D') return 'bg-white/[0.08] text-white/60';
+    if (resultLabel === 'BYE') return 'bg-[#C9A14A]/[0.16] text-[#E8C45A]';
+    return 'bg-blue-500/[0.18] text-[#9DBEFF]';
+  }
   if (resultLabel === 'W') return 'bg-[#E7F4EA] text-[#1E7A38]';
   if (resultLabel === 'L') return 'bg-[#FDECEC] text-[#C0353C]';
   if (resultLabel === 'D') return 'bg-[#F2F2F4] text-ios-gray';
@@ -2573,15 +2598,6 @@ const formatElapsedForMeta = (value: string) => {
   if (parts.length === 2 && parts.every((part) => Number.isFinite(part))) {
     const [minutes] = parts;
     return `${minutes}M`;
-  }
-  return value;
-};
-
-const formatElapsedForStat = (value: string) => {
-  const parts = value.split(':').map((part) => Number.parseInt(part, 10));
-  if (parts.length === 3 && parts.every((part) => Number.isFinite(part))) {
-    const [hours, minutes] = parts;
-    return `${hours}:${String(minutes).padStart(2, '0')}`;
   }
   return value;
 };

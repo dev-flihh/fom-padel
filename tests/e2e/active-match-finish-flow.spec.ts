@@ -36,13 +36,13 @@ test.describe('Active Match Finish Flow', () => {
     await page.goto('/app?e2e=toxic-active-ticker');
 
     await expect(page.getByRole('heading', { name: 'E2E Toxic Ticker' })).toBeVisible();
-    await expect(page.getByText('Round 2 of 3')).toBeVisible();
+    await expect(page.getByText('Round 2/3')).toBeVisible();
 
     await setVisibleScore(page, '6', '0');
     await expect(page.getByRole('button', { name: 'Next Round' })).toBeEnabled();
     await page.getByRole('button', { name: 'Next Round' }).click();
 
-    await expect(page.getByText('Round 3 of 3')).toBeVisible();
+    await expect(page.getByText('Round 3/3')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Finish Match' })).toBeDisabled();
 
     await setVisibleScore(page, '1', '5');

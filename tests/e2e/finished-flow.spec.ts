@@ -30,7 +30,7 @@ test.describe('Finished Tournament Flow', () => {
 
     await expect(page.getByText('There are no active matches right now.')).toHaveCount(0);
     await expect(page.getByText('Ended')).toBeVisible();
-    await expect(page.getByText('Round 3 of 3')).toBeVisible();
+    await expect(page.getByText('3 rounds', { exact: false })).toBeVisible();
 
     await page.goBack();
 

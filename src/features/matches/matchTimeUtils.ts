@@ -11,6 +11,15 @@ export const formatDurationFromMs = (elapsedMs: number) => {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
+export const formatElapsedForStat = (value: string) => {
+  const parts = value.split(':').map((part) => Number.parseInt(part, 10));
+  if (parts.length === 3 && parts.every((part) => Number.isFinite(part))) {
+    const [hours, minutes] = parts;
+    return `${hours}:${String(minutes).padStart(2, '0')}`;
+  }
+  return value;
+};
+
 export const parseDurationToMs = (duration?: string) => {
   if (!duration) return null;
   const parts = duration.split(':').map((part) => Number.parseInt(part, 10));
