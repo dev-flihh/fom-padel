@@ -1503,6 +1503,7 @@ export const KlasemenScreen = ({
                       <ToxicAvatar
                         player={player}
                         partner={player.isTeamRow ? { avatar: player.partnerAvatar, initials: player.partnerInitials, name: player.partnerName } : null}
+                        partnerRingClassName="ring-[#131008]"
                         className={cn(
                           'h-10 w-10 text-[13px]',
                           isKing
@@ -1910,36 +1911,32 @@ const ToxicAvatar = ({
   player: ToxicAvatarPlayer;
   className?: string;
   initialsClassName?: string;
-  // Mode fix partner: overlay wajah partner di pojok agar baris terbaca sebagai tim.
+  // Mode fix partner: kedua wajah tampil sejajar dan sama besar (bukan badge
+  // kecil di pojok) supaya tim terbaca sebagai dua pemain setara.
   partner?: { avatar?: string; initials?: string; name?: string } | null;
   partnerRingClassName?: string;
 }) => {
-  const avatar = (
+  const renderFace = (
+    face: { avatar?: string; initials?: string; name?: string },
+    extraClassName?: string
+  ) => (
     <div className={cn(
       'flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-ios-gray/10 bg-ios-gray/10 font-bold leading-none',
-      className
+      className,
+      extraClassName
     )}>
-      {player.avatar ? (
-        <img className="h-full w-full object-cover" src={player.avatar} alt={player.name} referrerPolicy="no-referrer" />
+      {face.avatar ? (
+        <img className="h-full w-full object-cover" src={face.avatar} alt={face.name || ''} referrerPolicy="no-referrer" />
       ) : (
-        <span className={initialsClassName}>{player.initials.slice(0, 1)}</span>
+        <span className={initialsClassName}>{(face.initials || '?').slice(0, 1)}</span>
       )}
     </div>
   );
-  if (!partner) return avatar;
+  if (!partner) return renderFace(player);
   return (
-    <div className="relative shrink-0">
-      {avatar}
-      <div className={cn(
-        'absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center overflow-hidden rounded-full bg-ios-gray/20 text-[8px] font-black leading-none ring-2',
-        partnerRingClassName
-      )}>
-        {partner.avatar ? (
-          <img className="h-full w-full object-cover" src={partner.avatar} alt={partner.name || ''} referrerPolicy="no-referrer" />
-        ) : (
-          <span>{(partner.initials || '?').slice(0, 1)}</span>
-        )}
-      </div>
+    <div className="flex shrink-0 items-center -space-x-2">
+      {renderFace(player)}
+      {renderFace(partner, cn('ring-2', partnerRingClassName))}
     </div>
   );
 };
