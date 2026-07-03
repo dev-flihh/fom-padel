@@ -285,6 +285,17 @@ export const buildRewindData = ({
   const toxicOn = Boolean(tournament.toxicModeEnabled) && !toxicStandings.isEmpty && !toxicStandings.isPeacefulTie;
   const aggregate: MatchNightAggregate = buildMatchNightAggregate(tournament);
   const playersById = new Map(sortedPlayers.map((player) => [player.id, player]));
+
+  // Mode fixed: satu baris peringkat = satu tim (2 pemain). Jumlah pemain
+  // sebenarnya harus memekar baris tim jadi anchor + partner — kalau tidak,
+  // "Players" di cover ikut jadi jumlah tim (5 tim → keliru tampil 5 pemain,
+  // seharusnya 10). Mode americano: baris = pemain, jadi hasilnya tetap sama.
+  const distinctPlayerIds = new Set<string>();
+  sortedPlayers.forEach((row) => {
+    distinctPlayerIds.add(row.id);
+    if (row.isTeamRow && row.partnerId) distinctPlayerIds.add(row.partnerId);
+  });
+  const totalPlayerCount = distinctPlayerIds.size;
   const { pairs, evidence, completedMatches } = scanRounds(tournament, playersById);
   const rankTimelines = buildRankTimelines(tournament, sortedPlayers);
   const glowDown = findGlowDownAward(rankTimelines, sortedPlayers);
@@ -340,7 +351,7 @@ export const buildRewindData = ({
   push('duration_gt_3h', aggregate.durationMinutes > 180);
   push('ended_after_22', endedAt > 0 && new Date(endedAt).getHours() >= 22);
   push('weekend_morning', startedAt > 0 && [0, 6].includes(matchDate.getDay()) && matchDate.getHours() < 12);
-  push('player_count_gte_12', sortedPlayers.length >= 12);
+  push('player_count_gte_12', totalPlayerCount >= 12);
   push('total_points_gt_250', aggregate.totalPoints > 250);
   push('rounds_gte_12', aggregate.roundCount >= 12);
   push('shutout_win', Boolean(aggregate.biggestWin && aggregate.biggestWin.score.endsWith('-0')));
@@ -396,10 +407,10 @@ export const buildRewindData = ({
     venue: tournament.venueName || '',
     city: tournament.location || '',
     format: tournament.format || '',
-    playerCount: sortedPlayers.length,
+    playerCount: totalPlayerCount,
     durationLabel,
     subline: copy.pick('cover', 'subline', {
-      playerCount: sortedPlayers.length,
+      playerCount: totalPlayerCount,
       duration: durationLabel,
       endTime: endTimeLabel,
     }),
@@ -626,7 +637,7 @@ export const buildRewindData = ({
         recipientName: recipients.map((p) => p.name).join(' & ') || 'Pemain Cupu',
         bodyCopy: `adalah penerima ${award.label} pada mabar ${tournament.name || 'FOM Play'}${dateLabel ? `, ${dateLabel}` : ''}${primaryRow ? `, dengan rekor ${recordLabel} dan DIFF ${formatDiff(primaryRow.pointsDiff)}` : ''}.`,
         note: award.note,
-        witnessCount: Math.max(1, sortedPlayers.length - recipients.length),
+        witnessCount: Math.max(1, totalPlayerCount - recipients.length),
       });
     });
   }
