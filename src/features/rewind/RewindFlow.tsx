@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent, type TouchEvent } from 'react';
-import { toBlob as htmlToImageBlob } from 'html-to-image';
+import { toCanvas as htmlToImageCanvas } from 'html-to-image';
 import QRCode from 'qrcode';
 import { Download, MoreHorizontal, RefreshCw, Share2, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -35,9 +35,8 @@ export type RewindResult = {
 
 const MAX_PHOTOS = 10;
 const EXPORT_VIEW = { width: 360, height: 640 };
-const EXPORT_CANVAS = { width: 1080, height: 1920 };
 
-type ExportOptions = Parameters<typeof htmlToImageBlob>[1];
+type ExportOptions = Parameters<typeof htmlToImageCanvas>[1];
 
 // iOS Safari / WebKit rasterizes html-to-image's <foreignObject> SVG *before*
 // the embedded images (gallery photos as big data URLs, remote avatars) finish
@@ -55,10 +54,17 @@ const isWebkit = (() => {
   return isIOS || isSafari;
 })();
 
+// iOS Safari also has a hard *total* canvas-memory budget: when the tab blows
+// past it, Safari kills and reloads the page (the "reload to homepage near the
+// end of generate" crash). Two mitigations here:
+//   1. Export at 2× (720×1280) on WebKit instead of 3× — still crisp for IG
+//      stories at 44% of the pixel memory.
+//   2. Free every canvas backing store deterministically (Safari only releases
+//      it on GC, unless dimensions are zeroed) — see exportNodeToBlob.
+const EXPORT_CANVAS = isWebkit ? { width: 720, height: 1280 } : { width: 1080, height: 1920 };
+
 // Warm-up passes only need to force WebKit to fetch+decode the embedded
-// images — render them at a tiny canvas so we don't stack full-res 1080×1920
-// canvases (~8MB each). iOS Safari has a hard canvas-memory budget; full-size
-// multi-pass across ~16 slides blows past it and Safari kills/reloads the tab.
+// images — render them at a tiny canvas, not full-res.
 const WARMUP_PASSES = isWebkit ? 2 : 0;
 const WARMUP_CANVAS = { width: 36, height: 64 };
 
@@ -66,23 +72,41 @@ const waitFrames = () => new Promise<void>((resolve) => (
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
 ));
 
+// Rasterize once and release the canvas immediately: extract the blob, then
+// zero the canvas dimensions so Safari frees the backing store without
+// waiting for GC (the classic iOS canvas-leak workaround).
+const renderPassToBlob = async (
+  node: HTMLElement,
+  options: ExportOptions,
+  wantBlob: boolean,
+): Promise<Blob | null> => {
+  const canvas = await htmlToImageCanvas(node, options);
+  try {
+    if (!wantBlob) return null;
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+};
+
 // Render the node to a blob. On WebKit, run cheap warm-up renders first so
 // every embedded image is decoded by the time the real (full-res) pass runs.
 const exportNodeToBlob = async (node: HTMLElement, options: ExportOptions): Promise<Blob | null> => {
   for (let pass = 0; pass < WARMUP_PASSES; pass += 1) {
     try {
-      await htmlToImageBlob(node, {
+      await renderPassToBlob(node, {
         ...options,
         canvasWidth: WARMUP_CANVAS.width,
         canvasHeight: WARMUP_CANVAS.height,
-      });
+      }, false);
     } catch {
       // Warm-up is best-effort; the final pass decides success.
     }
     // Yield a couple frames so Safari can settle/GC between rasterizations.
     await waitFrames();
   }
-  return htmlToImageBlob(node, options);
+  return renderPassToBlob(node, options, true);
 };
 
 const fileSafe = (value: string) => (
@@ -312,6 +336,9 @@ export const RewindFlow = ({
           blob,
           url: URL.createObjectURL(blob),
         });
+        // Breathe between slides so Safari can reclaim render memory before
+        // the next rasterization instead of accumulating across ~16 slides.
+        await waitFrames();
       } catch (err) {
         // FR-6.4: one failed slide is skipped, the rest continue.
         console.error(`Rewind slide failed (${slidePayloads[index].type}):`, err);
