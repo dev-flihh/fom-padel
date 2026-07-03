@@ -317,6 +317,9 @@ export const KlasemenScreen = ({
       toxicCopyConfig,
     })
   ), [hasCountableStandingScore, isTournamentEnded, rankedStandings, tournament, toxicCopyConfig]);
+  // Tab Shame memakai satu panggung gelap dari bawah tab bar sampai dasar
+  // halaman; state kosong tetap terang.
+  const isToxicDarkTheme = isToxicTabActive && !toxicStandings.isEmpty;
   useEffect(() => {
     setActiveAwardCardIndex(0);
   }, [toxicStandings.awardCards.length, tournament.id]);
@@ -495,9 +498,13 @@ export const KlasemenScreen = ({
         className="standings-main relative z-10 mx-auto min-h-screen w-full max-w-md bg-white px-6"
         style={{
           paddingTop: 'calc(var(--app-safe-top, 0px) + 24px)',
-          paddingBottom: showSharedTrialCta
-            ? 'calc(var(--app-safe-bottom, 0px) + 216px)'
-            : 'calc(var(--app-safe-bottom, 0px) + 154px)'
+          // Saat panggung gelap aktif, clearance bawah dipindah ke padding
+          // dalam blok gelap penutup supaya tidak ada sisa putih di dasar.
+          paddingBottom: isToxicDarkTheme
+            ? '0px'
+            : showSharedTrialCta
+              ? 'calc(var(--app-safe-bottom, 0px) + 216px)'
+              : 'calc(var(--app-safe-bottom, 0px) + 154px)'
         }}
       >
         {isSharedViewer && (
@@ -604,11 +611,16 @@ export const KlasemenScreen = ({
         </section>
 
         {isTournamentEnded && (!isSharedViewer || hasRemoteRewind) && (
-          <section className="pt-3">
+          <section className={isToxicDarkTheme ? '-mx-6 bg-[#131008]' : 'pt-3'}>
             <button
               type="button"
               onClick={() => { setRewindEntrySource('banner'); setIsRewindOpen(true); }}
-              className="tap-target relative flex w-full items-center gap-3.5 overflow-hidden rounded-[20px] bg-[#111111] px-4 py-4 text-left shadow-[0_8px_22px_rgba(15,23,42,0.10)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100"
+              className={cn(
+                'tap-target relative flex w-full items-center gap-3.5 overflow-hidden text-left',
+                isToxicDarkTheme
+                  ? 'border-b border-[#C9A14A]/14 px-5 py-4 transition-colors active:bg-white/[0.03]'
+                  : 'rounded-[20px] bg-[#111111] px-4 py-4 shadow-[0_8px_22px_rgba(15,23,42,0.10)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100'
+              )}
               aria-label={rewindResult || hasRemoteRewind ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
             >
               <span className="pointer-events-none absolute -right-8 -top-8 h-[110px] w-[110px] rounded-full bg-[rgba(230,94,20,0.25)]" style={{ filter: 'blur(24px)' }} />
@@ -626,7 +638,11 @@ export const KlasemenScreen = ({
         )}
 
         {personalStandingShortcut && (
-          <section className="flex flex-col gap-2 pt-3">
+          <section className={cn(
+            personalStandingShortcut.tone === 'toxic'
+              ? '-mx-6 bg-[#131008]'
+              : 'flex flex-col gap-2 pt-3'
+          )}>
             <button
               type="button"
               onClick={() => {
@@ -639,17 +655,17 @@ export const KlasemenScreen = ({
                 }
               }}
               className={cn(
-                'tap-target flex w-full items-center gap-2.5 rounded-[18px] border px-3 py-2.5 text-left shadow-[0_4px_12px_rgba(15,23,42,0.04)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100',
+                'tap-target flex w-full items-center gap-2.5 text-left',
                 personalStandingShortcut.tone === 'toxic'
-                  ? 'border-[#D4A017]/28 bg-[#FFFBEF] text-[#8A6A1F]'
-                  : 'border-primary/14 bg-[#FFF8F3] text-primary'
+                  ? 'border-b border-[#C9A14A]/14 px-5 py-3 text-[#E8C45A] transition-colors active:bg-white/[0.03]'
+                  : 'rounded-[18px] border border-primary/14 bg-[#FFF8F3] px-3 py-2.5 text-primary shadow-[0_4px_12px_rgba(15,23,42,0.04)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100'
               )}
               aria-label={`Jump to ${personalStandingShortcut.eyebrow} ${personalStandingShortcut.value}`}
             >
               <span className={cn(
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
                 personalStandingShortcut.tone === 'toxic'
-                  ? 'bg-[#151008] text-[#F4D77B]'
+                  ? 'border border-[#C9A14A]/40 bg-[#2A2415] text-[#F4D77B]'
                   : 'bg-primary text-white'
               )}>
                 <UserRound size={15} strokeWidth={2.35} />
@@ -657,15 +673,21 @@ export const KlasemenScreen = ({
               <span className="min-w-0 flex-1">
                 <span className={cn(
                   'block text-[7.5px] font-black uppercase leading-none tracking-[0.16em]',
-                  personalStandingShortcut.tone === 'toxic' ? 'text-[#B7861F]/78' : 'text-primary/72'
+                  personalStandingShortcut.tone === 'toxic' ? 'text-[#C9A14A]' : 'text-primary/72'
                 )}>
                   {personalStandingShortcut.eyebrow}
                 </span>
                 <span className="mt-1 flex min-w-0 items-baseline gap-2">
-                  <span className="text-[16px] font-black leading-none tracking-[-0.02em] tabular-nums text-on-surface">
+                  <span className={cn(
+                    'text-[16px] font-black leading-none tracking-[-0.02em] tabular-nums',
+                    personalStandingShortcut.tone === 'toxic' ? 'text-white' : 'text-on-surface'
+                  )}>
                     {personalStandingShortcut.value}
                   </span>
-                  <span className="min-w-0 truncate text-[10.5px] font-bold leading-none text-ios-gray/72">
+                  <span className={cn(
+                    'min-w-0 truncate text-[10.5px] font-bold leading-none',
+                    personalStandingShortcut.tone === 'toxic' ? 'text-white/50' : 'text-ios-gray/72'
+                  )}>
                     {personalStandingShortcut.detail}
                   </span>
                 </span>
@@ -673,7 +695,7 @@ export const KlasemenScreen = ({
               <span className={cn(
                 'shrink-0 rounded-full border px-2 py-1 text-[8px] font-black uppercase leading-none tracking-[0.08em]',
                 personalStandingShortcut.tone === 'toxic'
-                  ? 'border-[#D4A017]/28 bg-white/64 text-[#8A6A1F]'
+                  ? 'border-[#C9A14A]/28 bg-white/[0.06] text-[#E8C45A]'
                   : 'border-primary/12 bg-white text-primary'
               )}>
                 {personalStandingShortcut.metric}
@@ -712,7 +734,7 @@ export const KlasemenScreen = ({
         {isToxicTabActive && (
           <section
             id={STANDINGS_PANEL_TOXIC_ID}
-            className="standings-tab-panel-in -mx-6 pt-3"
+            className={cn('standings-tab-panel-in -mx-6', isToxicDarkTheme ? 'bg-[#131008]' : 'pt-3')}
             role="region"
             aria-labelledby={STANDINGS_TAB_TOXIC_ID}
           >
@@ -748,7 +770,7 @@ export const KlasemenScreen = ({
                 </p>
               </div>
             ) : (
-              <div className="relative overflow-hidden border-t border-[#C9A14A]/35 bg-[#131008] shadow-[inset_0_1px_0_rgba(255,215,128,0.16)]">
+              <div className="relative overflow-hidden bg-[#131008]">
                 {toxicStandings.tickerMessage && (
                   <div
                     className="toxic-ticker relative isolate overflow-hidden border-b border-[#C9A14A]/16 px-5 py-3.5 text-[#E8C45A]"
@@ -1431,7 +1453,7 @@ export const KlasemenScreen = ({
                 Pts / Diff
               </div>
             </div>
-            <div>
+            <div className="[&>button:last-of-type]:border-b-transparent">
               {toxicStandings.rows.map((player, i) => {
                 const isKing = i === 0;
                 const isOfficialChampion = Boolean(player.isChampion);
@@ -1707,9 +1729,12 @@ export const KlasemenScreen = ({
               </p>
             </div>
           ) : (
-            <div className="-mx-6 border-b border-[#C9A14A]/35 bg-[#131008] px-6 pb-6 pt-2">
-              <div className="mx-auto flex w-fit max-w-full items-center justify-center gap-1.5 rounded-full border border-[#C9A14A]/22 bg-white/[0.05] px-3 py-2 text-center text-[#E8C45A]/90">
-                <Flame size={12} strokeWidth={2.4} className="shrink-0" />
+            <div
+              className="-mx-6 bg-[#131008] px-6 pt-1"
+              style={{ paddingBottom: `calc(var(--app-safe-bottom, 0px) + ${showSharedTrialCta ? '196px' : '104px'})` }}
+            >
+              <div className="mx-auto flex w-fit max-w-full items-center justify-center gap-1.5 px-3 py-2 text-center text-[#C9A14A]/72">
+                <Flame size={11} strokeWidth={2.4} className="shrink-0" />
                 <p className="text-[9.5px] font-bold leading-snug">
                   All roasts are about this match only. Jangan baper, ya.
                 </p>
@@ -1718,11 +1743,16 @@ export const KlasemenScreen = ({
           )
         )}
 
-        <div className={cn('pb-8', isToxicTabActive ? 'pt-2' : 'pt-6')} />
+        {!isToxicDarkTheme && <div className={cn('pb-8', isToxicTabActive ? 'pt-2' : 'pt-6')} />}
       </main>
 
       <div
-        className="pointer-events-none fixed inset-x-0 bottom-0 z-[93] h-[96px] bg-[linear-gradient(180deg,rgba(255,255,255,0)_0%,rgba(255,255,255,0.58)_58%,#FFFFFF_100%)]"
+        className={cn(
+          'pointer-events-none fixed inset-x-0 bottom-0 z-[93] h-[96px]',
+          isToxicDarkTheme
+            ? 'bg-[linear-gradient(180deg,rgba(19,16,8,0)_0%,rgba(19,16,8,0.58)_58%,#131008_100%)]'
+            : 'bg-[linear-gradient(180deg,rgba(255,255,255,0)_0%,rgba(255,255,255,0.58)_58%,#FFFFFF_100%)]'
+        )}
         aria-hidden="true"
       />
       <nav
