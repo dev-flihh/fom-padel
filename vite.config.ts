@@ -42,7 +42,7 @@ export default defineConfig(({mode}) => {
           // Keep Firebase Auth reserved handler routes and the app shell out of
           // SW navigation fallback. Firebase Hosting rewrites /app to archive.html;
           // if Workbox handles it, users can get the static landing index instead.
-          navigateFallbackDenylist: [/^\/__\//, /^\/app(?:\/|$)/]
+          navigateFallbackDenylist: [/^\/__\//, /^\/app(?:\/|$)/, /^\/m(?:\/|$)/]
         },
         manifest: {
           name: 'FOM Play',

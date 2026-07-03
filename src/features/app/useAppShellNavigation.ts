@@ -1,5 +1,5 @@
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import { isAppShellQuery } from '../../appBootstrap';
+import { isAppShellQuery, parseSharedMatchPath } from '../../appBootstrap';
 import { resolveTopLevelRoute, type TopLevelRoute } from '../../marketing';
 import type { Screen } from '../../types';
 
@@ -77,7 +77,8 @@ export const useAppShellNavigation = ({
         window.history.replaceState({ __fomPlay: true, screen: 'dashboard' }, '');
       } else {
         isHandlingPopStateRef.current = true;
-        const fallbackScreen = params.get('shared') ? sharedTargetScreen : 'login';
+        const isSharedLocation = Boolean(params.get('shared')) || Boolean(parseSharedMatchPath(window.location.pathname));
+        const fallbackScreen = isSharedLocation ? sharedTargetScreen : 'login';
         setScreen(fallbackScreen);
         window.history.replaceState({ __fomPlay: true, screen: fallbackScreen }, '');
       }

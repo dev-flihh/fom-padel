@@ -30,8 +30,8 @@ test.describe('Share Flow', () => {
 
     const copiedTexts = await page.evaluate(() => (window as any).__copiedTexts as string[]);
     const lastCopiedText = copiedTexts[copiedTexts.length - 1] || '';
-    expect(lastCopiedText).toContain('/app?shared=e2eshare');
-    expect(lastCopiedText).not.toContain('view=klasemen');
+    expect(lastCopiedText).toContain('/m/e2eshare');
+    expect(lastCopiedText).not.toContain('klasemen');
   });
 
   test('standings share copies the standings link and shows toast feedback', async ({ page }) => {
@@ -46,7 +46,7 @@ test.describe('Share Flow', () => {
     await expect(page.getByText('Copied Link')).toBeVisible();
     const copiedTexts = await page.evaluate(() => (window as any).__copiedTexts as string[]);
     const lastCopiedText = copiedTexts[copiedTexts.length - 1] || '';
-    expect(lastCopiedText).toContain('/app?shared=e2eshare&view=klasemen');
+    expect(lastCopiedText).toContain('/m/e2eshare/klasemen');
   });
 
   test('guest shared active view shows the FOM Play trial CTA', async ({ page }) => {

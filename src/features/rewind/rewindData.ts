@@ -392,9 +392,9 @@ export const buildRewindData = ({
   const coverPhoto = photos.find((photo) => photo.isCover) || photos[0];
   const nonCoverPhotos = photos.filter((photo) => photo !== coverPhoto);
   const shortId = String(shareId || tournament.id || '').slice(0, 8) || 'match';
-  const shortLink = `fomplay.asia/app?shared=${shortId}`;
+  const shortLink = `fomplay.asia/m/${shortId}`;
   const shareUrl = shareId
-    ? `${typeof window !== 'undefined' ? window.location.origin : 'https://fomplay.asia'}/app?shared=${shareId}`
+    ? `${typeof window !== 'undefined' ? window.location.origin : 'https://fomplay.asia'}/m/${shareId}`
     : 'https://fomplay.asia/app';
 
   const slides: RewindSlide[] = [];

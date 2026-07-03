@@ -148,6 +148,10 @@
       {
         "source": "/app/**",
         "destination": "/archive.html"
+      },
+      {
+        "source": "/m/**",
+        "destination": "/archive.html"
       }
     ]
   },

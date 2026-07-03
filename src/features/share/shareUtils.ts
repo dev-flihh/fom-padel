@@ -67,18 +67,23 @@ const getShareBaseUrl = () => {
       ? envPublicUrl
       : `https://${envPublicUrl}`;
     const shareBaseUrl = new URL(normalizedPublicUrl);
-    shareBaseUrl.pathname = '/app';
+    shareBaseUrl.pathname = '/';
+    shareBaseUrl.search = '';
+    shareBaseUrl.hash = '';
     return shareBaseUrl.toString();
   }
-  return `${window.location.origin}/app`;
+  return `${window.location.origin}/`;
 };
 
+// Friendly, human-readable share links: /m/<id> for the live match and
+// /m/<id>/klasemen for standings. Old ?shared= links keep resolving via
+// parseSharedMatchPath's query-string fallback, so this is safe to switch.
 export const buildShareUrl = (shareId: string, view: 'active' | 'klasemen') => {
   try {
     const shareUrl = new URL(getShareBaseUrl());
-    shareUrl.searchParams.set('shared', shareId);
-    if (view === 'klasemen') shareUrl.searchParams.set('view', 'klasemen');
-    else shareUrl.searchParams.delete('view');
+    shareUrl.pathname = `/m/${encodeURIComponent(shareId)}${view === 'klasemen' ? '/klasemen' : ''}`;
+    shareUrl.search = '';
+    shareUrl.hash = '';
 
     const isLocalHost = ['localhost', '127.0.0.1'].includes(shareUrl.hostname);
     const envNetworkHost = ((import.meta as any).env?.VITE_SHARE_NETWORK_HOST as string | undefined)?.trim() || '';
@@ -97,6 +102,6 @@ export const buildShareUrl = (shareId: string, view: 'active' | 'klasemen') => {
 
     return shareUrl.toString();
   } catch {
-    return `${window.location.origin}/app?shared=${encodeURIComponent(shareId)}${view === 'klasemen' ? '&view=klasemen' : ''}`;
+    return `${window.location.origin}/m/${encodeURIComponent(shareId)}${view === 'klasemen' ? '/klasemen' : ''}`;
   }
 };

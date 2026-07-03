@@ -45,7 +45,11 @@ type UseShareActionsParams = {
   serverTimestamp: () => unknown;
 };
 
-const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> => {
+type SharePayload = { url: string; title?: string; text?: string };
+
+const tryCopyToClipboard = async (payload: string | SharePayload): Promise<ShareDeliveryResult> => {
+  const share: SharePayload = typeof payload === 'string' ? { url: payload } : payload;
+  const text = share.url;
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);
@@ -75,7 +79,10 @@ const tryCopyToClipboard = async (text: string): Promise<ShareDeliveryResult> =>
 
   try {
     if ((navigator as any).share) {
-      await (navigator as any).share({ url: text });
+      const shareData: Record<string, string> = { url: text };
+      if (share.title) shareData.title = share.title;
+      if (share.text) shareData.text = share.text;
+      await (navigator as any).share(shareData);
       return 'shared';
     }
   } catch {
@@ -106,6 +113,19 @@ const getShareSyncFailureMessage = (err: unknown, target: 'match' | 'standings')
   return `Belum bisa menyiapkan link ${target}. Coba lagi sebentar lagi.`;
 };
 
+const buildShareMessage = (
+  view: 'active' | 'klasemen',
+  tournamentName?: string
+): { title: string; text: string } => {
+  const name = (tournamentName || '').trim();
+  const title = name ? `FOM Play — ${name}` : 'FOM Play';
+  const label = name || 'padel';
+  const text = view === 'klasemen'
+    ? `Lihat klasemen ${label} kami di FOM Play 🏆`
+    : `Pantau match ${label} kami live di FOM Play 🏸`;
+  return { title, text };
+};
+
 export const useShareActions = ({
   userUid,
   tournament,
@@ -128,7 +148,16 @@ export const useShareActions = ({
     if (sharedMatchId) return buildShareUrl(sharedMatchId, view);
 
     try {
+      // Fallback for the rare viewer state without a resolved shareId: derive the
+      // id from the current /m/<id> location so we keep the friendly link shape.
       const currentUrl = new URL(window.location.href);
+      const fromPath = /^\/m\/([^/]+?)(?:\/klasemen)?\/?$/i.exec(currentUrl.pathname);
+      if (fromPath) {
+        currentUrl.pathname = `/m/${fromPath[1]}${view === 'klasemen' ? '/klasemen' : ''}`;
+        currentUrl.search = '';
+        currentUrl.hash = '';
+        return currentUrl.toString();
+      }
       currentUrl.pathname = '/app';
       if (view === 'klasemen') currentUrl.searchParams.set('view', 'klasemen');
       else currentUrl.searchParams.delete('view');
@@ -139,7 +168,10 @@ export const useShareActions = ({
   };
 
   const shareViewerUrl = async (view: 'active' | 'klasemen') => {
-    const shareResult = await tryCopyToClipboard(buildViewerShareUrl(view));
+    const shareResult = await tryCopyToClipboard({
+      url: buildViewerShareUrl(view),
+      ...buildShareMessage(view, tournament?.name),
+    });
     if (shareResult === 'copied') showShareCopiedToast('copied');
     else if (shareResult === 'shared' || shareResult === 'manual') showShareCopiedToast('ready');
     else showShareFeedbackToast('failed', 'Browser menolak akses clipboard. Coba share lagi.');
@@ -215,7 +247,10 @@ export const useShareActions = ({
       }
       const finalUrl = buildShareUrl(shareId, 'active');
 
-      const shareResult = await tryCopyToClipboard(finalUrl);
+      const shareResult = await tryCopyToClipboard({
+        url: finalUrl,
+        ...buildShareMessage('active', tournament?.name),
+      });
       if (shareResult === 'copied') {
         showShareCopiedToast('copied');
       } else if (shareResult === 'shared' || shareResult === 'manual') {
@@ -297,7 +332,10 @@ export const useShareActions = ({
         }
       }
       const finalUrl = buildShareUrl(shareId, 'klasemen');
-      const shareResult = await tryCopyToClipboard(finalUrl);
+      const shareResult = await tryCopyToClipboard({
+        url: finalUrl,
+        ...buildShareMessage('klasemen', (targetTournament as Tournament)?.name),
+      });
       if (shareResult === 'copied') {
         showShareCopiedToast('copied');
       } else if (shareResult === 'shared' || shareResult === 'manual') {

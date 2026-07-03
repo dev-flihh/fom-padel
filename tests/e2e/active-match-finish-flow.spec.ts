@@ -81,8 +81,8 @@ test.describe('Active Match Finish Flow', () => {
 
     const copiedTexts = await page.evaluate(() => (window as any).__copiedTexts as string[]);
     const lastCopiedText = copiedTexts[copiedTexts.length - 1] || '';
-    expect(lastCopiedText).toContain('/app?shared=e2eshare');
-    expect(lastCopiedText).not.toContain('view=klasemen');
+    expect(lastCopiedText).toContain('/m/e2eshare');
+    expect(lastCopiedText).not.toContain('klasemen');
 
     await page.getByRole('button', { name: 'Open manage match' }).click();
     await expect(page.getByRole('heading', { name: 'Manage match' })).toBeVisible();
