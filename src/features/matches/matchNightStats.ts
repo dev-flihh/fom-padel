@@ -148,6 +148,23 @@ export const buildRankTimelines = (
     });
   });
 
+  // Mode fixed: baris = tim. Petakan id anggota (termasuk partner, dan tahan
+  // terhadap anchor yang pernah di-swap) ke id barisnya, lalu dedupe per sisi
+  // match supaya skor tim dihitung sekali — bukan dobel per anggota.
+  const rowIdByMemberId = new Map<string, string>();
+  sortedPlayers.forEach((player) => {
+    rowIdByMemberId.set(player.id, player.id);
+    if (player.isTeamRow && player.partnerId) rowIdByMemberId.set(player.partnerId, player.id);
+  });
+  const resolveSideRowIds = (players: Array<{ id: string }> | undefined) => {
+    const rowIds = new Set<string>();
+    (players || []).forEach((player) => {
+      const rowId = rowIdByMemberId.get(player.id);
+      if (rowId) rowIds.add(rowId);
+    });
+    return [...rowIds];
+  };
+
   const sortedRounds = getSortedRounds(tournament);
   sortedRounds.forEach((round) => {
     let roundHadProgress = false;
@@ -159,31 +176,23 @@ export const buildRankTimelines = (
       const hasLiveScore = scoreA > 0 || scoreB > 0;
       const shouldCountScore = match.status === 'completed' || hasLiveScore;
 
-      (match.teamA?.players || []).forEach((player) => {
-        const stat = cumulative.get(player.id);
-        if (!stat) return;
-        if (shouldCountScore) {
-          stat.totalPoints += scoreA;
-          stat.pointsDiff += scoreA - scoreB;
-        }
-        if (match.status === 'completed') {
-          if (scoreA > scoreB) stat.w += 1;
-          else if (scoreA < scoreB) stat.l += 1;
-          else stat.d += 1;
-        }
-      });
-      (match.teamB?.players || []).forEach((player) => {
-        const stat = cumulative.get(player.id);
-        if (!stat) return;
-        if (shouldCountScore) {
-          stat.totalPoints += scoreB;
-          stat.pointsDiff += scoreB - scoreA;
-        }
-        if (match.status === 'completed') {
-          if (scoreB > scoreA) stat.w += 1;
-          else if (scoreB < scoreA) stat.l += 1;
-          else stat.d += 1;
-        }
+      ([
+        [resolveSideRowIds(match.teamA?.players), scoreA, scoreB],
+        [resolveSideRowIds(match.teamB?.players), scoreB, scoreA],
+      ] as const).forEach(([rowIds, scoreFor, scoreAgainst]) => {
+        rowIds.forEach((rowId) => {
+          const stat = cumulative.get(rowId);
+          if (!stat) return;
+          if (shouldCountScore) {
+            stat.totalPoints += scoreFor;
+            stat.pointsDiff += scoreFor - scoreAgainst;
+          }
+          if (match.status === 'completed') {
+            if (scoreFor > scoreAgainst) stat.w += 1;
+            else if (scoreFor < scoreAgainst) stat.l += 1;
+            else stat.d += 1;
+          }
+        });
       });
     });
 

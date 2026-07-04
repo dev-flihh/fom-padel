@@ -141,7 +141,12 @@ const toPlayerRef = (player: TeamExpandable): RewindPlayerRef => ({
 });
 
 const getShortName = (name = '') => name.trim().split(/\s+/)[0] || name;
-const joinShortNames = (players: Array<{ name: string }>) => players.map((p) => getShortName(p.name)).join(' & ');
+// Team-aware: baris tim bernama "anchor & partner" dipecah dulu supaya kedua
+// nama ikut tampil ("ariel & Geraldi"), bukan cuma nama depan anchor.
+const joinShortNames = (players: Array<{ name: string }>) => players
+  .flatMap((p) => String(p.name || '').split(' & '))
+  .map((part) => getShortName(part))
+  .join(' & ');
 
 const formatDiff = (value: number) => (value > 0 ? `+${value}` : String(value));
 
@@ -191,6 +196,27 @@ const scanRounds = (
   const completedMatches: CompletedMatchInfo[] = [];
   const lossStreak = new Map<string, number>();
 
+  // Mode fixed: baris = tim. Kejadian di lapangan bisa tercatat atas nama
+  // anggota mana pun (termasuk anchor lama sebelum swap), jadi setiap id
+  // anggota dipetakan ke baris timnya dan di-dedupe per sisi match supaya
+  // bye/worst-loss/streak dihitung sekali per tim.
+  const rowByMemberId = new Map<string, StandingsPlayer>();
+  playersById.forEach((row) => {
+    rowByMemberId.set(row.id, row);
+    if (row.isTeamRow && row.partnerId) rowByMemberId.set(row.partnerId, row);
+  });
+  const resolveRows = (players: Array<{ id: string }> | undefined) => {
+    const seen = new Set<string>();
+    const resolved: StandingsPlayer[] = [];
+    (players || []).forEach((player) => {
+      const row = rowByMemberId.get(player.id);
+      if (!row || seen.has(row.id)) return;
+      seen.add(row.id);
+      resolved.push(row);
+    });
+    return resolved;
+  };
+
   const getEvidence = (id: string) => {
     let entry = evidence.get(id);
     if (!entry) {
@@ -201,17 +227,16 @@ const scanRounds = (
   };
 
   rounds.forEach((round) => {
-    (round.playersBye || []).forEach((player) => {
-      if (!playersById.has(player.id)) return;
-      getEvidence(player.id).byes += 1;
+    resolveRows(round.playersBye).forEach((row) => {
+      getEvidence(row.id).byes += 1;
     });
 
     (round.matches || []).forEach((match) => {
       if (!hasMatchScoreProgress(match) || match.status !== 'completed') return;
       const scoreA = Number(match.teamA?.score || 0);
       const scoreB = Number(match.teamB?.score || 0);
-      const teamA = (match.teamA?.players || []).map((p) => playersById.get(p.id)).filter((p): p is StandingsPlayer => Boolean(p));
-      const teamB = (match.teamB?.players || []).map((p) => playersById.get(p.id)).filter((p): p is StandingsPlayer => Boolean(p));
+      const teamA = resolveRows(match.teamA?.players);
+      const teamB = resolveRows(match.teamB?.players);
       const margin = Math.abs(scoreA - scoreB);
       completedMatches.push({
         roundId: round.id,
@@ -536,8 +561,11 @@ export const buildRewindData = ({
       }),
       teamAName: joinShortNames(matchOfTheNight.scoreA >= matchOfTheNight.scoreB ? matchOfTheNight.teamA : matchOfTheNight.teamB),
       teamBName: joinShortNames(matchOfTheNight.scoreA >= matchOfTheNight.scoreB ? matchOfTheNight.teamB : matchOfTheNight.teamA),
-      teamAPlayers: (matchOfTheNight.scoreA >= matchOfTheNight.scoreB ? matchOfTheNight.teamA : matchOfTheNight.teamB).map(toPlayerRef),
-      teamBPlayers: (matchOfTheNight.scoreA >= matchOfTheNight.scoreB ? matchOfTheNight.teamB : matchOfTheNight.teamA).map(toPlayerRef),
+      // Mode fixed: sisi match adalah satu baris tim → pecah jadi dua wajah.
+      teamAPlayers: (matchOfTheNight.scoreA >= matchOfTheNight.scoreB ? matchOfTheNight.teamA : matchOfTheNight.teamB)
+        .flatMap((p) => (p.isTeamRow ? expandTeamMemberRefs(p) : [toPlayerRef(p)])),
+      teamBPlayers: (matchOfTheNight.scoreA >= matchOfTheNight.scoreB ? matchOfTheNight.teamB : matchOfTheNight.teamA)
+        .flatMap((p) => (p.isTeamRow ? expandTeamMemberRefs(p) : [toPlayerRef(p)])),
       scoreA: Math.max(matchOfTheNight.scoreA, matchOfTheNight.scoreB),
       scoreB: Math.min(matchOfTheNight.scoreA, matchOfTheNight.scoreB),
     });
@@ -619,7 +647,8 @@ export const buildRewindData = ({
           label: 'Glow Down',
           emoji: '📉',
           playerNames: glowPlayer.name,
-          players: [toPlayerRef(glowPlayer)],
+          // Mode fixed: baris tim → dua wajah.
+          players: glowPlayer.isTeamRow ? expandTeamMemberRefs(glowPlayer) : [toPlayerRef(glowPlayer)],
           note: renderRewindAwardNote('glow-down', intensity, {
             from: glowDown.firstRank,
             to: glowDown.finalRank,

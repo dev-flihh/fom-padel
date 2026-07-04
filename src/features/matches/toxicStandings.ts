@@ -674,14 +674,11 @@ export const buildToxicStandings = ({
     .forEach(([playerId, award]) => {
       const player = byId.get(playerId);
       if (!player) return;
+      // toHeroPlayer membawa data partner → kartu award & slide Rewind bisa
+      // menampilkan dua wajah untuk baris tim (mode fixed).
       awardCards.push({
         ...award,
-        player: {
-          id: player.id,
-          name: player.name,
-          avatar: player.avatar,
-          initials: player.initials,
-        },
+        player: toHeroPlayer(player),
       });
     });
   if (duoPetakaAwardCard) awardCards.unshift(duoPetakaAwardCard);
