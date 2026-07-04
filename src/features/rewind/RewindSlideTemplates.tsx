@@ -14,43 +14,37 @@ const LOGO_ON_LIGHT = '/assets/fom-play-logo-light-cropped.png';
 
 const formatDiff = (value: number) => (value > 0 ? `+${value}` : String(value));
 
+const getShortName = (name = '') => name.trim().split(/\s+/)[0] || name;
+
 const diffColorDark = (value: number) => (value > 0 ? 'text-[#1FB65A]' : value < 0 ? 'text-[#FF6B66]' : 'text-white/60');
 
 const Avatar = ({ player, size, className, gold }: { player: RewindPlayerRef; size: number; className?: string; gold?: boolean }) => {
-  const core = (
+  const renderFace = (avatar: string | undefined, initials: string | undefined, faceSize: number, extraClassName?: string) => (
     <div
       className={cn(
         'flex shrink-0 items-center justify-center overflow-hidden rounded-full font-black text-white',
         gold ? 'bg-[linear-gradient(135deg,#E8C45A,#B7861F)] text-[#16110a]' : 'bg-[#E65E14]',
         className,
+        extraClassName,
       )}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.34) }}
+      style={{ width: faceSize, height: faceSize, fontSize: Math.round(faceSize * 0.34) }}
     >
-      {player.avatar ? (
-        <img className="h-full w-full object-cover" src={player.avatar} alt="" referrerPolicy="no-referrer" />
+      {avatar ? (
+        <img className="h-full w-full object-cover" src={avatar} alt="" referrerPolicy="no-referrer" />
       ) : (
-        <span>{player.initials}</span>
+        <span>{initials || '?'}</span>
       )}
     </div>
   );
-  // Mode fixed: ref tim membawa wajah partner → tampilkan badge di pojok
-  // avatar utama supaya kedua pemain kelihatan.
+  // Mode fixed: ref tim membawa wajah partner → kedua wajah tampil sejajar
+  // dan sama besar (diperkecil supaya pasangan tetap muat di kolom yang sama).
   const hasPartner = Boolean(player.partnerAvatar || player.partnerInitials);
-  if (!hasPartner) return core;
-  const badgeSize = Math.max(20, Math.round(size * 0.46));
+  if (!hasPartner) return renderFace(player.avatar, player.initials, size);
+  const pairSize = Math.max(30, Math.round(size * 0.74));
   return (
-    <div className="relative shrink-0">
-      {core}
-      <div
-        className="absolute -bottom-1 -right-1 flex items-center justify-center overflow-hidden rounded-full bg-[#8E8E93] font-black text-white ring-2 ring-[#111111]"
-        style={{ width: badgeSize, height: badgeSize, fontSize: Math.round(badgeSize * 0.42) }}
-      >
-        {player.partnerAvatar ? (
-          <img className="h-full w-full object-cover" src={player.partnerAvatar} alt="" referrerPolicy="no-referrer" />
-        ) : (
-          <span>{player.partnerInitials}</span>
-        )}
-      </div>
+    <div className="flex shrink-0 items-center -space-x-2">
+      {renderFace(player.avatar, player.initials, pairSize)}
+      {renderFace(player.partnerAvatar, player.partnerInitials, pairSize, 'ring-2 ring-[#111111]')}
     </div>
   );
 };
@@ -202,14 +196,20 @@ const PodiumSlide = ({ slide, gold }: { slide: Extract<RewindSlide, { type: 'pod
     if (!player) return null;
     const isKing = order === 0;
     const barHeight = order === 0 ? 158 : order === 1 ? 115 : 82;
+    // Mode fixed: baris tim → dua wajah sejajar (Avatar pair) + kedua nama
+    // depan ("Syarif & Rafi"), bukan cuma nama anchor.
+    const isPair = Boolean(player.partnerAvatar || player.partnerInitials) || player.name.includes(' & ');
+    const displayName = player.name.includes(' & ')
+      ? player.name.split(' & ').map((part) => getShortName(part)).join(' & ')
+      : (player.name.split(' ')[0] || player.name);
     return (
       <div className={cn('flex flex-col items-center gap-2.5', isKing ? 'flex-[1.1]' : 'flex-1')}>
         <div className="relative">
           <Avatar player={player} size={isKing ? 72 : 58} gold={gold && isKing} className={cn(!gold && isKing && 'border-[3px] border-[#E65E14] bg-[#101010]', !isKing && 'border-2 border-white/25 bg-white/15')} />
           {isKing && <span className="absolute -top-5 left-1/2 -translate-x-1/2 -rotate-[8deg] text-[24px]">👑</span>}
         </div>
-        <div className="text-center">
-          <p className={cn('max-w-[104px] truncate text-[14px] font-extrabold', gold ? 'text-[#F3E3B5]' : 'text-white')}>{player.name.split(' ')[0] || player.name}</p>
+        <div className="w-full text-center">
+          <p className={cn('mx-auto max-w-full truncate px-0.5 font-extrabold', isPair ? 'text-[11.5px]' : 'text-[14px]', gold ? 'text-[#F3E3B5]' : 'text-white')}>{displayName}</p>
           <p className={cn('mt-0.5 text-[10.5px] font-bold tabular-nums', isKing ? (gold ? 'text-[#E5484D]' : 'text-[#FF9A66]') : gold ? 'text-[#E8C45A]/60' : 'text-white/50')}>
             {player.pts} PTS · {formatDiff(player.diff)}
           </p>
@@ -581,8 +581,18 @@ const FullStandingsSlide = ({
   eyebrow: string;
   headerTint: string;
 }) => {
-  const dense = slide.rows.length > 12;
-  const nameSize = dense ? 'text-[10.5px]' : 'text-[11.5px]';
+  // Density mengikuti jumlah baris di halaman ini: sedikit baris → baris lebih
+  // tinggi + tipografi lebih besar dengan pembatas halus (bukan direnggangkan
+  // justify-between yang bikin 4-6 baris terlihat kosong); banyak baris →
+  // padat seperti semula. Di atas 12 baris data layer memecah jadi 2 halaman.
+  const rowCount = slide.rows.length;
+  const density = rowCount <= 6 ? 'roomy' : rowCount <= 9 ? 'medium' : 'dense';
+  const nameSize = density === 'roomy' ? 'text-[13.5px]' : density === 'medium' ? 'text-[12px]' : 'text-[10.5px]';
+  const subLabelSize = density === 'roomy' ? 'text-[7.5px]' : 'text-[6.5px]';
+  const rankSize = density === 'roomy' ? 'text-[14px]' : 'text-[12px]';
+  const statSize = density === 'roomy' ? 'text-[11.5px]' : 'text-[10px]';
+  const ptsSize = density === 'roomy' ? 'text-[14px]' : 'text-[12px]';
+  const rowPad = density === 'roomy' ? 'py-3' : density === 'medium' ? 'py-2' : 'py-1';
   return (
     <div
       className={cn(
@@ -599,13 +609,24 @@ const FullStandingsSlide = ({
       )}
       <div className="relative flex items-center justify-between">
         <p className={cn('text-[10px] font-black uppercase leading-none tracking-[0.22em]', headerTint)}>{eyebrow}</p>
-        <span className={cn('rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-[0.1em]', gold ? 'bg-[linear-gradient(135deg,#E8C45A,#B7861F)] text-[#16110a]' : 'bg-[#101010] text-white')}>Final</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {Boolean(slide.pageCount && slide.pageCount > 1) && (
+            <span className={cn('rounded-full border px-2 py-1 text-[8px] font-black uppercase tracking-[0.1em] tabular-nums', gold ? 'border-[#E8C45A]/30 text-[#E8C45A]' : 'border-black/[0.12] text-[#101010]/60')}>
+              {slide.page}/{slide.pageCount}
+            </span>
+          )}
+          <span className={cn('rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-[0.1em]', gold ? 'bg-[linear-gradient(135deg,#E8C45A,#B7861F)] text-[#16110a]' : 'bg-[#101010] text-white')}>Final</span>
+        </div>
       </div>
       <h2 className={cn('relative mt-2 text-[19px] font-extrabold leading-[1.14] tracking-[-0.02em]', gold ? 'text-[#F3E3B5]' : 'text-[#101010]')} style={{ textWrap: 'balance' }}>
         {slide.headline}
       </h2>
       <MetaStrip cells={slide.meta} gold={gold} />
-      <div className={cn('relative mt-2 flex items-center gap-2 pb-1 text-[7px] font-black uppercase tracking-[0.1em]', gold ? 'text-[#E8C45A]/45' : 'text-[#C5C5CA]')}>
+      {/* Header kolom digabung satu blok dengan baris supaya saat baris sedikit
+          (blok di-center) header tetap menempel di atas tabel, tidak
+          menggantung sendirian di atas. */}
+      <div className={cn('relative flex min-h-0 flex-1 flex-col', density !== 'dense' && 'justify-center')}>
+      <div className={cn('flex items-center gap-2 pb-1 pt-2 text-[7px] font-black uppercase tracking-[0.1em]', gold ? 'text-[#E8C45A]/45' : 'text-[#C5C5CA]')}>
         <span className="w-[18px]" />
         <span className="flex-1">Player</span>
         <span className="w-[20px] text-center">W</span>
@@ -613,21 +634,25 @@ const FullStandingsSlide = ({
         <span className="w-[20px] text-center">D</span>
         <span className="w-[30px] text-right">PTS</span>
       </div>
-      <div className="relative flex min-h-0 flex-1 flex-col justify-between">
+      <div className={cn(
+        'flex flex-col',
+        density === 'dense'
+          ? 'min-h-0 flex-1 justify-between'
+          : cn(gold ? 'divide-y divide-[#E8C45A]/12' : 'divide-y divide-black/[0.06]'),
+      )}>
         {slide.rows.map((row) => (
           <div
             key={row.id}
             className={cn(
               'flex items-center gap-2',
+              rowPad,
               row.muted && 'opacity-55',
-              row.highlight
-                ? gold
-                  ? '-mx-1.5 rounded-[10px] border border-[#E8C45A]/25 bg-[linear-gradient(90deg,rgba(232,196,90,0.16),transparent)] px-1.5 py-1'
-                  : '-mx-1.5 rounded-[10px] bg-[linear-gradient(90deg,rgba(230,94,20,0.1),transparent)] px-1.5 py-1'
-                : 'py-1',
+              row.highlight && (gold
+                ? '-mx-1.5 rounded-[10px] border border-[#E8C45A]/25 bg-[linear-gradient(90deg,rgba(232,196,90,0.16),transparent)] px-1.5'
+                : '-mx-1.5 rounded-[10px] bg-[linear-gradient(90deg,rgba(230,94,20,0.1),transparent)] px-1.5'),
             )}
           >
-            <span className={cn('w-[18px] text-[12px] font-extrabold tabular-nums', row.highlight ? (gold ? 'text-[#E8C45A]' : 'text-[#E65E14]') : gold ? 'text-[#E8C45A]/40' : 'text-[#C5C5CA]')}>
+            <span className={cn('w-[18px] font-extrabold tabular-nums', rankSize, row.highlight ? (gold ? 'text-[#E8C45A]' : 'text-[#E65E14]') : gold ? 'text-[#E8C45A]/40' : 'text-[#C5C5CA]')}>
               {String(row.rank).padStart(2, '0')}
             </span>
             <div className="min-w-0 flex-1">
@@ -635,15 +660,16 @@ const FullStandingsSlide = ({
                 {row.name}{row.isChampion && !gold ? ' 👑' : ''}
               </p>
               {row.subLabel && (
-                <p className={cn('truncate text-[6.5px] font-black uppercase tracking-[0.1em]', gold ? 'text-[#E8C45A]' : 'text-[#E65E14]')}>{row.subLabel}</p>
+                <p className={cn('truncate font-black uppercase tracking-[0.1em]', subLabelSize, gold ? 'text-[#E8C45A]' : 'text-[#E65E14]')}>{row.subLabel}</p>
               )}
             </div>
-            <span className={cn('w-[20px] text-center text-[10px]', gold ? 'font-semibold text-[#F3E3B5]/50' : 'font-bold text-[#1E8E3E]')}>{row.w}</span>
-            <span className={cn('w-[20px] text-center text-[10px] font-bold', gold ? 'text-[#E5484D]' : 'text-ios-gray')}>{row.l}</span>
-            <span className={cn('w-[20px] text-center text-[10px] font-semibold', gold ? 'text-[#F3E3B5]/50' : 'text-ios-gray')}>{row.d}</span>
-            <span className={cn('w-[30px] text-right text-[12px] font-extrabold tabular-nums', row.highlight ? (gold ? 'text-[#E8C45A]' : 'text-[#E65E14]') : gold ? 'text-[#F3E3B5]' : 'text-[#101010]')}>{row.pts}</span>
+            <span className={cn('w-[20px] text-center', statSize, gold ? 'font-semibold text-[#F3E3B5]/50' : 'font-bold text-[#1E8E3E]')}>{row.w}</span>
+            <span className={cn('w-[20px] text-center font-bold', statSize, gold ? 'text-[#E5484D]' : 'text-ios-gray')}>{row.l}</span>
+            <span className={cn('w-[20px] text-center font-semibold', statSize, gold ? 'text-[#F3E3B5]/50' : 'text-ios-gray')}>{row.d}</span>
+            <span className={cn('w-[30px] text-right font-extrabold tabular-nums', ptsSize, row.highlight ? (gold ? 'text-[#E8C45A]' : 'text-[#E65E14]') : gold ? 'text-[#F3E3B5]' : 'text-[#101010]')}>{row.pts}</span>
           </div>
         ))}
+      </div>
       </div>
       {gold && (
         <p className="relative pt-2 text-center text-[7.5px] text-white/35">All roasts are about this match only. Jangan baper, ya.</p>

@@ -67,8 +67,8 @@ export type RewindSlide =
   | { type: 'cupu'; players: RewindPlayerRef[]; title: string; rankLabel: string; record: string; diff: number; pts: number; quote: string }
   | { type: 'awards'; headline: string; awards: Array<{ id: string; label: string; emoji?: string; playerNames: string; players: RewindPlayerRef[]; note: string }> }
   | { type: 'certificate'; title: string; emoji?: string; recipientName: string; bodyCopy: string; note?: string; witnessCount: number }
-  | { type: 'standings'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[] }
-  | { type: 'standings-toxic'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[] }
+  | { type: 'standings'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[]; page?: number; pageCount?: number }
+  | { type: 'standings-toxic'; headline: string; meta: RewindMetaCell[]; rows: FullStandingRow[]; page?: number; pageCount?: number }
   | { type: 'my-card'; player: RewindPlayerRef; matchName: string; dateLabel: string; officialRank: number; playerCount: number; record: string; diff: number; pts: number; toxicRank?: number; roast?: string; intensityLabel?: string; photoUrl?: string }
   | { type: 'outro'; headline: string; photoUrl?: string; shareUrl: string };
 
@@ -139,6 +139,21 @@ const toPlayerRef = (player: TeamExpandable): RewindPlayerRef => ({
       }
     : {}),
 });
+
+// Slide standings dibagi beberapa halaman bila baris terlalu banyak untuk
+// satu kanvas 9:16; pembagiannya dirata supaya tidak ada halaman sisa berisi
+// 1-2 baris (13 baris → 7+6, bukan 12+1).
+const STANDINGS_MAX_ROWS_PER_PAGE = 12;
+const paginateStandingRows = (rows: FullStandingRow[]): FullStandingRow[][] => {
+  if (rows.length <= STANDINGS_MAX_ROWS_PER_PAGE) return [rows];
+  const pageCount = Math.ceil(rows.length / STANDINGS_MAX_ROWS_PER_PAGE);
+  const perPage = Math.ceil(rows.length / pageCount);
+  const pages: FullStandingRow[][] = [];
+  for (let index = 0; index < rows.length; index += perPage) {
+    pages.push(rows.slice(index, index + perPage));
+  }
+  return pages;
+};
 
 const getShortName = (name = '') => name.trim().split(/\s+/)[0] || name;
 // Team-aware: baris tim bernama "anchor & partner" dipecah dulu supaya kedua
@@ -689,64 +704,72 @@ export const buildRewindData = ({
   const shortDateLabel = startedAt > 0
     ? matchDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
     : dateLabel;
-  slides.push({
-    type: 'standings',
-    headline: copy.pick('standings', 'headline', {
-      rounds: aggregate.roundCount,
-      totalPoints: aggregate.totalPoints,
-      lastRank: sortedPlayers.length,
-      gap: gapTopBottom,
-    }),
-    meta: [
-      { label: 'Venue', value: tournament.venueName || '—' },
-      { label: 'Date', value: shortDateLabel || '—' },
-      { label: 'Format', value: tournament.format || '—' },
-      { label: 'Time', value: durationLabel || '—' },
-    ],
-    rows: sortedPlayers.map((player, index) => ({
-      id: player.id,
-      name: player.name,
-      rank: index + 1,
-      w: player.w,
-      l: player.l,
-      d: player.d,
-      pts: player.totalPoints,
-      isChampion: index === 0,
-      highlight: index === 0,
-    })),
+  const officialStandingRows: FullStandingRow[] = sortedPlayers.map((player, index) => ({
+    id: player.id,
+    name: player.name,
+    rank: index + 1,
+    w: player.w,
+    l: player.l,
+    d: player.d,
+    pts: player.totalPoints,
+    isChampion: index === 0,
+    highlight: index === 0,
+  }));
+  paginateStandingRows(officialStandingRows).forEach((pageRows, pageIndex, pages) => {
+    slides.push({
+      type: 'standings',
+      headline: copy.pick('standings', 'headline', {
+        rounds: aggregate.roundCount,
+        totalPoints: aggregate.totalPoints,
+        lastRank: sortedPlayers.length,
+        gap: gapTopBottom,
+      }),
+      meta: [
+        { label: 'Venue', value: tournament.venueName || '—' },
+        { label: 'Date', value: shortDateLabel || '—' },
+        { label: 'Format', value: tournament.format || '—' },
+        { label: 'Time', value: durationLabel || '—' },
+      ],
+      rows: pageRows,
+      ...(pages.length > 1 ? { page: pageIndex + 1, pageCount: pages.length } : {}),
+    });
   });
 
   // 12 — Full Toxic Standings (reverse-sorted, toxic on saja — mockup T2)
   if (toxicOn && toxicStandings.rows.length > 0) {
-    slides.push({
-      type: 'standings-toxic',
-      headline: copy.pick('standings-toxic', 'headline'),
-      meta: [
-        { label: 'Venue', value: tournament.venueName || '—' },
-        { label: 'Date', value: shortDateLabel || '—' },
-        { label: 'Sorting', value: 'L > −DIFF' },
-        { label: 'Korban', value: String(sortedPlayers.length) },
-      ],
-      rows: toxicStandings.rows.map((row, index) => {
-        const isKing = index === 0;
-        return {
-          id: row.id,
-          name: row.name,
-          rank: index + 1,
-          w: row.w,
-          l: row.l,
-          d: row.d,
-          pts: row.totalPoints,
-          isChampion: row.isChampion,
-          highlight: isKing,
-          muted: row.isChampion && !isKing,
-          subLabel: isKing
-            ? (isCoKing ? 'CO-KING OF CUPU' : 'KING OF CUPU · TANPA BANDING')
-            : row.isChampion
-              ? 'SWEATY TRYHARD 🏆 · DIABAIKAN'
-              : undefined,
-        };
-      }),
+    const toxicStandingRows: FullStandingRow[] = toxicStandings.rows.map((row, index) => {
+      const isKing = index === 0;
+      return {
+        id: row.id,
+        name: row.name,
+        rank: index + 1,
+        w: row.w,
+        l: row.l,
+        d: row.d,
+        pts: row.totalPoints,
+        isChampion: row.isChampion,
+        highlight: isKing,
+        muted: row.isChampion && !isKing,
+        subLabel: isKing
+          ? (isCoKing ? 'CO-KING OF CUPU' : 'KING OF CUPU · TANPA BANDING')
+          : row.isChampion
+            ? 'SWEATY TRYHARD 🏆 · DIABAIKAN'
+            : undefined,
+      };
+    });
+    paginateStandingRows(toxicStandingRows).forEach((pageRows, pageIndex, pages) => {
+      slides.push({
+        type: 'standings-toxic',
+        headline: copy.pick('standings-toxic', 'headline'),
+        meta: [
+          { label: 'Venue', value: tournament.venueName || '—' },
+          { label: 'Date', value: shortDateLabel || '—' },
+          { label: 'Sorting', value: 'L > −DIFF' },
+          { label: 'Korban', value: String(sortedPlayers.length) },
+        ],
+        rows: pageRows,
+        ...(pages.length > 1 ? { page: pageIndex + 1, pageCount: pages.length } : {}),
+      });
     });
   }
 
