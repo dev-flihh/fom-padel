@@ -86,10 +86,11 @@ const OrbAndConfetti = ({ gold, strong }: { gold?: boolean; strong?: boolean }) 
   </>
 );
 
+// Sel di-center supaya Record/Diff/Pts simetris di bawah hero.
 const StatStrip = ({ items, gold }: { gold?: boolean; items: Array<{ label: string; value: string; className?: string }> }) => (
   <div className={cn('mt-6 flex w-full border-y py-4', gold ? 'border-[#E8C45A]/25' : 'border-white/15')}>
     {items.map((item, index) => (
-      <div key={item.label} className={cn('flex-1', index > 0 && 'pl-4', index < items.length - 1 && cn('border-r', gold ? 'border-[#E8C45A]/25' : 'border-white/15'))}>
+      <div key={item.label} className={cn('flex-1 px-2 text-center', index < items.length - 1 && cn('border-r', gold ? 'border-[#E8C45A]/25' : 'border-white/15'))}>
         <p className={cn('text-[8.5px] font-black uppercase leading-none tracking-[0.18em]', gold ? 'text-[#E8C45A]/55' : 'text-white/40')}>{item.label}</p>
         <p className={cn('mt-1.5 text-[22px] font-extrabold leading-none tabular-nums', item.className || (gold ? 'text-[#F3E3B5]' : 'text-white'))}>{item.value}</p>
       </div>

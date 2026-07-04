@@ -926,7 +926,7 @@ export const KlasemenScreen = ({
                   </span>
                   {toxicStandings.heroStats.length > 0 && (
                     <div className={cn(
-                      'toxic-stats-reveal relative z-20 grid grid-cols-3 text-left',
+                      'toxic-stats-reveal relative z-20 grid grid-cols-3',
                       hasCoKingHero ? 'mt-3.5' : 'mt-4'
                     )}>
                       {toxicStandings.heroStats.map((stat) => (
@@ -1942,7 +1942,7 @@ const ToxicAvatar = ({
 };
 
 const ToxicHeroStatCell = ({ stat }: { stat: ToxicHeroStatData }) => (
-  <div className="border-l border-white/12 pl-4 first:border-l-0 first:pl-0">
+  <div className="border-l border-white/12 px-2 text-center first:border-l-0">
     <p className="text-[8px] font-extrabold uppercase leading-none tracking-[0.16em] text-[#C9A14A]/70">
       {stat.label}
     </p>
