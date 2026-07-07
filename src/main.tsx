@@ -3,6 +3,10 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
+import { installGlobalErrorHandlers, reportBoundaryError } from './lib/reportError';
+
+installGlobalErrorHandlers();
 
 const isAppRoute = window.location.pathname === '/app' || window.location.pathname.startsWith('/app/');
 const isStandaloneDisplayMode =
@@ -85,6 +89,8 @@ document.addEventListener(
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary context="root" onError={reportBoundaryError}>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>,
 );
