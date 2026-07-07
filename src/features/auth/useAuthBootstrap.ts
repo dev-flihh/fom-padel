@@ -15,6 +15,7 @@ import {
   TOURNAMENT_HISTORY_CACHE_MAX_AGE_MS,
 } from '../history/historyPersistence';
 import { isLegacySeedPlayers } from '../matches/matchSetupUtils';
+import { safeParseJson } from '../../lib/safeJson';
 import { type Player, type Tournament, type TournamentHistory } from '../../types';
 
 type RecordDbMetric = (record: {
@@ -100,16 +101,22 @@ export const useAuthBootstrap = ({
         if (firebaseUser) {
           const shouldForceAdminRole = isAdminEmail(firebaseUser.email);
           const savedPlayers = localStorage.getItem(getPlayersStorageKey(firebaseUser.uid));
-          const parsedPlayers: Player[] = savedPlayers ? JSON.parse(savedPlayers) : [];
+          const parsedPlayers = safeParseJson<Player[]>(savedPlayers, [], (err) => {
+            console.error('Corrupted local players cache, clearing:', err);
+            localStorage.removeItem(getPlayersStorageKey(firebaseUser.uid));
+          });
           const normalizedPlayers = parsedPlayers.map((player) => normalizePlayerSource(player, firebaseUser.uid));
           setAllPlayers(isLegacySeedPlayers(normalizedPlayers) ? [] : normalizedPlayers);
           const savedTournament = localStorage.getItem(getTournamentStorageKey(firebaseUser.uid));
           const hasLocalTournament = Boolean(savedTournament);
 
           if (!isSharedViewer) {
-            const restoredTournament = savedTournament
+            const parsedTournament = safeParseJson<Tournament | null>(savedTournament, null, (err) => {
+              console.error('Corrupted local active tournament cache, clearing:', err);
+              localStorage.removeItem(getTournamentStorageKey(firebaseUser.uid));
+            });
+            const restoredTournament = parsedTournament
               ? (() => {
-                  const parsedTournament = JSON.parse(savedTournament) as Tournament;
                   if (parsedTournament?.endedAt) return createFreshTournamentDraft();
                   const hasStartedMatch = Boolean(parsedTournament?.startedAt);
                   const hasRounds = Array.isArray(parsedTournament?.rounds) && parsedTournament.rounds.length > 0;

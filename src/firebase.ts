@@ -1,7 +1,11 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider, OAuthProvider } from 'firebase/auth';
-import { initializeFirestore } from 'firebase/firestore';
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore';
 import { getFunctions } from 'firebase/functions';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -36,20 +40,25 @@ export const auth = getAuth(app);
 export const firebaseProjectId = resolvedFirebaseConfig.projectId;
 export const firestoreDatabaseId = envPrimaryFirestoreDatabaseId || firebaseConfig.firestoreDatabaseId;
 export const ephemeralFirestoreDatabaseId = envEphemeralFirestoreDatabaseId || firebaseConfig.firestoreDatabaseId;
-const firestoreSettings = {
+// Offline-first cache. Keeps the app usable on flaky mobile networks (players
+// are often courtside with poor signal) and avoids re-reading everything on
+// reconnect. Each Firestore database gets its own cache + multi-tab coordinator,
+// so two open tabs stay in sync instead of fighting over the cache.
+const createFirestoreSettings = () => ({
   experimentalAutoDetectLongPolling: true,
-  useFetchStreams: false
-};
+  useFetchStreams: false,
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 export const db = initializeFirestore(
   app,
-  firestoreSettings,
+  createFirestoreSettings(),
   firestoreDatabaseId
 );
 export const sharedDb = ephemeralFirestoreDatabaseId === firestoreDatabaseId
   ? db
   : initializeFirestore(
     app,
-    firestoreSettings,
+    createFirestoreSettings(),
     ephemeralFirestoreDatabaseId
   );
 export const activeDraftDb = sharedDb;
