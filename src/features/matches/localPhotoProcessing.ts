@@ -17,8 +17,10 @@ export type ProcessedCardPhoto = {
   bottomLuminance: number;
 };
 
-const MAX_SIDE = 1600;
-const TARGET_MAX_BYTES = 900_000;
+// 2048 supaya crop 9:16 dari foto landscape/portrait masih ≥1080px lebar saat
+// dipakai full-bleed di slide Rewind 1080×1920.
+const MAX_SIDE = 2048;
+const TARGET_MAX_BYTES = 1_200_000;
 const MIN_QUALITY = 0.5;
 
 const drawToCanvas = (

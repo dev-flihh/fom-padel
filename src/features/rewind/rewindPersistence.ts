@@ -4,10 +4,10 @@ import { db, storage } from '../../firebase';
 import { TOURNAMENTS_COLLECTION } from '../../services/firestoreCollections';
 import { saveSharedMatch } from '../../services/sharedMatchRepository';
 import type { TournamentRewind, TournamentRewindSlideRef } from '../../types';
-import type { GeneratedRewindSlide } from './RewindFlow';
+import { REWIND_EXPORT_EXT, REWIND_EXPORT_MIME, type GeneratedRewindSlide } from './RewindFlow';
 
 // Phase 2 hybrid persistence: player photos stay local-only, but the RENDERED
-// PNG slides are uploaded to Storage so shared viewers & History can replay the
+// JPEG slides are uploaded to Storage so shared viewers & History can replay the
 // Rewind (PRD Section 9 + FR-4.4). Everything here is best-effort — a failed
 // upload never blocks the host's own in-session viewer.
 
@@ -17,9 +17,9 @@ const uploadSlide = async (
 ): Promise<TournamentRewindSlideRef | null> => {
   if (!slide.blob) return null;
   try {
-    const path = `rewind/${tournamentId}/${slide.order}-${slide.type}.png`;
+    const path = `rewind/${tournamentId}/${slide.order}-${slide.type}.${REWIND_EXPORT_EXT}`;
     const target = storageRef(storage, path);
-    await uploadBytes(target, slide.blob, { contentType: 'image/png' });
+    await uploadBytes(target, slide.blob, { contentType: REWIND_EXPORT_MIME });
     const imageUrl = await getDownloadURL(target);
     return { type: slide.type, order: slide.order, imageUrl };
   } catch (err) {

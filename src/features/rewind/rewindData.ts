@@ -58,12 +58,12 @@ export type FullStandingRow = {
 export type RewindSlide =
   | { type: 'cover'; matchName: string; dateLabel: string; venue: string; city: string; format: string; playerCount: number; durationLabel: string; subline: string; photoUrl?: string }
   | { type: 'numbers'; headline: string; stats: Array<{ key: string; label: string; value: string; kicker?: string; accent?: boolean; wide?: boolean }> }
-  | { type: 'podium'; headline: string; subline: string; players: Array<RewindPlayerRef & { rank: number; pts: number; diff: number }> }
+  | { type: 'podium'; headline: string; subline: string; players: Array<RewindPlayerRef & { rank: number; pts: number; diff: number; record?: string }> }
   | { type: 'champion'; headline: string; players: RewindPlayerRef[]; rankLabel: string; record: string; diff: number; pts: number; quote: string }
   | { type: 'dream-team'; headline: string; players: RewindPlayerRef[]; pairName: string; played: number; wins: number; diff: number; quote: string }
   | { type: 'match-of-the-night'; headline: string; kicker: string; teamAName: string; teamBName: string; teamAPlayers: RewindPlayerRef[]; teamBPlayers: RewindPlayerRef[]; scoreA: number; scoreB: number }
   | { type: 'photos'; headline: string; photoUrls: string[]; sticker: string }
-  | { type: 'podium-cupu'; headline: string; subline: string; players: Array<RewindPlayerRef & { rank: number; pts: number; diff: number }> }
+  | { type: 'podium-cupu'; headline: string; subline: string; players: Array<RewindPlayerRef & { rank: number; pts: number; diff: number; record?: string }> }
   | { type: 'cupu'; players: RewindPlayerRef[]; title: string; rankLabel: string; record: string; diff: number; pts: number; quote: string }
   | { type: 'awards'; headline: string; awards: Array<{ id: string; label: string; emoji?: string; playerNames: string; players: RewindPlayerRef[]; note: string }> }
   | { type: 'certificate'; title: string; emoji?: string; recipientName: string; bodyCopy: string; note?: string; witnessCount: number }
@@ -164,6 +164,10 @@ const joinShortNames = (players: Array<{ name: string }>) => players
   .join(' & ');
 
 const formatDiff = (value: number) => (value > 0 ? `+${value}` : String(value));
+
+// Record W-L(-D) untuk podium: draw hanya ditampilkan kalau memang ada.
+const formatRecord = (player: { w: number; l: number; d: number }) =>
+  player.d > 0 ? `${player.w}W-${player.d}D-${player.l}L` : `${player.w}W-${player.l}L`;
 
 const formatDurationLabel = (minutes: number) => {
   if (minutes <= 0) return '';
@@ -522,6 +526,7 @@ export const buildRewindData = ({
         rank: index + 1,
         pts: player.totalPoints,
         diff: player.pointsDiff,
+        record: formatRecord(player),
       })),
     });
   }
@@ -608,6 +613,7 @@ export const buildRewindData = ({
         rank: rankById.get(player.id) || 0,
         pts: player.totalPoints,
         diff: player.pointsDiff,
+        record: formatRecord(player),
       })),
     });
   }

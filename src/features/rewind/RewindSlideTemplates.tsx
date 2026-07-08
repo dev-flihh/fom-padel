@@ -115,7 +115,8 @@ const CoverSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cover' }> 
     ) : (
       <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_75%_-10%,rgba(230,94,20,0.4),rgba(230,94,20,0)_60%),linear-gradient(180deg,#1a1410,#111111)]" />
     )}
-    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.38)_0%,rgba(0,0,0,0.05)_32%,rgba(0,0,0,0.84)_100%)]" />
+    {/* Scrim hanya di area teks: strip atas untuk header, gradient bawah untuk judul+meta. Tengah foto dibiarkan bersih. */}
+    <div className="absolute inset-x-0 top-0 h-[96px] bg-[linear-gradient(180deg,rgba(0,0,0,0.55)_0%,rgba(0,0,0,0)_100%)]" />
     <div className="absolute left-7 right-7 top-6 flex items-center justify-between">
       <img src={LOGO_ON_DARK} alt="FOM Play" className="h-[21px] w-auto object-contain" />
       {slide.durationLabel && (
@@ -124,13 +125,13 @@ const CoverSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cover' }> 
         </span>
       )}
     </div>
-    <div className="absolute inset-x-0 bottom-0 flex flex-col gap-2.5 p-7">
-      <p className="text-[11.5px] font-black uppercase leading-none tracking-[0.24em] text-[#FF7A33]">
+    <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1.5 px-7 pb-5 pt-14 bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.55)_32%,rgba(0,0,0,0.88)_100%)]">
+      <p className="text-[10.5px] font-black uppercase leading-none tracking-[0.24em] text-[#FF7A33]">
         FOM Rewind{slide.dateLabel ? ` · ${slide.dateLabel}` : ''}
       </p>
-      <h1 className="text-[34px] font-extrabold leading-[1.02] tracking-[-0.02em] text-white">{slide.matchName}</h1>
-      {slide.subline && <p className="text-[14.5px] font-semibold leading-[1.45] text-white/85">{slide.subline}</p>}
-      <div className="mt-2 flex border-t border-white/25 pt-3.5">
+      <h1 className="text-[27px] font-extrabold leading-[1.05] tracking-[-0.02em] text-white">{slide.matchName}</h1>
+      {slide.subline && <p className="text-[12.5px] font-semibold leading-[1.35] text-white/85">{slide.subline}</p>}
+      <div className="mt-1.5 flex border-t border-white/25 pt-2.5">
         {[
           { label: 'Venue', value: slide.venue || '—' },
           { label: 'Format', value: slide.format || '—' },
@@ -138,7 +139,7 @@ const CoverSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cover' }> 
         ].map((item, index) => (
           <div key={item.label} className={cn('flex-1', index > 0 && 'pl-3.5', index < 2 && 'border-r border-white/25')}>
             <p className="text-[8px] font-black uppercase leading-none tracking-[0.16em] text-white/55">{item.label}</p>
-            <p className="mt-1 truncate text-[12.5px] font-bold leading-tight text-white">{item.value}</p>
+            <p className="mt-1 truncate text-[11.5px] font-bold leading-tight text-white">{item.value}</p>
           </div>
         ))}
       </div>
@@ -211,9 +212,15 @@ const PodiumSlide = ({ slide, gold }: { slide: Extract<RewindSlide, { type: 'pod
         </div>
         <div className="w-full text-center">
           <p className={cn('mx-auto max-w-full truncate px-0.5 font-extrabold', isPair ? 'text-[11.5px]' : 'text-[14px]', gold ? 'text-[#F3E3B5]' : 'text-white')}>{displayName}</p>
-          <p className={cn('mt-0.5 text-[10.5px] font-bold tabular-nums', isKing ? (gold ? 'text-[#E5484D]' : 'text-[#FF9A66]') : gold ? 'text-[#E8C45A]/60' : 'text-white/50')}>
-            {player.pts} PTS · {formatDiff(player.diff)}
+          {/* Record W-L(-D) jadi info utama; PTS & diff turun jadi sekunder. Slide lama tanpa record tetap tampil PTS. */}
+          <p className={cn('mt-0.5 text-[11.5px] font-extrabold tabular-nums', isKing ? (gold ? 'text-[#E5484D]' : 'text-[#FF9A66]') : gold ? 'text-[#E8C45A]/70' : 'text-white/65')}>
+            {player.record || `${player.pts} PTS · ${formatDiff(player.diff)}`}
           </p>
+          {player.record && (
+            <p className={cn('mt-0.5 text-[8.5px] font-bold tabular-nums', gold ? 'text-[#E8C45A]/45' : 'text-white/40')}>
+              {player.pts} PTS · {formatDiff(player.diff)}
+            </p>
+          )}
         </div>
         <div
           className={cn(
@@ -694,15 +701,16 @@ const OutroSlide = ({ slide, shortLink, qrDataUrl }: { slide: Extract<RewindSlid
     ) : (
       <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_25%_-10%,rgba(230,94,20,0.38),rgba(230,94,20,0)_60%),linear-gradient(180deg,#1a1410,#111111)]" />
     )}
-    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.4)_0%,rgba(0,0,0,0.15)_28%,rgba(0,0,0,0.9)_100%)]" />
+    {/* Scrim hanya di area teks: strip atas untuk logo, gradient bawah untuk CTA. Tengah foto dibiarkan bersih. */}
+    <div className="absolute inset-x-0 top-0 h-[96px] bg-[linear-gradient(180deg,rgba(0,0,0,0.55)_0%,rgba(0,0,0,0)_100%)]" />
     <div className="absolute left-7 top-6">
       <img src={LOGO_ON_DARK} alt="FOM Play" className="h-[21px] w-auto object-contain" />
     </div>
-    <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 p-7 text-center">
-      <p className="text-[11.5px] font-black uppercase leading-none tracking-[0.24em] text-[#FF7A33]">Sampai Jumpa</p>
-      <h2 className="text-[19px] font-extrabold leading-[1.2] tracking-[-0.02em] text-white" style={{ textWrap: 'balance' }}>{slide.headline}</h2>
-      <p className="text-[12.5px] text-white/70">Hosted with FOM Play — skor live, klasemen otomatis, gratis.</p>
-      <div className="mt-1.5 flex items-center gap-3.5 rounded-[18px] border border-white/18 bg-white/10 px-4 py-3">
+    <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 px-7 pb-6 pt-14 text-center bg-[linear-gradient(180deg,rgba(0,0,0,0)_0%,rgba(0,0,0,0.6)_30%,rgba(0,0,0,0.92)_100%)]">
+      <p className="text-[10.5px] font-black uppercase leading-none tracking-[0.24em] text-[#FF7A33]">Sampai Jumpa</p>
+      <h2 className="text-[18px] font-extrabold leading-[1.2] tracking-[-0.02em] text-white" style={{ textWrap: 'balance' }}>{slide.headline}</h2>
+      <p className="text-[11.5px] text-white/70">Hosted with FOM Play — skor live, klasemen otomatis, gratis.</p>
+      <div className="mt-1 flex items-center gap-3.5 rounded-[18px] border border-white/18 bg-white/10 px-4 py-2.5">
         {qrDataUrl ? (
           <img src={qrDataUrl} alt="QR link match" className="h-[52px] w-[52px] shrink-0 rounded-[9px] bg-white" />
         ) : (
@@ -717,7 +725,7 @@ const OutroSlide = ({ slide, shortLink, qrDataUrl }: { slide: Extract<RewindSlid
           <p className="mt-1 text-[13.5px] font-bold text-white">{shortLink}</p>
         </div>
       </div>
-      <span className="mt-1 rounded-full bg-[#E65E14] px-8 py-3.5 text-[14.5px] font-bold text-white">
+      <span className="mt-1 rounded-full bg-[#E65E14] px-7 py-3 text-[13.5px] font-bold text-white">
         Start your own match — free
       </span>
     </div>

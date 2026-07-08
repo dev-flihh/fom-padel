@@ -23,6 +23,7 @@ import { sanitizeInactivePlayerIds } from '../tournaments/tournamentDraft';
 import { useMatchSettingsFriends } from './useMatchSettingsFriends';
 import { buildOfficialStandings, buildOfficialTeamStandings } from './standingsUtils';
 import { isFixedPartnerTournament } from './partnerMode';
+import { getActiveFixedTeams } from './fixedTeamScheduler';
 import { getToxicIntensityLabel, normalizeToxicIntensity } from './toxicSettings';
 
 type MatchActiveScreenProps = {
@@ -45,6 +46,7 @@ type MatchActiveScreenProps = {
   needsRegenerateFromRound: number | null;
   onOpenStandings: () => void;
   onSwapPlayer: (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => void;
+  onSwapTeam: (matchId: string, team: 'A' | 'B', playerIds: [string, string]) => void;
   onShareMatch: () => void;
   isReadOnly: boolean;
   isSharedViewer: boolean;
@@ -207,6 +209,7 @@ export const MatchActiveScreen = ({
   needsRegenerateFromRound,
   onOpenStandings,
   onSwapPlayer,
+  onSwapTeam,
   onShareMatch,
   isReadOnly,
   isSharedViewer,
@@ -303,6 +306,12 @@ export const MatchActiveScreen = ({
       stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 },
     };
   };
+
+  const isFixedPartnerMode = isFixedPartnerTournament(tournament);
+  const fixedTeamOptions = useMemo(
+    () => (isFixedPartnerMode ? getActiveFixedTeams(tournament) : []),
+    [isFixedPartnerMode, tournament]
+  );
 
   const playerMatchCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -495,7 +504,7 @@ export const MatchActiveScreen = ({
   const incompleteActiveCourtSummary = formatCourtList(incompleteActiveCourtLabels);
   const showSharedTrialCta = isSharedViewer && !currentUserUid;
   const pageBottomPadding = showSharedTrialCta
-    ? 'calc(var(--app-safe-bottom, 0px) + 168px)'
+    ? 'calc(var(--app-safe-bottom, 0px) + 160px)'
     : 'calc(var(--app-safe-bottom, 0px) + 112px)';
   const roundIdsForReset = useMemo(
     () => tournament.rounds.map((round) => round.id).filter((roundId) => roundId > 1).sort((a, b) => b - a),
@@ -1216,16 +1225,20 @@ export const MatchActiveScreen = ({
 
       <SwapPlayerModal
         swapRequest={swappingPlayer}
-        modalBottomOffset={modalBottomOffset}
         players={tournament.players}
         rounds={tournament.rounds}
         playerMatchCounts={playerMatchCounts}
-        accentTheme={accentTheme}
+        isFixedPartnerMode={isFixedPartnerMode}
+        fixedTeamOptions={fixedTeamOptions}
         renderPlayerAvatar={renderPlayerAvatar}
         isRegisteredPlayer={isFomRegisteredPlayer}
         onClose={() => setSwappingPlayer(null)}
         onSelectPlayer={(request, player) => {
           onSwapPlayer(request.matchId, request.team, request.playerIndex, player);
+          setSwappingPlayer(null);
+        }}
+        onSelectTeam={(request, playerIds) => {
+          onSwapTeam(request.matchId, request.team, playerIds);
           setSwappingPlayer(null);
         }}
       />

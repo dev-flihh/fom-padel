@@ -456,6 +456,82 @@ export const useMatchMutationActions = ({
     addNotification('Player Replaced', 'The player has been replaced on the active court.', 'system');
   };
 
+  // Mode fix partner: tukar satu pasangan sekaligus. Pasangan yang sedang bye
+  // masuk menggantikan (pasangan lama duduk); pasangan dari court lain pada
+  // ronde yang sama bertukar court. Komposisi tim tetap tidak berubah — ronde
+  // mendatang Americano tetap di-rebuild agar fairness bye terjaga.
+  const handleSwapTeam = (matchId: string, side: 'A' | 'B', incomingPlayerIds: [string, string]) => {
+    const playerById = new Map(tournament.players.map((player) => [player.id, player]));
+    const incomingPlayers = incomingPlayerIds
+      .map((playerId) => playerById.get(playerId))
+      .filter((player): player is Player => Boolean(player));
+    if (incomingPlayers.length !== 2) return;
+
+    const roundIndex = tournament.rounds.findIndex((round) => round.matches.some((match) => match.id === matchId));
+    if (roundIndex === -1) return;
+    const round = tournament.rounds[roundIndex];
+    const targetMatch = round.matches.find((match) => match.id === matchId);
+    if (!targetMatch) return;
+    const outgoingPlayers = side === 'A' ? [...targetMatch.teamA.players] : [...targetMatch.teamB.players];
+
+    const incomingIdSet = new Set<string>(incomingPlayerIds);
+    const sideHoldsIncomingPair = (sidePlayers: Player[]) => (
+      sidePlayers.length === 2 && sidePlayers.every((player) => incomingIdSet.has(player.id))
+    );
+    const sourceMatch = round.matches.find((match) => (
+      match.id !== matchId && (sideHoldsIncomingPair(match.teamA.players) || sideHoldsIncomingPair(match.teamB.players))
+    )) || null;
+
+    const newMatches = round.matches.map((match) => {
+      if (match.id === matchId) {
+        return {
+          ...match,
+          teamA: side === 'A' ? { ...match.teamA, players: [...incomingPlayers] } : match.teamA,
+          teamB: side === 'B' ? { ...match.teamB, players: [...incomingPlayers] } : match.teamB,
+        };
+      }
+      if (sourceMatch && match.id === sourceMatch.id) {
+        const replaceSide = sideHoldsIncomingPair(match.teamA.players) ? 'A' : 'B';
+        return {
+          ...match,
+          teamA: replaceSide === 'A' ? { ...match.teamA, players: [...outgoingPlayers] } : match.teamA,
+          teamB: replaceSide === 'B' ? { ...match.teamB, players: [...outgoingPlayers] } : match.teamB,
+        };
+      }
+      return match;
+    });
+
+    const newPlayersBye = sourceMatch
+      ? round.playersBye
+      : [
+          ...round.playersBye.filter((player) => !incomingIdSet.has(player.id)),
+          ...outgoingPlayers,
+        ];
+
+    const newRounds = tournament.rounds.map((existingRound, index) => (
+      index === roundIndex ? { ...existingRound, matches: newMatches, playersBye: newPlayersBye } : existingRound
+    ));
+
+    let nextTournament: Tournament = { ...tournament, rounds: newRounds };
+    if (getPartnerMode(tournament) === 'fixed' && tournament.format === 'Americano' && nextTournament.rounds.length > 0) {
+      nextTournament = {
+        ...nextTournament,
+        rounds: rebuildFixedTeamFutureRounds(nextTournament, nextTournament.numRounds),
+      };
+    }
+
+    setTournament(nextTournament);
+    const incomingLabel = incomingPlayers.map((player) => player.name.split(' ')[0]).join(' & ');
+    const outgoingLabel = outgoingPlayers.map((player) => player.name.split(' ')[0]).join(' & ');
+    addNotification(
+      'Pair Swapped',
+      sourceMatch
+        ? `${incomingLabel} and ${outgoingLabel} exchanged courts.`
+        : `${incomingLabel} replaced ${outgoingLabel} on court ${targetMatch.court}.`,
+      'system'
+    );
+  };
+
   const handleReplaceManualPlayer = (manualPlayerId: string, newPlayer: Player) => {
     const manualPlayer = (tournament.players || []).find((player) => player.id === String(manualPlayerId || '').trim());
     if (!manualPlayer) return;
@@ -550,6 +626,7 @@ export const useMatchMutationActions = ({
     handleUpdateRounds,
     handleUpdateCourts,
     handleSwapPlayer,
+    handleSwapTeam,
     handleReplaceManualPlayer,
     handleSaveRosterChanges,
   };

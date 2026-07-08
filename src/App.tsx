@@ -1159,6 +1159,7 @@ export default function App() {
     handleUpdateRounds,
     handleUpdateCourts,
     handleSwapPlayer,
+    handleSwapTeam,
     handleReplaceManualPlayer,
     handleSaveRosterChanges,
   } = useMatchMutationActions({
@@ -2778,6 +2779,7 @@ export default function App() {
         needsRegenerateFromRound={null}
         onOpenStandings={() => { }}
         onSwapPlayer={() => { }}
+        onSwapTeam={() => { }}
         onShareMatch={() => { }}
         isReadOnly={false}
         isSharedViewer={false}
@@ -3024,6 +3026,7 @@ export default function App() {
             needsRegenerateFromRound={needsRegenerateFromRound}
             onOpenStandings={handleOpenLiveStandings}
             onSwapPlayer={handleSwapPlayer}
+            onSwapTeam={handleSwapTeam}
             onShareMatch={handleShareCurrentMatch}
             isReadOnly={isSharedViewer || Boolean(activeScreenTournament)}
             isSharedViewer={isSharedViewer}

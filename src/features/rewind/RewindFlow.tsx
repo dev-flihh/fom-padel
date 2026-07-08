@@ -36,6 +36,15 @@ export type RewindResult = {
 const MAX_PHOTOS = 10;
 const EXPORT_VIEW = { width: 360, height: 640 };
 
+// Slide di-export JPEG q0.9, bukan PNG. Slide selalu berlatar solid #111111
+// (tak butuh alpha) dan slide berfoto sebagai PNG ~3,3MB — 8× lebih besar dari
+// JPEG q0.9 (~400KB) tanpa beda kasat mata. JPEG q0.9 aman untuk teks (di bawah
+// ~0.85 mulai muncul ringing di tepi huruf). Dipakai bersama oleh export,
+// nama file, share File, dan content-type upload (lihat rewindPersistence).
+export const REWIND_EXPORT_MIME = 'image/jpeg';
+export const REWIND_EXPORT_QUALITY = 0.9;
+export const REWIND_EXPORT_EXT = 'jpg';
+
 type ExportOptions = Parameters<typeof htmlToImageSvg>[1];
 
 // iOS Safari / WebKit rasterizes html-to-image's <foreignObject> SVG *before*
@@ -64,8 +73,23 @@ const isWebkit = (() => {
 //   - ONE SVG + <img> per slide — the WebKit decode bug only needs the
 //     *drawImage* repeated, not the whole SVG rebuild;
 //   - the SVG image is released (src='') right after use.
-const EXPORT_CANVAS = isWebkit ? { width: 720, height: 1280 } : { width: 1080, height: 1920 };
+// 1080×1920 di semua platform (kualitas IG Story). Aman untuk budget canvas iOS
+// karena hanya ada SATU canvas + SATU SVG image hidup pada satu waktu — crash
+// lama datang dari akumulasi ~50 alokasi, bukan dari ukuran per-canvas.
+const EXPORT_CANVAS = { width: 1080, height: 1920 };
 const DRAW_PASSES = isWebkit ? 3 : 1;
+
+// html-to-image's toSvg returns an SVG whose intrinsic size equals the DOM node
+// (360×640). Browsers rasterize an SVG <img> at its *intrinsic* size before
+// drawImage scales the bitmap up to the canvas — every slide (photos included)
+// came out 3×-upscaled and blurry. Fix: request the SVG at canvas size and blow
+// the cloned node up via CSS transform scale. (Rewriting the root viewBox does
+// NOT work — WebKit ignores viewBox scaling for foreignObject content, which
+// left the slide unscaled in the top-left corner of the canvas.)
+const EXPORT_SCALE_STYLE = {
+  transform: `scale(${EXPORT_CANVAS.width / EXPORT_VIEW.width})`,
+  transformOrigin: 'top left',
+};
 
 const waitFrames = () => new Promise<void>((resolve) => (
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
@@ -77,7 +101,7 @@ const settle = (ms: number) => new Promise<void>((resolve) => (
   requestAnimationFrame(() => window.setTimeout(resolve, ms))
 ));
 
-// Rasterize the slide DOM into the shared canvas and extract a PNG blob.
+// Rasterize the slide DOM into the shared canvas and extract a JPEG blob.
 const exportNodeToBlob = async (
   node: HTMLElement,
   canvas: HTMLCanvasElement,
@@ -109,7 +133,7 @@ const exportNodeToBlob = async (
   }
   // Drop the decoded SVG bitmap promptly (iOS frees it with the src).
   image.src = '';
-  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, REWIND_EXPORT_MIME, REWIND_EXPORT_QUALITY));
 };
 
 const fileSafe = (value: string) => (
@@ -330,8 +354,9 @@ export const RewindFlow = ({
           }
         }));
         const blob = await exportNodeToBlob(node, exportCanvas, {
-          width: EXPORT_VIEW.width,
-          height: EXPORT_VIEW.height,
+          width: EXPORT_CANVAS.width,
+          height: EXPORT_CANVAS.height,
+          style: EXPORT_SCALE_STYLE,
           cacheBust: true,
           backgroundColor: '#111111',
         });
@@ -422,7 +447,7 @@ export const RewindFlow = ({
   };
 
   const buildFileName = (slide: GeneratedRewindSlide, index: number) => (
-    `${fileSafe(tournament.name || 'fom-play')}-rewind-${index + 1}-${slide.type}.png`
+    `${fileSafe(tournament.name || 'fom-play')}-rewind-${index + 1}-${slide.type}.${REWIND_EXPORT_EXT}`
   );
 
   const getSlideBlob = async (slide: GeneratedRewindSlide): Promise<Blob> => {
@@ -465,7 +490,7 @@ export const RewindFlow = ({
       window.setTimeout(() => setShareFeedback(''), 2600);
       return;
     }
-    const file = new File([blob], buildFileName(slide, index), { type: 'image/png' });
+    const file = new File([blob], buildFileName(slide, index), { type: REWIND_EXPORT_MIME });
     const payload = { files: [file], title: `FOM Rewind — ${tournament.name || 'FOM Play'}` };
     try {
       if (navigator.share && (!navigator.canShare || navigator.canShare(payload))) {

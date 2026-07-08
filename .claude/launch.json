@@ -18,6 +18,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "website", "run", "dev"],
       "port": 4321
+    },
+    {
+      "name": "fik-odoo",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "-f", "/Users/mac/fik-odoo-assessment/prototype/docker-compose.yml", "up"],
+      "port": 8069
     }
   ]
 }

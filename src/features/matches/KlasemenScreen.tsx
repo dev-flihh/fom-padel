@@ -1,7 +1,8 @@
 import { Fragment, type KeyboardEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart2, ChevronDown, CircleDot, Flame, Share2, UserRound, Zap } from 'lucide-react';
+import { ArrowRight, BarChart2, ChevronDown, CircleDot, Flame, Share2, UserRound } from 'lucide-react';
 import { AppLogo } from '../../components/app/AppLogo';
 import { SharedViewerFomPlayCta } from '../../components/app/SharedViewerFomPlayCta';
+import { ReadOnlySharedTicker } from '../../components/app/ReadOnlySharedTicker';
 import { cn } from '../../lib/utils';
 import { fetchToxicCopyConfig } from '../../services/toxicCopyRemoteConfig';
 import { type Player, type Round, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
@@ -503,15 +504,11 @@ export const KlasemenScreen = ({
           paddingBottom: isToxicDarkTheme
             ? '0px'
             : showSharedTrialCta
-              ? 'calc(var(--app-safe-bottom, 0px) + 216px)'
+              ? 'calc(var(--app-safe-bottom, 0px) + 202px)'
               : 'calc(var(--app-safe-bottom, 0px) + 154px)'
         }}
       >
-        {isSharedViewer && (
-          <p className="rounded-full border border-black/[0.06] bg-white px-3 py-2 text-center text-[9px] font-black uppercase leading-none tracking-[0.14em] text-ios-gray">
-            This page is read-only.
-          </p>
-        )}
+        {isSharedViewer && <ReadOnlySharedTicker className="mb-6 mt-1" />}
 
         {statsSyncBadge && (
           <section className="-mt-1">
@@ -562,6 +559,35 @@ export const KlasemenScreen = ({
             {standingsDetailLineTwo.length > 0 && <p>{standingsDetailLineTwo.join(' · ')}</p>}
           </div>
 
+          {/* Entry FOM Rewind di atas tab: satu tempat untuk kedua tab
+              (official & toxic) sehingga tidak perlu menyesuaikan latar
+              panggung gelap Hall of Shame. Sheen berjalan dari .cta-shimmer. */}
+          {isTournamentEnded && (!isSharedViewer || hasRemoteRewind) && (
+            <button
+              type="button"
+              onClick={() => { setRewindEntrySource('banner'); setIsRewindOpen(true); }}
+              className="tap-target cta-shimmer mt-4 flex w-full items-center gap-3 rounded-2xl bg-[linear-gradient(120deg,#FF7A2F_0%,#E65E14_58%,#D9520C_100%)] py-3 pl-4 pr-3.5 text-left shadow-[0_8px_22px_rgba(230,94,20,0.28)] transition-transform active:scale-[0.99] motion-reduce:transition-none motion-reduce:active:scale-100"
+              aria-label={rewindResult || hasRemoteRewind ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
+            >
+              <img
+                src="/assets/fom-logomark-app.png"
+                alt=""
+                aria-hidden="true"
+                className="h-[22px] w-[29px] shrink-0 object-contain"
+                style={{ filter: 'brightness(0) invert(1)' }}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[8.5px] font-black uppercase leading-none tracking-[0.18em] text-white/72">FOM Rewind</span>
+                <span className="mt-1 block truncate text-[13px] font-bold leading-tight text-white">
+                  Lihat rekap pertandinganmu
+                </span>
+              </span>
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/16 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]">
+                <ArrowRight size={14} strokeWidth={2.4} />
+              </span>
+            </button>
+          )}
+
           <div
             className="mt-4 flex h-11 items-end gap-5 border-b border-black/[0.08]"
             role="group"
@@ -607,33 +633,6 @@ export const KlasemenScreen = ({
             )}
           </div>
         </section>
-
-        {isTournamentEnded && (!isSharedViewer || hasRemoteRewind) && (
-          <section className={isToxicDarkTheme ? '-mx-6 bg-[#131008]' : 'pt-3'}>
-            <button
-              type="button"
-              onClick={() => { setRewindEntrySource('banner'); setIsRewindOpen(true); }}
-              className={cn(
-                'tap-target relative flex w-full items-center gap-3.5 overflow-hidden text-left',
-                isToxicDarkTheme
-                  ? 'border-b border-[#C9A14A]/14 px-5 py-4 transition-colors active:bg-white/[0.03]'
-                  : 'rounded-[20px] bg-[#111111] px-4 py-4 shadow-[0_8px_22px_rgba(15,23,42,0.10)] transition-transform active:scale-[0.992] motion-reduce:transition-none motion-reduce:active:scale-100'
-              )}
-              aria-label={rewindResult || hasRemoteRewind ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
-            >
-              <span className="pointer-events-none absolute -right-8 -top-8 h-[110px] w-[110px] rounded-full bg-[rgba(230,94,20,0.25)]" style={{ filter: 'blur(24px)' }} />
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-primary text-white">
-                <Zap size={19} strokeWidth={2.3} fill="currentColor" />
-              </span>
-              <span className="relative min-w-0 flex-1">
-                <span className="block text-[9px] font-black uppercase leading-none tracking-[0.16em] text-primary">FOM Rewind</span>
-                <span className="mt-1 block truncate text-[14px] font-bold leading-tight text-white">
-                  {rewindResult || hasRemoteRewind ? 'View FOM Rewind →' : 'Match selesai. Bikin Rewind-nya →'}
-                </span>
-              </span>
-            </button>
-          </section>
-        )}
 
         {personalStandingShortcut && (
           <section className={cn(
@@ -1740,7 +1739,7 @@ export const KlasemenScreen = ({
           ) : (
             <div
               className="-mx-6 bg-[#131008] px-6 pt-1"
-              style={{ paddingBottom: `calc(var(--app-safe-bottom, 0px) + ${showSharedTrialCta ? '196px' : '104px'})` }}
+              style={{ paddingBottom: `calc(var(--app-safe-bottom, 0px) + ${showSharedTrialCta ? '152px' : '104px'})` }}
             >
               <div className="mx-auto flex w-fit max-w-full items-center justify-center gap-1.5 px-3 py-2 text-center text-[#C9A14A]/72">
                 <Flame size={11} strokeWidth={2.4} className="shrink-0" />
@@ -2017,7 +2016,11 @@ const ToxicPodiumColumn = ({
       <p className={cn('mt-0.5 line-clamp-2 text-[7px] font-extrabold uppercase leading-tight tracking-[0.12em]', podiumCopy.labelClass)}>
         {player.award?.label || podiumCopy.badge}
       </p>
-      <p className="mt-1 text-[8px] font-bold leading-none tabular-nums text-[#E8C45A]/72">
+      {/* Record W-L(-D) jadi info utama; PTS & diff turun jadi sekunder. */}
+      <p className="mt-1 text-[9px] font-extrabold leading-none tabular-nums text-[#E8C45A]">
+        {formatToxicPodiumRecord(player)}
+      </p>
+      <p className="mt-0.5 text-[7px] font-bold leading-none tabular-nums text-white/40">
         {player.totalPoints} PTS · {formatToxicPodiumDiff(player.pointsDiff)}
       </p>
       <p className="mt-1 line-clamp-2 min-h-[24px] text-[9px] font-semibold italic leading-[1.25] text-white/48">
@@ -2041,7 +2044,8 @@ const getToxicAwardChipClass = (isGold?: boolean) => (
     : 'border-white/[0.10] bg-white/[0.07] text-white/62'
 );
 
-const formatToxicPodiumRecord = (player: ToxicStandingRow) => `${player.w}W-${player.l}L`;
+const formatToxicPodiumRecord = (player: ToxicStandingRow) =>
+  player.d > 0 ? `${player.w}W-${player.d}D-${player.l}L` : `${player.w}W-${player.l}L`;
 
 const getToxicTableEvidenceChips = (player: ToxicStandingRow) => ([
   {

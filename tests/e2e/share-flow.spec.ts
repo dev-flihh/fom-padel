@@ -52,9 +52,8 @@ test.describe('Share Flow', () => {
   test('guest shared active view shows the FOM Play trial CTA', async ({ page }) => {
     await page.goto('/app?e2e=shared-viewer-flow');
 
-    await expect(page.getByText('Read-only shared match')).toBeVisible();
-    await expect(page.getByText('Host controls are off. Scores update from the match link.')).toBeVisible();
-    await expect(page.getByText('Wanna try FOM Play?')).toBeVisible();
+    await expect(page.getByText('Read-only · Shared view')).toBeVisible();
+    await expect(page.getByText('Hosted with FOM Play')).toBeVisible();
     await expect(page.getByText('View Only')).toHaveCount(0);
     await page.getByRole('button', { name: 'Share match' }).click();
     await expect(page.getByText('Copied Link')).toBeVisible();
@@ -64,7 +63,7 @@ test.describe('Share Flow', () => {
     expect(lastCopiedText).toContain('/app?e2e=shared-viewer-flow');
     expect(lastCopiedText).not.toContain('view=klasemen');
 
-    const cta = page.getByRole('link', { name: /Start your match/i });
+    const cta = page.getByRole('link', { name: /Start yours/i });
     await expect(cta).toBeVisible();
     await expect(cta).toHaveAttribute('href', 'https://fomplay.asia/');
   });
@@ -72,15 +71,15 @@ test.describe('Share Flow', () => {
   test('guest shared standings view shows the FOM Play trial CTA', async ({ page }) => {
     await page.goto('/app?e2e=shared-viewer-flow&view=klasemen');
 
-    await expect(page.getByText('This page is read-only.')).toBeVisible();
-    await expect(page.getByText('Wanna try FOM Play?')).toBeVisible();
+    await expect(page.getByText('Read-only · Shared view')).toBeVisible();
+    await expect(page.getByText('Hosted with FOM Play')).toBeVisible();
     await expect(page.getByText('View Only')).toHaveCount(0);
     // Semua generate image pindah ke FOM Rewind — share cukup satu tombol link.
     await page.getByRole('button', { name: 'Share match link' }).click();
     await expect(page.getByText('Copied Link')).toBeVisible();
     await expect(page.locator('[data-share-exporter="true"]')).toHaveCount(0);
 
-    const cta = page.getByRole('link', { name: /Start your match/i });
+    const cta = page.getByRole('link', { name: /Start yours/i });
     await expect(cta).toBeVisible();
     await expect(cta).toHaveAttribute('href', 'https://fomplay.asia/');
   });
@@ -88,6 +87,6 @@ test.describe('Share Flow', () => {
   test('host share flow does not show the guest trial CTA', async ({ page }) => {
     await page.goto('/app?e2e=share-flow');
 
-    await expect(page.getByText('Wanna try FOM Play?')).toHaveCount(0);
+    await expect(page.getByText('Hosted with FOM Play')).toHaveCount(0);
   });
 });

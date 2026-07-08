@@ -1,7 +1,8 @@
-import { AlertTriangle, ChevronDown, Lock, Share2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Share2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { type MatchFormat } from '../../types';
 import { AppLogo } from '../../components/app/AppLogo';
+import { ReadOnlySharedTicker } from '../../components/app/ReadOnlySharedTicker';
 import { formatElapsedForStat } from './matchTimeUtils';
 
 type StatsSyncBadge = {
@@ -79,23 +80,7 @@ export const ActiveMatchSummaryPanel = ({
   <>
     {/* Owner's finished/saved match tidak lagi menampilkan chip read-only;
         hanya guest lewat share link yang perlu tahu halaman ini view-only. */}
-    {isSharedViewer && (
-      <section className="rounded-[18px] border border-black/[0.06] bg-ios-gray/[0.035] px-3.5 py-3">
-        <div className="flex items-center gap-3">
-          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-ios-gray shadow-[inset_0_0_0_1px_rgba(17,24,39,0.04)]">
-            <Lock size={15} strokeWidth={2.25} />
-          </span>
-          <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase leading-none tracking-[0.14em] text-on-surface/72">
-              Read-only shared match
-            </p>
-            <p className="mt-1 text-[11.5px] font-semibold leading-snug text-on-surface/52">
-              Host controls are off. Scores update from the match link.
-            </p>
-          </div>
-        </div>
-      </section>
-    )}
+    {isSharedViewer && <ReadOnlySharedTicker className="mb-6 mt-1" />}
 
     {statsSyncBadge && (
       <section className="-mt-1">

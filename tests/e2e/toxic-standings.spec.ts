@@ -322,10 +322,10 @@ test.describe('Toxic Standings', () => {
   test('shared viewer can see toxic tab read-only', async ({ page }) => {
     await page.goto('/app?e2e=toxic-shared');
 
-    await expect(page.getByText('This page is read-only.')).toBeVisible();
+    await expect(page.getByText('Read-only · Shared view')).toBeVisible();
     await expect(page.getByText('Hall of Shame').first()).toBeVisible();
     await expect(page.getByText(/King of Cupu/i).first()).toBeVisible();
-    await expect(page.getByText('Wanna try FOM Play?')).toBeVisible();
+    await expect(page.getByText('Hosted with FOM Play')).toBeVisible();
   });
 
   test('shared toxic CTA reuses the standings link', async ({ page }) => {
