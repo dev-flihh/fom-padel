@@ -45,6 +45,7 @@ type MatchActiveScreenProps = {
   onDeleteMatch: () => void | Promise<void>;
   needsRegenerateFromRound: number | null;
   onOpenStandings: () => void;
+  onOpenRewind: () => void;
   onSwapPlayer: (matchId: string, team: 'A' | 'B', playerIndex: number, newPlayer: Player) => void;
   onSwapTeam: (matchId: string, team: 'A' | 'B', playerIds: [string, string]) => void;
   onShareMatch: () => void;
@@ -208,6 +209,7 @@ export const MatchActiveScreen = ({
   onDeleteMatch,
   needsRegenerateFromRound,
   onOpenStandings,
+  onOpenRewind,
   onSwapPlayer,
   onSwapTeam,
   onShareMatch,
@@ -486,6 +488,8 @@ export const MatchActiveScreen = ({
   const completedRounds = tournament.rounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
   const totalRounds = Math.max(tournament.numRounds || 0, tournament.rounds.length);
   const isTournamentEnded = totalRounds > 0 && completedRounds >= totalRounds;
+  const hasRemoteRewind = Boolean(tournament.rewind?.slides?.length);
+  const showRewindEntry = isTournamentEnded && (!isSharedViewer || hasRemoteRewind);
   const statsSyncBadge = getStatsSyncBadge({
     isTournamentEnded,
     isSharedViewer,
@@ -944,6 +948,34 @@ export const MatchActiveScreen = ({
           onOpenStandings={onOpenStandings}
           onShareMatch={onShareMatch}
         />
+
+        {/* Entry FOM Rewind: identik dengan Klasemen supaya host bisa buka
+            rekap langsung dari halaman match setelah pertandingan selesai. */}
+        {showRewindEntry && (
+          <button
+            type="button"
+            onClick={onOpenRewind}
+            className="tap-target cta-shimmer mt-4 flex w-full items-center gap-3 rounded-2xl bg-[linear-gradient(120deg,#FF7A2F_0%,#E65E14_58%,#D9520C_100%)] py-3 pl-4 pr-3.5 text-left shadow-[0_8px_22px_rgba(230,94,20,0.28)] transition-transform active:scale-[0.99] motion-reduce:transition-none motion-reduce:active:scale-100"
+            aria-label={hasRemoteRewind ? 'View FOM Rewind' : 'Bikin FOM Rewind'}
+          >
+            <img
+              src="/assets/fom-logomark-app.png"
+              alt=""
+              aria-hidden="true"
+              className="h-[22px] w-[29px] shrink-0 object-contain"
+              style={{ filter: 'brightness(0) invert(1)' }}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[8.5px] font-black uppercase leading-none tracking-[0.18em] text-white/72">FOM Rewind</span>
+              <span className="mt-1 block truncate text-[13px] font-bold leading-tight text-white">
+                Lihat rekap pertandinganmu
+              </span>
+            </span>
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/16 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18)]">
+              <ArrowRight size={14} strokeWidth={2.4} />
+            </span>
+          </button>
+        )}
 
         <ActiveMatchRoundStepper
           rounds={tournament.rounds}

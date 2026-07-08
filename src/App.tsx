@@ -2778,6 +2778,7 @@ export default function App() {
         onDeleteMatch={() => { }}
         needsRegenerateFromRound={null}
         onOpenStandings={() => { }}
+        onOpenRewind={() => { }}
         onSwapPlayer={() => { }}
         onSwapTeam={() => { }}
         onShareMatch={() => { }}
@@ -3025,6 +3026,14 @@ export default function App() {
             onDeleteMatch={handleDeleteActiveMatch}
             needsRegenerateFromRound={needsRegenerateFromRound}
             onOpenStandings={handleOpenLiveStandings}
+            onOpenRewind={() => {
+              // Rewind hidup di Klasemen (pipeline standings-nya lengkap);
+              // dari halaman match kita arm prompt lalu buka standings supaya
+              // RewindFlow auto-open begitu KlasemenScreen mount.
+              const rewindTournament = activeScreenTournament || tournament;
+              if (rewindTournament?.id) setRewindPromptTournamentId(rewindTournament.id);
+              handleOpenLiveStandings();
+            }}
             onSwapPlayer={handleSwapPlayer}
             onSwapTeam={handleSwapTeam}
             onShareMatch={handleShareCurrentMatch}

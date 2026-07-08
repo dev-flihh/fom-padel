@@ -70,13 +70,17 @@ export const KlasemenScreen = ({
   const hasRemoteRewind = Boolean(tournament.rewind?.slides?.length);
 
   // FR-4.5: after finishing a match, host lands on Klasemen and is prompted
-  // straight into the Rewind upload (skippable). One-shot, host-only.
+  // straight into the Rewind upload (skippable). One-shot. Juga dipakai saat
+  // host/guest menekan tombol Rewind di halaman match (arm prompt lalu
+  // navigasi ke sini). Shared viewer hanya boleh auto-open bila ada remote
+  // rewind — selaras dengan syarat tampil tombolnya.
   useEffect(() => {
-    if (!autoPromptRewind || isSharedViewer) return;
+    if (!autoPromptRewind) return;
+    if (isSharedViewer && !hasRemoteRewind) return;
     setRewindEntrySource('finish_flow');
     setIsRewindOpen(true);
     onRewindPromptConsumed?.();
-  }, [autoPromptRewind, isSharedViewer, onRewindPromptConsumed]);
+  }, [autoPromptRewind, isSharedViewer, hasRemoteRewind, onRewindPromptConsumed]);
   const rewindShareId = useMemo(() => {
     const startedAt = Number(tournament.startedAt || 0);
     const uid = String(currentUser?.uid || '').trim();
