@@ -19,11 +19,11 @@
 
 @layer base {
   :root {
-    color-scheme: light;
+    color-scheme: only light;
   }
 
   html {
-    color-scheme: light;
+    color-scheme: only light;
     background-color: #FFFFFF;
   }
 
@@ -60,7 +60,7 @@
 
   body {
     @apply bg-surface text-on-surface antialiased;
-    color-scheme: light;
+    color-scheme: only light;
     background-color: #FFFFFF;
     font-family: var(--font-sans);
     text-rendering: optimizeLegibility;
@@ -74,7 +74,7 @@
 
   input, select, textarea {
     @apply text-on-surface;
-    color-scheme: light;
+    color-scheme: only light;
   }
 
   input[type="number"]::-webkit-outer-spin-button,

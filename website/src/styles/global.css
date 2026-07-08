@@ -27,6 +27,9 @@
 
 html {
   scroll-behavior: smooth;
+  /* "only light" menolak Auto Dark Mode Chrome/WebView Android —
+     situs & app FOM selalu tampil light apa pun tema HP. */
+  color-scheme: only light;
 }
 
 body {
