@@ -5,6 +5,7 @@ import { formatDurationFromMs } from './matchTimeUtils';
 import { getPartnerMode } from './partnerMode';
 import { buildNextFixedMexicanoRound, buildNextFixedTeamRound, getActiveFixedTeams } from './fixedTeamScheduler';
 import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
+import { reportError } from '../../lib/reportError';
 import type { Match, Player, Round, Tournament, TournamentHistory } from '../../types';
 
 type AddNotification = (
@@ -524,6 +525,18 @@ export const useRoundProgressionActions = ({
         const p3 = playersInRound[m * 4 + 2];
         const p4 = playersInRound[m * 4 + 3];
 
+        // Defensive: a court must have all four players. In the normal path this
+        // always holds, but if an upstream miscount ever leaves a slot empty we
+        // skip the court and report it, instead of building a match with an
+        // undefined player that crashes when a score is entered.
+        if (!p1 || !p2 || !p3 || !p4) {
+          reportError(
+            new Error(`Round generation (Mexicano): lapangan ${m + 1} kurang pemain (butuh 4).`),
+            'round-generation',
+          );
+          continue;
+        }
+
         roundMatches.push({
           id: `r${nextRoundId}-m${m + 1}`,
           court: m + 1,
@@ -575,14 +588,29 @@ export const useRoundProgressionActions = ({
       const playersBye = shuffled.slice(playersNeeded);
 
       for (let m = 0; m < playersNeeded / 4; m++) {
+        const p1 = playersInRound[m * 4];
+        const p2 = playersInRound[m * 4 + 1];
+        const p3 = playersInRound[m * 4 + 2];
+        const p4 = playersInRound[m * 4 + 3];
+
+        // Defensive: skip and report an under-filled court rather than build a
+        // match with an undefined player that crashes on score entry.
+        if (!p1 || !p2 || !p3 || !p4) {
+          reportError(
+            new Error(`Round generation (Match Play): lapangan ${m + 1} kurang pemain (butuh 4).`),
+            'round-generation',
+          );
+          continue;
+        }
+
         roundMatches.push({
           id: `r${nextRoundId}-m${m + 1}`,
           court: m + 1,
           roundId: nextRoundId,
           status: 'active',
           startedAt: now,
-          teamA: { players: [playersInRound[m * 4], playersInRound[m * 4 + 1]], score: 0, sets: [0] },
-          teamB: { players: [playersInRound[m * 4 + 2], playersInRound[m * 4 + 3]], score: 0, sets: [0] },
+          teamA: { players: [p1, p2], score: 0, sets: [0] },
+          teamB: { players: [p3, p4], score: 0, sets: [0] },
           currentSet: 0,
           pointsA: '0',
           pointsB: '0',
