@@ -2,6 +2,7 @@ import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } 
 import { onSnapshot } from 'firebase/firestore';
 import { getTournamentShareStorageKey } from '../history/historyPersistence';
 import { discoverSharedMatchIdsForActiveTournament, getSharedMatchRef } from '../../services/sharedMatchRepository';
+import { coerceToDate } from '../../services/firestoreSerialization';
 import { SHARED_MATCHES_COLLECTION } from '../../services/firestoreCollections';
 import type { Screen, Tournament, TournamentHistory } from '../../types';
 
@@ -85,7 +86,14 @@ export const useSharedMatchLifecycle = ({
       }
       const data = snap.data();
       if (data?.tournament) {
-        setTournament(data.tournament as Tournament);
+        const sharedTournament = data.tournament as Tournament;
+        // Dokumen share lama bisa membawa date korup (mis. {} kosong) yang
+        // bikin layar viewer crash saat diformat — paksa jadi Date valid.
+        const normalizedDate =
+          coerceToDate((sharedTournament as { date?: unknown }).date) ||
+          coerceToDate(sharedTournament.startedAt) ||
+          undefined;
+        setTournament({ ...sharedTournament, date: normalizedDate } as Tournament);
         setScreen(sharedTargetScreen);
       }
       setIsSharedDataReady(true);

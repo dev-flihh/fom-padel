@@ -5,6 +5,7 @@ import { SharedViewerFomPlayCta } from '../../components/app/SharedViewerFomPlay
 import { ReadOnlySharedTicker } from '../../components/app/ReadOnlySharedTicker';
 import { cn } from '../../lib/utils';
 import { fetchToxicCopyConfig } from '../../services/toxicCopyRemoteConfig';
+import { coerceToDate } from '../../services/firestoreSerialization';
 import { type Player, type Round, type Tournament, type TournamentHistory, type TournamentStatsSyncState } from '../../types';
 import { getMatchThemeColor } from '../tournaments/matchTheme';
 import { formatDurationFromMs, formatElapsedForStat, getTournamentElapsedMs } from './matchTimeUtils';
@@ -216,8 +217,9 @@ export const KlasemenScreen = ({
       )
     : null;
   const completionPercent = totalMatches > 0 ? Math.min(100, Math.round((progressedMatches / totalMatches) * 100)) : 0;
-  const dateLabel = 'date' in tournament && tournament.date
-    ? tournament.date.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+  const tournamentDate = coerceToDate('date' in tournament ? tournament.date : null);
+  const dateLabel = tournamentDate
+    ? tournamentDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
     : ('startedAt' in tournament && tournament.startedAt
         ? new Date(tournament.startedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
         : '');

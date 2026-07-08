@@ -1,6 +1,6 @@
 import type { Match, Player, Tournament, TournamentHistory } from '../../types';
 import { normalizeCourtChanges } from '../history/historyPersistence';
-import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
+import { coerceToDate, stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
 
 const getShareableInitials = (name = '') => (
   name
@@ -52,8 +52,16 @@ export const toShareableTournamentSnapshot = (targetTournament: Tournament | Tou
     }))
     .filter((round) => round.matches.length > 0);
 
+  // date bisa berupa Firestore Timestamp / map korup di state; kalau ikut
+  // di-JSON-kan apa adanya, dokumen share menyimpan {} dan bikin viewer crash.
+  const shareableDate =
+    coerceToDate('date' in targetTournament ? targetTournament.date : null) ||
+    coerceToDate(targetTournament.startedAt) ||
+    undefined;
+
   return toFirestoreSafe(stripLargeInlineImages(stripTournamentPlayerAvatars({
     ...targetTournament,
+    date: shareableDate,
     players: (targetTournament.players || []).map(toShareablePlayerSnapshot),
     rounds: shareableRounds,
     courtChanges: normalizeCourtChanges(targetTournament.courtChanges),
