@@ -37,7 +37,6 @@ import { useAuthBootstrap } from './features/auth/useAuthBootstrap';
 import { useAppShellNavigation } from './features/app/useAppShellNavigation';
 import { DashboardScreen as DashboardFeatureScreen } from './features/dashboard/DashboardScreen';
 import { ProfileScreen } from './features/profile/ProfileScreen';
-import { MatchBackgroundPickerScreen } from './features/matches/MatchBackgroundPickerScreen';
 import { MatchActiveScreen } from './features/matches/MatchActiveScreen';
 import { useActiveMatchDeletionAction } from './features/matches/useActiveMatchDeletionAction';
 import { KlasemenScreen } from './features/matches/KlasemenScreen';
@@ -1055,6 +1054,8 @@ export default function App() {
   const [friendsEntrySource, setFriendsEntrySource] = useState<'profile' | 'settings'>('profile');
   const [settingsFocusSection, setSettingsFocusSection] = useState<'players' | null>(null);
   const [matchSettingsWizardStep, setMatchSettingsWizardStep] = useState(0);
+  // Naik setiap quick start dipakai — remount wizard agar draft ter-init ulang.
+  const [matchSettingsResetToken, setMatchSettingsResetToken] = useState(0);
   const [rankingFocusRequestId, setRankingFocusRequestId] = useState(0);
   const [leaderboardRefreshToken, setLeaderboardRefreshToken] = useState(0);
   const [draftMatchBackgroundId, setDraftMatchBackgroundId] = useState<string | null>(null);
@@ -1208,7 +1209,6 @@ export default function App() {
   });
   const {
     handleGenerateTournament,
-    handleSkipMatchBackground,
     handleAddPlayerDuringActiveMatch: addPlayerDuringActiveMatch,
   } = useTournamentSetupActions({
     tournament,
@@ -2935,22 +2935,10 @@ export default function App() {
           />
         )}
         {screen === 'settings' && (
+          <React.Fragment key={`match-settings-${matchSettingsResetToken}`}>
           <MatchSettingsScreen
             onBack={() => setScreen('dashboard')}
             onGenerate={handleGenerateTournament}
-            onOpenFriends={() => {
-              const selectedIds = new Set((tournament.players || []).filter(Boolean).map((p) => p.id));
-              const allIds = new Set((allPlayers || []).filter(Boolean).map((p) => p.id));
-              const missingFromList = Array.from(selectedIds).filter((id) => !allIds.has(id)).length;
-              console.info('[FriendsPicker] Open from match settings', {
-                selectedCount: selectedIds.size,
-                allPlayersCount: allIds.size,
-                missingFromList
-              });
-              setMatchSettingsWizardStep(2);
-              setFriendsEntrySource('settings');
-              setScreen('friends');
-            }}
             tournament={tournament}
             setTournament={setTournament}
             allPlayers={allPlayers}
@@ -2961,28 +2949,17 @@ export default function App() {
             onFocusHandled={() => setSettingsFocusSection(null)}
             wizardStep={matchSettingsWizardStep}
             onWizardStepChange={setMatchSettingsWizardStep}
-            selectedBackgroundId={draftMatchBackgroundId}
-            onSelectBackground={setDraftMatchBackgroundId}
-          />
-        )}
-        {screen === 'background-picker' && (
-          <MatchBackgroundPickerScreen
-            tournament={tournament}
-            selectedBackgroundId={draftMatchBackgroundId}
-            onSelectBackground={setDraftMatchBackgroundId}
-            onBack={() => setScreen('settings')}
-            onSkip={handleSkipMatchBackground}
-            onContinue={() => {
-              if (!draftMatchBackgroundId) return;
-              setTournament((prev) => ({
-                ...prev,
-                backgroundId: draftMatchBackgroundId
-              }));
-              setActiveScreenTournament(null);
-              setActiveBackScreen('dashboard');
-              setScreen('active');
+            historyTournaments={tournaments}
+            onApplyQuickStart={(draft) => {
+              // Quick start (A4): isi seluruh draft dari match/template lama,
+              // remount wizard supaya state draft ter-init ulang. Tetap di
+              // Step 1 — user memeriksa isian tiap step sendiri (R1.1 v2.1).
+              setTournament(draft);
+              setMatchSettingsResetToken((token) => token + 1);
+              setMatchSettingsWizardStep(0);
             }}
           />
+          </React.Fragment>
         )}
         {screen === 'active' && (
           <MatchActiveScreen

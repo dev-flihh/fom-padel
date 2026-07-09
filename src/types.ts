@@ -191,7 +191,7 @@ export interface FriendRequest {
   resolvedAt?: any;
 }
 
-export type Screen = 'login' | 'dashboard' | 'settings' | 'background-picker' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends' | 'rooms' | 'room-editor' | 'room-detail' | 'room-setup';
+export type Screen = 'login' | 'dashboard' | 'settings' | 'active' | 'klasemen' | 'profile' | 'notifications' | 'leaderboard' | 'rank-discovery' | 'mmr-history' | 'history' | 'history-detail' | 'friends' | 'rooms' | 'room-editor' | 'room-detail' | 'room-setup';
 
 export type TournamentStatsSyncState = 'syncing' | 'synced' | 'error';
 

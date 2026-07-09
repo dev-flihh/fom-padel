@@ -17,9 +17,11 @@ test.describe('Fix Partner Flow', () => {
     await expect(page.getByText('You set the pairs once and they stay together all session.', { exact: false })).toBeVisible();
     await page.getByRole('button', { name: 'Continue' }).click();
 
-    // Step 3: players — 5 players (odd) must be blocked with a clear reason
-    await expect(page.getByText('Fixed teams')).toBeVisible();
-    await expect(page.getByText('1 player without a team')).toBeVisible();
+    // Step 3: players — roster tampil sebagai kartu tim; 5 pemain (ganjil)
+    // diblok dengan slot kosong + alasan yang jelas (R3.2/R3.4)
+    await expect(page.getByText('Tap two players to swap partners.')).toBeVisible();
+    await expect(page.getByText('Team 1', { exact: true })).toBeVisible();
+    await expect(page.getByText('Needs a partner', { exact: true })).toBeVisible();
     await expect(
       page.getByText('Fix Partner needs an even number of players', { exact: false }).first()
     ).toBeVisible();
@@ -31,24 +33,16 @@ test.describe('Fix Partner Flow', () => {
 
     // Remove the now-unpaired player to make the roster even
     await page.getByRole('button', { name: 'Remove BG Player 1' }).click();
-    await expect(page.getByText('player without a team')).toHaveCount(0);
+    await expect(page.getByText('Needs a partner', { exact: true })).toHaveCount(0);
     await expect(page.getByText('4 players ready.').first()).toBeVisible();
     await page.getByRole('button', { name: 'Continue' }).click();
 
-    // Step 4: appearance
-    await page.getByRole('button', { name: 'Continue' }).click();
-
-    // Step 5: review shows the partner summary row
+    // Step 4: review shows the partner summary row (Appearance step dihapus)
     await expect(page.getByRole('heading', { name: 'Review setup.' })).toBeVisible();
     await expect(page.getByText('Fix Partner · 2 teams')).toBeVisible();
     await page.getByRole('button', { name: 'Generate Match' }).click();
 
-    const backgroundHeading = page.getByRole('heading', { name: 'Select Background' });
-    if (await backgroundHeading.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await page.getByRole('button', { name: 'Skip (Random)' }).click();
-    }
-
-    // Round 1 uses the fixed pairs
+    // Round 1 uses the fixed pairs — langsung ke match, tanpa layar background
     await expect(page.getByText(/Round 1/i).first()).toBeVisible();
     const teamAScore = page.getByRole('textbox', { name: 'Score for E2E User and BG Player 4 on court 1' });
     const teamBScore = page.getByRole('textbox', { name: 'Score for BG Player 2 and BG Player 3 on court 1' });

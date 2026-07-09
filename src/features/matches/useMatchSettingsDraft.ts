@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { INITIAL_TOURNAMENT } from '../../constants';
 import { type FixedTeam, type MatchFormat, type PartnerMode, type Player, type RankingCriteria, type ScoringType, type ToxicIntensity, type Tournament } from '../../types';
-import { getDefaultMatchThemeColorId, getMatchThemeColor } from '../tournaments/matchTheme';
+import { getDefaultMatchThemeColorId } from '../tournaments/matchTheme';
 import { normalizeToxicIntensity } from './toxicSettings';
 import { areFixedTeamsEqual, reconcileFixedTeams, sanitizeFixedTeams, swapFixedTeamMembers } from './partnerMode';
 
@@ -10,21 +10,20 @@ export const useMatchSettingsDraft = ({
   setTournament,
   selectedPlayers,
   location,
-  selectedBackgroundId,
   onGenerate
 }: {
   tournament: Tournament;
   setTournament: Dispatch<SetStateAction<Tournament>>;
   selectedPlayers: Player[];
   location: string;
-  selectedBackgroundId?: string | null;
   onGenerate: (tournament: Tournament) => void;
 }) => {
   const [format, setFormat] = useState<MatchFormat>(tournament.format);
   const [partnerMode, setPartnerMode] = useState<PartnerMode>(tournament.partnerMode === 'fixed' ? 'fixed' : 'rotating');
   const [fixedTeams, setFixedTeams] = useState<FixedTeam[]>(tournament.fixedTeams || []);
+  // Appearance step dihapus: warna tema tidak lagi dipilih user, selalu
+  // mengikuti default format supaya layar live/klasemen tetap bertema.
   const [selectedThemeColorId, setSelectedThemeColorId] = useState(() => tournament.themeColorId || getDefaultMatchThemeColorId(tournament.format));
-  const hasCustomizedThemeColorRef = useRef(Boolean(tournament.themeColorId));
   const [toxicModeEnabled, setToxicModeEnabled] = useState(Boolean(tournament.toxicModeEnabled));
   const [toxicIntensity, setToxicIntensity] = useState<ToxicIntensity>(() => normalizeToxicIntensity(tournament.toxicIntensity));
   const [criteria, setCriteria] = useState<RankingCriteria>(tournament.criteria);
@@ -110,9 +109,7 @@ export const useMatchSettingsDraft = ({
 
   const applyFormatChoice = (value: MatchFormat) => {
     setFormat(value);
-    if (!hasCustomizedThemeColorRef.current) {
-      setSelectedThemeColorId(getDefaultMatchThemeColorId(value));
-    }
+    setSelectedThemeColorId(getDefaultMatchThemeColorId(value));
     if (value === 'Americano') {
       setCriteria('Points Won');
       if (numRounds < 5) setNumRounds(5);
@@ -125,11 +122,6 @@ export const useMatchSettingsDraft = ({
       setCriteria('Matches Won');
       if (numRounds < 3) setNumRounds(3);
     }
-  };
-
-  const selectThemeColor = (themeColorId: string) => {
-    hasCustomizedThemeColorRef.current = true;
-    setSelectedThemeColorId(themeColorId);
   };
 
   const handleGenerate = () => {
@@ -152,7 +144,7 @@ export const useMatchSettingsDraft = ({
       durationMinutes,
       venueName: venueName.trim(),
       location: location.trim(),
-      backgroundId: selectedBackgroundId || tournament.backgroundId,
+      backgroundId: tournament.backgroundId,
       rounds: []
     };
     onGenerate(updatedTournament);
@@ -172,7 +164,6 @@ export const useMatchSettingsDraft = ({
     durationMinutes,
     gameName,
     venueName,
-    selectedThemeColor: getMatchThemeColor(format, selectedThemeColorId),
     venueDisplayLabel: [venueName.trim(), location.trim()].filter(Boolean).join(', ') || 'Venue not set',
     setCriteria,
     setToxicModeEnabled,
@@ -187,7 +178,6 @@ export const useMatchSettingsDraft = ({
     applyFormatChoice,
     applyPartnerModeChoice,
     swapFixedTeamPlayers,
-    selectThemeColor,
     handleGenerate
   };
 };

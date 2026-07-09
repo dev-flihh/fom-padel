@@ -1,63 +1,38 @@
 import { expect, test } from '@playwright/test';
 
-const goToAppearanceStep = async (page: import('@playwright/test').Page) => {
-  await expect(page.getByRole('heading', { name: 'Name your match.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByRole('heading', { name: 'Choose appearance.' })).toBeVisible();
-};
-
-const generateFromAppearanceStep = async (page: import('@playwright/test').Page) => {
-  await page.getByRole('button', { name: 'Continue' }).click();
-  await expect(page.getByRole('heading', { name: 'Review setup.' })).toBeVisible();
-  await page.getByRole('button', { name: 'Generate Match' }).click();
-};
-
-test.describe('Background Picker Flow', () => {
-  test('manual background selection is applied to review preview', async ({ page }) => {
+// Appearance step & background picker dihapus (PRD Match Creation v2 §5.3):
+// wizard 4 langkah, generate langsung ke layar match dengan background default.
+test.describe('Match Creation Without Appearance Step', () => {
+  test('wizard has 4 steps and review has no color/background rows', async ({ page }) => {
     await page.goto('/app?e2e=background-flow');
 
-    await goToAppearanceStep(page);
-
-    const firstBackgroundImage = page.locator('img[alt="Mexicano background 1"]').first();
-    const selectedBackgroundSrc = await firstBackgroundImage.getAttribute('src');
-    expect(selectedBackgroundSrc).not.toBeNull();
-
-    await firstBackgroundImage.click();
-    await page.getByRole('button', { name: 'Continue' }).click();
-    await expect(page.getByRole('heading', { name: 'Review setup.' })).toBeVisible();
-
-    const reviewBackgroundSrc = await page.locator('img[alt="Background preview"]').first().getAttribute('src');
-    expect(reviewBackgroundSrc).toBe(selectedBackgroundSrc);
-  });
-
-  test('default appearance applies one match background to review', async ({ page }) => {
-    await page.goto('/app?e2e=background-flow');
-
-    await goToAppearanceStep(page);
-    const selectedBackgroundSrc = await page.locator('img[alt="Selected background preview"]').first().getAttribute('src');
-    expect(selectedBackgroundSrc).not.toBeNull();
+    await expect(page.getByRole('heading', { name: 'Name your match.' })).toBeVisible();
+    await expect(page.getByText('Step 1 of 4')).toBeVisible();
 
     await page.getByRole('button', { name: 'Continue' }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Add players.' })).toBeVisible();
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    // Langkah ke-4 langsung Review — tidak ada langkah Appearance.
     await expect(page.getByRole('heading', { name: 'Review setup.' })).toBeVisible();
-    const reviewBackground = page.locator('img[alt="Background preview"]').first();
-    await expect(reviewBackground).toBeVisible();
-    const reviewBackgroundSrc = await reviewBackground.getAttribute('src');
-    expect(reviewBackgroundSrc).toBe(selectedBackgroundSrc);
+    await expect(page.getByRole('heading', { name: 'Choose appearance.' })).toHaveCount(0);
+    await expect(page.getByText('Background', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Color', { exact: true })).toHaveCount(0);
   });
 
-  test('active match and standings use the clean production surface without photo blur', async ({ page }) => {
+  test('generate goes straight to the active match with the clean production surface', async ({ page }) => {
     await page.goto('/app?e2e=background-flow');
 
-    await goToAppearanceStep(page);
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('heading', { name: 'Review setup.' })).toBeVisible();
+    await page.getByRole('button', { name: 'Generate Match' }).click();
 
-    const selectedBackground = page.locator('img[alt="Mexicano background 2"]').first();
-    const selectedBackgroundSrc = await selectedBackground.getAttribute('src');
-    expect(selectedBackgroundSrc).not.toBeNull();
-
-    await selectedBackground.click();
-    await generateFromAppearanceStep(page);
+    // Tidak ada layar "Select Background" setelah generate.
+    await expect(page.getByRole('heading', { name: 'Select Background' })).toHaveCount(0);
     await expect(page.getByText(/Round 1/i).first()).toBeVisible();
     await expect(page.locator('img[alt="Active background"]')).toHaveCount(0);
 

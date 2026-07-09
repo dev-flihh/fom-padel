@@ -6,7 +6,6 @@ export const MATCH_SETTINGS_WIZARD_STEPS = [
   { label: 'Info', title: 'Match Info', context: 'Naming your match' },
   { label: 'Format', title: 'Format', context: 'Choosing a format' },
   { label: 'Players', title: 'Players', context: 'Choosing players' },
-  { label: 'Appearance', title: 'Appearance', context: 'Choosing appearance' },
   { label: 'Summary', title: 'Summary', context: 'Reviewing setup' }
 ];
 

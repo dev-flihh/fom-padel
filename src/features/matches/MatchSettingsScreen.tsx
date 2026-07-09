@@ -1,17 +1,22 @@
-import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence } from 'motion/react';
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { auth } from '../../firebase';
-import { type AppNotification, type Player, type Tournament } from '../../types';
-import { MATCH_THEME_COLORS } from '../tournaments/matchTheme';
-import { AddPlayerModal } from './AddPlayerModal';
-import { AppearanceStep } from './AppearanceStep';
+import { type AppNotification, type Player, type Tournament, type TournamentHistory } from '../../types';
+import {
+  buildDraftFromHistory,
+  buildDraftFromTemplate,
+  buildTemplateFromSettings,
+  describeQuickStartContext,
+  findRepeatableHistory,
+  summarizeQuickStartSource,
+  type MatchTemplate
+} from '../tournaments/quickStart';
+import { deleteMatchTemplate, listMatchTemplates, saveMatchTemplate } from '../../services/matchTemplatesRepository';
 import { FormatStep } from './FormatStep';
-import { MatchInfoStep } from './MatchInfoStep';
+import { MatchInfoStep, type MatchInfoQuickStart } from './MatchInfoStep';
 import { MatchSettingsWizardShell } from './MatchSettingsWizardShell';
 import { PlayersStep } from './PlayersStep';
 import { ReviewStep } from './ReviewStep';
 import { useCourtSearch } from './useCourtSearch';
-import { useMatchBackgroundSelection } from './useMatchBackgroundSelection';
 import { useMatchSettingsDraft } from './useMatchSettingsDraft';
 import { useMatchSettingsFriends } from './useMatchSettingsFriends';
 import { useMatchSettingsPlayers } from './useMatchSettingsPlayers';
@@ -25,7 +30,6 @@ import { MATCH_SETTINGS_WIZARD_CLASSNAMES } from './matchSettingsStyles';
 export const MatchSettingsScreen = ({
   onBack,
   onGenerate,
-  onOpenFriends,
   tournament,
   setTournament,
   allPlayers,
@@ -36,12 +40,11 @@ export const MatchSettingsScreen = ({
   onFocusHandled,
   wizardStep,
   onWizardStepChange,
-  selectedBackgroundId,
-  onSelectBackground
+  historyTournaments,
+  onApplyQuickStart
 }: {
   onBack: () => void;
   onGenerate: (t: Tournament) => void;
-  onOpenFriends: () => void;
   tournament: Tournament;
   setTournament: Dispatch<SetStateAction<Tournament>>;
   allPlayers: Player[];
@@ -52,10 +55,9 @@ export const MatchSettingsScreen = ({
   onFocusHandled?: () => void;
   wizardStep?: number;
   onWizardStepChange?: (step: number) => void;
-  selectedBackgroundId?: string | null;
-  onSelectBackground?: (backgroundId: string) => void;
+  historyTournaments?: TournamentHistory[];
+  onApplyQuickStart?: (draft: Tournament) => void;
 }) => {
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const settingsUserUid = auth.currentUser?.uid || currentUser?.uid;
   const currentUserPlayer = useMemo<Player | null>(() => {
     const uid = String(settingsUserUid || '').trim();
@@ -138,6 +140,64 @@ export const MatchSettingsScreen = ({
     setAllPlayers,
     setTournament
   });
+
+  // Quick start (PRD v2 §5.1, pola A4): repeat match terakhir + template.
+  const [templates, setTemplates] = useState<MatchTemplate[]>([]);
+  useEffect(() => {
+    setTemplates(listMatchTemplates(settingsUserUid));
+  }, [settingsUserUid]);
+  const repeatableHistory = useMemo(
+    () => findRepeatableHistory(historyTournaments || []),
+    [historyTournaments]
+  );
+  const quickStart = useMemo<MatchInfoQuickStart>(() => {
+    if (!onApplyQuickStart) return null;
+    if (!repeatableHistory && templates.length === 0) return null;
+    return {
+      repeatLabel: repeatableHistory ? summarizeQuickStartSource(repeatableHistory) : '',
+      repeatContext: repeatableHistory
+        ? describeQuickStartContext({
+            venueName: repeatableHistory.venueName,
+            location: repeatableHistory.location,
+            date: repeatableHistory.date
+          })
+        : '',
+      templates: templates.map((template) => ({
+        id: template.id,
+        name: template.name,
+        label: summarizeQuickStartSource(template)
+      })),
+      onUseRepeat: () => {
+        if (!repeatableHistory) return;
+        onApplyQuickStart(buildDraftFromHistory(repeatableHistory));
+        onAddNotification('Setup applied', 'Every step is pre-filled from your last match. Review and adjust as needed.', 'system');
+      },
+      onUseTemplate: (templateId: string) => {
+        const template = templates.find((item) => item.id === templateId);
+        if (!template) return;
+        onApplyQuickStart(buildDraftFromTemplate(template));
+        onAddNotification('Setup applied', `Every step is pre-filled from "${template.name}". Review and adjust as needed.`, 'system');
+      },
+      onDeleteTemplate: (templateId: string) => {
+        setTemplates(deleteMatchTemplate(settingsUserUid, templateId));
+      }
+    };
+  }, [onApplyQuickStart, onAddNotification, repeatableHistory, templates, settingsUserUid]);
+
+  // R5.3: simpan template dulu (fire-and-forget), lalu lanjut generate.
+  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const handleGenerateWithExtras = (settings: Tournament) => {
+    if (saveAsTemplate) {
+      try {
+        saveMatchTemplate(settingsUserUid, buildTemplateFromSettings(settings, templateName.trim() || settings.name));
+      } catch (err) {
+        console.error('Save match template error:', err);
+      }
+    }
+    onGenerate(settings);
+  };
+
   const {
     format,
     partnerMode,
@@ -152,7 +212,6 @@ export const MatchSettingsScreen = ({
     durationMinutes,
     gameName,
     venueName,
-    selectedThemeColor,
     venueDisplayLabel,
     setCriteria,
     setToxicModeEnabled,
@@ -167,15 +226,13 @@ export const MatchSettingsScreen = ({
     applyFormatChoice,
     applyPartnerModeChoice,
     swapFixedTeamPlayers,
-    selectThemeColor,
     handleGenerate
   } = useMatchSettingsDraft({
     tournament,
     setTournament,
     selectedPlayers: effectiveSelectedPlayers,
     location,
-    selectedBackgroundId,
-    onGenerate
+    onGenerate: handleGenerateWithExtras
   });
 
   useEffect(() => {
@@ -191,7 +248,6 @@ export const MatchSettingsScreen = ({
 
   const handleAddPlayer = (newPlayer: Player) => {
     addPlayer(newPlayer);
-    setIsAddModalOpen(false);
     onAddNotification('New Player!', `${newPlayer.name} has been added to the player list.`, 'system');
   };
   const handleTogglePlayer = (player: Player) => {
@@ -241,11 +297,6 @@ export const MatchSettingsScreen = ({
     requireEvenPlayers: partnerMode === 'fixed',
     onComplete: handleGenerate
   });
-  const { backgroundOptions, effectiveSelectedBackgroundId } = useMatchBackgroundSelection({
-    selectedBackgroundId,
-    onSelectBackground,
-    enabled: true
-  });
 
   return (
     <MatchSettingsWizardShell
@@ -259,17 +310,6 @@ export const MatchSettingsScreen = ({
       onBack={onBack}
       onGoToStep={goToWizardStep}
       onNext={goToNextWizardStep}
-      modalSlot={(
-        <AnimatePresence>
-          {isAddModalOpen && (
-            <AddPlayerModal
-              isOpen={isAddModalOpen}
-              onClose={() => setIsAddModalOpen(false)}
-              onAdd={handleAddPlayer}
-            />
-          )}
-        </AnimatePresence>
-      )}
     >
       {settingsStep === 0 && (
         <MatchInfoStep
@@ -280,6 +320,7 @@ export const MatchSettingsScreen = ({
           isSearchingCourts={isSearchingCourts}
           courtSearchError={courtSearchError}
           showCourtSuggestions={showCourtSuggestions}
+          quickStart={quickStart}
           wizardHeadingClass={wizardHeadingClass}
           wizardTitleClass={wizardTitleClass}
           wizardSubtitleClass={wizardSubtitleClass}
@@ -339,41 +380,20 @@ export const MatchSettingsScreen = ({
           partnerMode={partnerMode}
           fixedTeams={fixedTeams}
           fixedTeamPlayers={effectiveSelectedPlayers}
+          friends={friends}
           wizardHeadingClass={wizardHeadingClass}
           wizardTitleClass={wizardTitleClass}
           wizardSubtitleClass={wizardSubtitleClass}
-          onOpenFriends={onOpenFriends}
-          onOpenAddPlayer={() => setIsAddModalOpen(true)}
           onTogglePlayer={handleTogglePlayer}
+          onAddPlayer={handleAddPlayer}
           onSwapFixedTeamPlayers={swapFixedTeamPlayers}
         />
       )}
 
       {settingsStep === 3 && (
-        <AppearanceStep
-          format={format}
-          themeColors={MATCH_THEME_COLORS}
-          selectedThemeColor={selectedThemeColor}
-          backgroundOptions={backgroundOptions}
-          selectedBackgroundId={effectiveSelectedBackgroundId}
-          toxicModeEnabled={toxicModeEnabled}
-          toxicIntensity={toxicIntensity}
-          wizardHeadingClass={wizardHeadingClass}
-          wizardTitleClass={wizardTitleClass}
-          wizardSubtitleClass={wizardSubtitleClass}
-          wizardSoftPanelClass={wizardSoftPanelClass}
-          onSelectThemeColor={selectThemeColor}
-          onSelectBackground={onSelectBackground}
-          onToxicModeChange={setToxicModeEnabled}
-          onToxicIntensityChange={setToxicIntensity}
-        />
-      )}
-
-      {settingsStep === 4 && (
         <ReviewStep
           venueDisplayLabel={venueDisplayLabel}
           format={format}
-          formatIcon={FORMAT_IMPACT_COPY[format].icon}
           partnerModeLabel={PARTNER_MODE_LABELS[partnerMode]}
           fixedTeamCount={partnerMode === 'fixed' ? fixedTeams.length : null}
           criteria={criteria}
@@ -381,16 +401,19 @@ export const MatchSettingsScreen = ({
           toxicIntensity={toxicIntensity}
           structureLabel={reviewStructureLabel}
           playerCount={effectiveSelectedPlayers.length}
-          selectedThemeColor={selectedThemeColor}
-          selectedBackgroundId={effectiveSelectedBackgroundId}
           isReady={isReady}
           wizardStatusLabel={wizardStatusLabel}
+          saveAsTemplate={saveAsTemplate}
+          templateName={templateName}
+          templateNamePlaceholder={gameName.trim() || `${format} template`}
           wizardHeadingClass={wizardHeadingClass}
           wizardTitleClass={wizardTitleClass}
           wizardSubtitleClass={wizardSubtitleClass}
           wizardSoftPanelClass={wizardSoftPanelClass}
           onToxicModeChange={setToxicModeEnabled}
           onToxicIntensityChange={setToxicIntensity}
+          onSaveAsTemplateChange={setSaveAsTemplate}
+          onTemplateNameChange={setTemplateName}
           onGoToStep={goToWizardStep}
         />
       )}

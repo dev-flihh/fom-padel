@@ -44,33 +44,20 @@ export const useTournamentSetupActions = ({
   rebuildAmericanoFutureRounds,
 }: Params) => {
   const handleGenerateTournament = (settings: Tournament) => {
-    const nextTournament = generateTournamentFromSettings(settings);
+    // Appearance step dihapus: background per-match tidak lagi dipilih user,
+    // fallback ke default acak per format supaya layar live tetap punya backdrop.
+    const backgroundId = settings.backgroundId || getRandomMatchBackground(settings.format);
+    const nextTournament = generateTournamentFromSettings({ ...settings, backgroundId });
 
     setSharedMatchId(null);
     setTournament(nextTournament);
-    setDraftMatchBackgroundId(settings.backgroundId || null);
+    setDraftMatchBackgroundId(backgroundId);
     setNeedsRegenerateFromRound(null);
     void persistActiveTournamentSnapshot(nextTournament);
-    if (settings.backgroundId) {
-      setActiveScreenTournament(null);
-      setActiveBackScreen('dashboard');
-      setScreen('active');
-    } else {
-      setScreen('background-picker');
-    }
-    addNotification('Matches Started!', `${settings.name} has been created with ${settings.players.length} players.`, 'tournament');
-  };
-
-  const handleSkipMatchBackground = () => {
-    const randomBackgroundId = getRandomMatchBackground(tournament.format);
-    setDraftMatchBackgroundId(randomBackgroundId);
-    setTournament((prev) => ({
-      ...prev,
-      backgroundId: randomBackgroundId,
-    }));
     setActiveScreenTournament(null);
     setActiveBackScreen('dashboard');
     setScreen('active');
+    addNotification('Matches Started!', `${settings.name} has been created with ${settings.players.length} players.`, 'tournament');
   };
 
   const handleAddPlayerDuringActiveMatch = (newPlayer: Player) => {
@@ -114,7 +101,6 @@ export const useTournamentSetupActions = ({
 
   return {
     handleGenerateTournament,
-    handleSkipMatchBackground,
     handleAddPlayerDuringActiveMatch,
   };
 };

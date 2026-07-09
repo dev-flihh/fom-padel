@@ -7,8 +7,8 @@ test.describe('Start Match Flow', () => {
     await expect(page.getByText('Welcome back')).toBeVisible();
     await page.getByText('Start Match').click();
 
+    // Wizard v2: 4 langkah (Info → Format → Players → Review), tanpa Appearance.
     await expect(page.getByRole('heading', { name: 'Name your match.' })).toBeVisible();
-    await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.getByRole('button', { name: 'Continue' }).click();
@@ -16,11 +16,8 @@ test.describe('Start Match Flow', () => {
     await expect(page.getByRole('heading', { name: 'Review setup.' })).toBeVisible();
     await page.getByRole('button', { name: 'Generate Match' }).click();
 
-    const backgroundHeading = page.getByRole('heading', { name: 'Select Background' });
-    if (await backgroundHeading.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await page.getByRole('button', { name: 'Skip (Random)' }).click();
-    }
-
+    // Generate langsung ke layar match — layar pilih background sudah dihapus.
+    await expect(page.getByRole('heading', { name: 'Select Background' })).toHaveCount(0);
     await expect(page.getByText(/Round 1/i).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Share match' })).toBeVisible();
     await expect(page.locator('img[alt="Active background"]')).toHaveCount(0);
