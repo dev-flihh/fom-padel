@@ -73,6 +73,9 @@ export interface TournamentRewindSlideRef {
 export interface TournamentRewind {
   generatedAt: number;
   generatedBy: string;
+  // Rasio export slide: 'story' 9:16 (default, data lama tanpa field ini)
+  // atau 'feed' 3:4. Yang dipersist = rasio generate terakhir.
+  ratio?: 'story' | 'feed';
   slides: TournamentRewindSlideRef[];
 }
 

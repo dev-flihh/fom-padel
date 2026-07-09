@@ -32,11 +32,14 @@ export const persistRewindResult = async ({
   tournamentId,
   currentUid,
   shareId,
+  ratio,
   slides,
 }: {
   tournamentId: string;
   currentUid: string;
   shareId?: string;
+  // Rasio generate terakhir — itulah yang direplay shared viewer & History.
+  ratio?: TournamentRewind['ratio'];
   slides: GeneratedRewindSlide[];
 }): Promise<TournamentRewind | null> => {
   if (!tournamentId || !currentUid || slides.length === 0) return null;
@@ -48,6 +51,7 @@ export const persistRewindResult = async ({
   const rewind: TournamentRewind = {
     generatedAt: Date.now(),
     generatedBy: currentUid,
+    ratio: ratio || 'story',
     slides: uploaded.sort((a, b) => a.order - b.order),
   };
 

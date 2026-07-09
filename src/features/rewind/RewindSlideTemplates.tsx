@@ -1,11 +1,14 @@
 import { Fragment, type ReactNode } from 'react';
 import { cn } from '../../lib/utils';
-import type { RewindPlayerRef, RewindSlide } from './rewindData';
+import type { RewindPlayerRef, RewindRatio, RewindSlide } from './rewindData';
 
 // FOM Rewind slide templates — mockup v2 design system.
-// Rendered at 360×640 in the DOM, exported at 1080×1920 (3× canvas) via the
-// existing html-to-image pipeline. One layout system for every slide:
-// eyebrow on top, content centered, consistent brand footer (logo + link).
+// Rendered at 360-wide in the DOM (×640 story / ×480 feed), exported at 3×
+// canvas (1080×1920 / 1080×1440) via the existing html-to-image pipeline.
+// One layout system for every slide: eyebrow on top, content centered,
+// consistent brand footer (logo + link). Rasio 'feed' merender varian
+// `compact` — tinggi konten berkurang 160pt, jadi avatar/tipografi/jarak
+// vertikal dirapatkan supaya tidak ada konten terpotong.
 
 // New brand logotypes (whitespace-trimmed): "dark" = for dark backgrounds
 // (white FOM + orange Play), "light" = for light backgrounds (navy FOM + orange Play).
@@ -62,13 +65,17 @@ const Eyebrow = ({ children, gold }: { children: ReactNode; gold?: boolean }) =>
   </p>
 );
 
-const Headline = ({ children, gold }: { children: ReactNode; gold?: boolean }) => (
-  <h2 className={cn('relative mt-2.5 text-[21px] font-extrabold leading-[1.2] tracking-[-0.02em]', gold ? 'text-[#F3E3B5]' : 'text-white')}>
+const Headline = ({ children, gold, compact }: { children: ReactNode; gold?: boolean; compact?: boolean }) => (
+  <h2 className={cn('relative font-extrabold leading-[1.2] tracking-[-0.02em]', compact ? 'mt-2 text-[19px]' : 'mt-2.5 text-[21px]', gold ? 'text-[#F3E3B5]' : 'text-white')}>
     {children}
   </h2>
 );
 
-const OrbAndConfetti = ({ gold, strong }: { gold?: boolean; strong?: boolean }) => (
+// Posisi confetti dituning untuk kanvas 640; di kanvas 480 (compact/feed)
+// persentase yang sama jatuh tepat di zona headline/konten dan terlihat
+// menabrak teks. Compact memindahkan semua kepingan ke gutter padding
+// kiri/kanan (x < 24px dari tepi) yang selalu kosong di semua slide.
+const OrbAndConfetti = ({ gold, strong, compact }: { gold?: boolean; strong?: boolean; compact?: boolean }) => (
   <>
     <div
       className="pointer-events-none absolute left-1/2 top-[30%] -translate-x-1/2 rounded-full"
@@ -79,20 +86,20 @@ const OrbAndConfetti = ({ gold, strong }: { gold?: boolean; strong?: boolean }) 
         filter: 'blur(56px)',
       }}
     />
-    <div className={cn('pointer-events-none absolute left-[13%] top-[15%] h-[12px] w-[6px] rounded-[2px] rotate-[24deg]', gold ? 'bg-[#E8C45A]' : 'bg-[#E65E14]')} />
-    <div className={cn('pointer-events-none absolute right-[14%] top-[22%] h-[12px] w-[6px] rounded-[2px] -rotate-[28deg]', gold ? 'bg-[#B7861F]' : 'bg-[#E8C45A]')} />
-    <div className="pointer-events-none absolute left-[23%] top-[46%] h-[10px] w-[5px] rounded-[2px] rotate-[52deg] bg-white/50" />
-    <div className={cn('pointer-events-none absolute right-[21%] top-[12%] h-[10px] w-[5px] rounded-[2px] -rotate-[40deg]', gold ? 'bg-[#F3E3B5]/60' : 'bg-[#FF7A33]')} />
+    <div className={cn('pointer-events-none absolute h-[12px] w-[6px] rounded-[2px] rotate-[24deg]', compact ? 'left-[10px] top-[34%]' : 'left-[13%] top-[15%]', gold ? 'bg-[#E8C45A]' : 'bg-[#E65E14]')} />
+    <div className={cn('pointer-events-none absolute h-[12px] w-[6px] rounded-[2px] -rotate-[28deg]', compact ? 'right-[9px] top-[24%]' : 'right-[14%] top-[22%]', gold ? 'bg-[#B7861F]' : 'bg-[#E8C45A]')} />
+    <div className={cn('pointer-events-none absolute h-[10px] w-[5px] rounded-[2px] rotate-[52deg] bg-white/50', compact ? 'left-[12px] top-[58%]' : 'left-[23%] top-[46%]')} />
+    <div className={cn('pointer-events-none absolute h-[10px] w-[5px] rounded-[2px] -rotate-[40deg]', compact ? 'right-[11px] top-[50%]' : 'right-[21%] top-[12%]', gold ? 'bg-[#F3E3B5]/60' : 'bg-[#FF7A33]')} />
   </>
 );
 
 // Sel di-center supaya Record/Diff/Pts simetris di bawah hero.
-const StatStrip = ({ items, gold }: { gold?: boolean; items: Array<{ label: string; value: string; className?: string }> }) => (
-  <div className={cn('mt-6 flex w-full border-y py-4', gold ? 'border-[#E8C45A]/25' : 'border-white/15')}>
+const StatStrip = ({ items, gold, compact }: { gold?: boolean; compact?: boolean; items: Array<{ label: string; value: string; className?: string }> }) => (
+  <div className={cn('flex w-full border-y', compact ? 'mt-4 py-3' : 'mt-6 py-4', gold ? 'border-[#E8C45A]/25' : 'border-white/15')}>
     {items.map((item, index) => (
       <div key={item.label} className={cn('flex-1 px-2 text-center', index < items.length - 1 && cn('border-r', gold ? 'border-[#E8C45A]/25' : 'border-white/15'))}>
         <p className={cn('text-[8.5px] font-black uppercase leading-none tracking-[0.18em]', gold ? 'text-[#E8C45A]/55' : 'text-white/40')}>{item.label}</p>
-        <p className={cn('mt-1.5 text-[22px] font-extrabold leading-none tabular-nums', item.className || (gold ? 'text-[#F3E3B5]' : 'text-white'))}>{item.value}</p>
+        <p className={cn('mt-1.5 font-extrabold leading-none tabular-nums', compact ? 'text-[19px]' : 'text-[22px]', item.className || (gold ? 'text-[#F3E3B5]' : 'text-white'))}>{item.value}</p>
       </div>
     ))}
   </div>
@@ -147,42 +154,46 @@ const CoverSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cover' }> 
   </div>
 );
 
-const NumbersSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'numbers' }> }) => {
+const NumbersSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'numbers' }>; compact?: boolean }) => {
   const wideStats = slide.stats.filter((stat) => stat.wide);
   const smallStats = slide.stats.filter((stat) => !stat.wide);
+  const rowPad = compact ? 'pb-2.5' : 'pb-3.5';
+  const midSize = compact ? 'text-[29px]' : 'text-[37px]';
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
+    <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[#111111]', compact ? 'p-6' : 'p-7')}>
       <div className="pointer-events-none absolute -right-12 -top-12 h-[216px] w-[216px] rounded-full bg-[rgba(230,94,20,0.18)]" style={{ filter: 'blur(48px)' }} />
-      <div className="pointer-events-none absolute left-[18%] top-[24%] h-[11px] w-[6px] rotate-[24deg] rounded-[2px] bg-[#E65E14]" />
-      <div className="pointer-events-none absolute right-[14%] top-[38%] h-[11px] w-[6px] -rotate-[18deg] rounded-[2px] bg-[#E8C45A]" />
-      <div className="pointer-events-none absolute left-[10%] top-[58%] h-[10px] w-[5px] rotate-[40deg] rounded-[2px] bg-white/50" />
+      {/* Compact: kepingan pindah ke gutter kanan/kiri — baris stat full-width
+          membuat posisi % lama menabrak angka di kanvas 480. */}
+      <div className={cn('pointer-events-none absolute h-[11px] w-[6px] rotate-[24deg] rounded-[2px] bg-[#E65E14]', compact ? 'right-[9px] top-[28%]' : 'left-[18%] top-[24%]')} />
+      <div className={cn('pointer-events-none absolute h-[11px] w-[6px] -rotate-[18deg] rounded-[2px] bg-[#E8C45A]', compact ? 'right-[11px] top-[52%]' : 'right-[14%] top-[38%]')} />
+      <div className={cn('pointer-events-none absolute h-[10px] w-[5px] rotate-[40deg] rounded-[2px] bg-white/50', compact ? 'left-[9px] top-[68%]' : 'left-[10%] top-[58%]')} />
       <Eyebrow>The Numbers</Eyebrow>
-      <Headline>{slide.headline}</Headline>
-      <div className="relative flex min-h-0 flex-1 flex-col justify-center gap-4">
+      <Headline compact={compact}>{slide.headline}</Headline>
+      <div className={cn('relative flex min-h-0 flex-1 flex-col justify-center', compact ? 'gap-2.5' : 'gap-4')}>
         {wideStats[0] && (
-          <div className="border-b border-white/10 pb-3.5">
+          <div className={cn('border-b border-white/10', rowPad)}>
             <p className="text-[9.5px] font-black uppercase leading-none tracking-[0.18em] text-white/40">{wideStats[0].label}</p>
             <div className="flex items-baseline gap-3">
-              <p className="text-[60px] font-extrabold leading-[1.05] tracking-[-0.03em] tabular-nums text-white">{wideStats[0].value}</p>
+              <p className={cn('font-extrabold leading-[1.05] tracking-[-0.03em] tabular-nums text-white', compact ? 'text-[46px]' : 'text-[60px]')}>{wideStats[0].value}</p>
               {wideStats[0].kicker && <p className="min-w-0 text-[11.5px] font-semibold leading-snug text-white/50">{wideStats[0].kicker}</p>}
             </div>
           </div>
         )}
         {smallStats.length > 0 && (
-          <div className="flex gap-5 border-b border-white/10 pb-3.5">
+          <div className={cn('flex gap-5 border-b border-white/10', rowPad)}>
             {smallStats.map((stat) => (
               <div key={stat.key} className="flex-1">
                 <p className="text-[9.5px] font-black uppercase leading-none tracking-[0.18em] text-white/40">{stat.label}</p>
-                <p className="mt-1 text-[37px] font-extrabold leading-[1.05] tracking-[-0.03em] tabular-nums text-white">{stat.value}</p>
+                <p className={cn('mt-1 font-extrabold leading-[1.05] tracking-[-0.03em] tabular-nums text-white', midSize)}>{stat.value}</p>
               </div>
             ))}
           </div>
         )}
         {wideStats.slice(1).map((stat, index, list) => (
-          <div key={stat.key} className={cn(index < list.length - 1 && 'border-b border-white/10 pb-3.5')}>
+          <div key={stat.key} className={cn(index < list.length - 1 && cn('border-b border-white/10', rowPad))}>
             <p className="text-[9.5px] font-black uppercase leading-none tracking-[0.18em] text-white/40">{stat.label}</p>
             <div className="flex items-baseline gap-3">
-              <p className={cn('mt-1 text-[37px] font-extrabold leading-[1.05] tracking-[-0.03em] tabular-nums', stat.accent ? 'text-[#E65E14]' : 'text-white')}>{stat.value}</p>
+              <p className={cn('mt-1 font-extrabold leading-[1.05] tracking-[-0.03em] tabular-nums', midSize, stat.accent ? 'text-[#E65E14]' : 'text-white')}>{stat.value}</p>
               {stat.kicker && <p className="min-w-0 text-[11.5px] font-semibold leading-snug text-white/50">{stat.kicker}</p>}
             </div>
           </div>
@@ -192,23 +203,37 @@ const NumbersSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'numbers'
   );
 };
 
-const PodiumSlide = ({ slide, gold }: { slide: Extract<RewindSlide, { type: 'podium' | 'podium-cupu' }>; gold?: boolean }) => {
+const PodiumSlide = ({ slide, gold, compact }: { slide: Extract<RewindSlide, { type: 'podium' | 'podium-cupu' }>; gold?: boolean; compact?: boolean }) => {
   const [first, second, third] = slide.players;
   const bar = (player: (typeof slide.players)[number] | undefined, order: 0 | 1 | 2) => {
     if (!player) return null;
     const isKing = order === 0;
-    const barHeight = order === 0 ? 158 : order === 1 ? 115 : 82;
+    const barHeight = compact
+      ? (order === 0 ? 104 : order === 1 ? 76 : 54)
+      : (order === 0 ? 158 : order === 1 ? 115 : 82);
     // Mode fixed: baris tim → dua wajah sejajar (Avatar pair) + kedua nama
     // depan ("Syarif & Rafi"), bukan cuma nama anchor.
     const isPair = Boolean(player.partnerAvatar || player.partnerInitials) || player.name.includes(' & ');
     const displayName = player.name.includes(' & ')
       ? player.name.split(' & ').map((part) => getShortName(part)).join(' & ')
       : (player.name.split(' ')[0] || player.name);
+    // Topper per posisi — mengikuti podium shame di Klasemen: official semua
+    // dapat mahkota beneran (juara 1 paling besar); podium cupu memarodikannya
+    // (raja 👑, runner-up 🧢 miring, peringkat 3 🩴).
+    const topper = isKing
+      ? { emoji: '👑', className: '-top-5 left-1/2 -translate-x-1/2 -rotate-[8deg] text-[24px]' }
+      : gold
+        ? order === 1
+          ? { emoji: '🧢', className: '-top-2.5 -left-2 -rotate-[24deg] -scale-x-100 text-[16px]' }
+          : { emoji: '🩴', className: '-top-2.5 -right-2 rotate-[30deg] text-[16px]' }
+        : order === 1
+          ? { emoji: '👑', className: '-top-3.5 left-1/2 -translate-x-1/2 -rotate-[10deg] text-[17px]' }
+          : { emoji: '👑', className: '-top-3.5 left-1/2 -translate-x-1/2 rotate-[10deg] text-[15px]' };
     return (
-      <div className={cn('flex flex-col items-center gap-2.5', isKing ? 'flex-[1.1]' : 'flex-1')}>
+      <div className={cn('flex flex-col items-center', compact ? 'gap-1.5' : 'gap-2.5', isKing ? 'flex-[1.1]' : 'flex-1')}>
         <div className="relative">
-          <Avatar player={player} size={isKing ? 72 : 58} gold={gold && isKing} className={cn(!gold && isKing && 'border-[3px] border-[#E65E14] bg-[#101010]', !isKing && 'border-2 border-white/25 bg-white/15')} />
-          {isKing && <span className="absolute -top-5 left-1/2 -translate-x-1/2 -rotate-[8deg] text-[24px]">👑</span>}
+          <Avatar player={player} size={compact ? (isKing ? 60 : 48) : (isKing ? 72 : 58)} gold={gold && isKing} className={cn(!gold && isKing && 'border-[3px] border-[#E65E14] bg-[#101010]', !isKing && 'border-2 border-white/25 bg-white/15')} />
+          <span className={cn('absolute leading-none', topper.className)} aria-hidden="true">{topper.emoji}</span>
         </div>
         <div className="w-full text-center">
           <p className={cn('mx-auto max-w-full truncate px-0.5 font-extrabold', isPair ? 'text-[11.5px]' : 'text-[14px]', gold ? 'text-[#F3E3B5]' : 'text-white')}>{displayName}</p>
@@ -241,11 +266,11 @@ const PodiumSlide = ({ slide, gold }: { slide: Extract<RewindSlide, { type: 'pod
     );
   };
   return (
-    <div className={cn('relative flex h-full w-full flex-col overflow-hidden p-7', gold ? 'bg-[linear-gradient(180deg,#16110a_0%,#111111_60%)]' : 'bg-[#111111]')}>
-      <OrbAndConfetti gold={gold} />
+    <div className={cn('relative flex h-full w-full flex-col overflow-hidden', compact ? 'p-6' : 'p-7', gold ? 'bg-[linear-gradient(180deg,#16110a_0%,#111111_60%)]' : 'bg-[#111111]')}>
+      <OrbAndConfetti gold={gold} compact={compact} />
       <Eyebrow gold={gold}>{gold ? 'Podium Cupu' : 'The Podium'}</Eyebrow>
-      <Headline gold={gold}>{slide.headline}</Headline>
-      <div className="relative flex min-h-0 flex-1 items-end gap-2.5 pb-4">
+      <Headline gold={gold} compact={compact}>{slide.headline}</Headline>
+      <div className={cn('relative flex min-h-0 flex-1 items-end gap-2.5', compact ? 'pb-2.5' : 'pb-4')}>
         {bar(second, 1)}
         {bar(first, 0)}
         {bar(third, 2)}
@@ -260,9 +285,9 @@ const PodiumSlide = ({ slide, gold }: { slide: Extract<RewindSlide, { type: 'pod
   );
 };
 
-const ChampionSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'champion' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
-    <OrbAndConfetti strong />
+const ChampionSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'champion' }>; compact?: boolean }) => (
+  <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[#111111]', compact ? 'p-6' : 'p-7')}>
+    <OrbAndConfetti strong compact={compact} />
     <div className="relative flex items-center justify-between">
       <Eyebrow>{slide.headline}</Eyebrow>
       <span className="rounded-full border border-[#E65E14]/40 bg-[#E65E14]/15 px-3 py-1.5 text-[9.5px] font-black tracking-[0.12em] text-[#FF9A66]">
@@ -273,18 +298,19 @@ const ChampionSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'champio
       <div className="relative flex">
         {slide.players.map((player, index) => (
           <div key={player.id} className={cn('relative', index > 0 && '-ml-7')}>
-            <Avatar player={player} size={slide.players.length > 1 ? 108 : 134} className="border-[3px] border-white/30" />
-            {index === 0 && <span className="absolute -top-6 right-0 rotate-[16deg] text-[36px]">👑</span>}
+            <Avatar player={player} size={compact ? (slide.players.length > 1 ? 84 : 102) : (slide.players.length > 1 ? 108 : 134)} className="border-[3px] border-white/30" />
+            {index === 0 && <span className={cn('absolute -top-6 right-0 rotate-[16deg]', compact ? 'text-[28px]' : 'text-[36px]')}>👑</span>}
           </div>
         ))}
       </div>
-      <p className="mt-5 max-w-full px-2 text-[38px] font-extrabold leading-[1.05] tracking-[-0.02em] text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+      <p className={cn('max-w-full px-2 font-extrabold leading-[1.05] tracking-[-0.02em] text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden', compact ? 'mt-3.5 text-[30px]' : 'mt-5 text-[38px]')}>
         {slide.players.map((player) => player.name).join(' & ')}
       </p>
       {slide.quote && (
-        <p className="mt-3 max-w-[280px] text-[13.5px] italic leading-[1.45] text-white/65">“{slide.quote}”</p>
+        <p className={cn('max-w-[280px] text-[13.5px] italic leading-[1.45] text-white/65', compact ? 'mt-2' : 'mt-3')}>“{slide.quote}”</p>
       )}
       <StatStrip
+        compact={compact}
         items={[
           { label: 'Record', value: slide.record },
           { label: 'Diff', value: formatDiff(slide.diff), className: diffColorDark(slide.diff) },
@@ -295,20 +321,21 @@ const ChampionSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'champio
   </div>
 );
 
-const DreamTeamSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'dream-team' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
-    <OrbAndConfetti />
+const DreamTeamSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'dream-team' }>; compact?: boolean }) => (
+  <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[#111111]', compact ? 'p-6' : 'p-7')}>
+    <OrbAndConfetti compact={compact} />
     <Eyebrow>Dream Team</Eyebrow>
-    <Headline>{slide.headline}</Headline>
+    <Headline compact={compact}>{slide.headline}</Headline>
     <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center text-center">
       <div className="flex">
         {slide.players.map((player, index) => (
-          <Fragment key={player.id}><Avatar player={player} size={104} className={cn('border-[3px] border-[#111111]', index > 0 && '-ml-6', index === 0 && 'bg-[#8E8E93]')} /></Fragment>
+          <Fragment key={player.id}><Avatar player={player} size={compact ? 82 : 104} className={cn('border-[3px] border-[#111111]', index > 0 && '-ml-6', index === 0 && 'bg-[#8E8E93]')} /></Fragment>
         ))}
       </div>
-      <p className="mt-5 text-[30px] font-extrabold leading-[1.15] tracking-[-0.02em] text-white">{slide.pairName}</p>
+      <p className={cn('font-extrabold leading-[1.15] tracking-[-0.02em] text-white', compact ? 'mt-3.5 text-[25px]' : 'mt-5 text-[30px]')}>{slide.pairName}</p>
       {slide.quote && <p className="mt-2 text-[13.5px] italic text-white/65">“{slide.quote}”</p>}
       <StatStrip
+        compact={compact}
         items={[
           { label: 'Main Bareng', value: String(slide.played) },
           { label: 'Menang', value: String(slide.wins), className: 'text-[#E65E14]' },
@@ -319,35 +346,35 @@ const DreamTeamSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'dream-
   </div>
 );
 
-const MatchOfTheNightSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'match-of-the-night' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
+const MatchOfTheNightSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'match-of-the-night' }>; compact?: boolean }) => (
+  <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[#111111]', compact ? 'p-6' : 'p-7')}>
     <div className="pointer-events-none absolute left-1/2 top-[42%] h-[190px] w-[288px] -translate-x-1/2 rounded-full bg-[rgba(230,94,20,0.18)]" style={{ filter: 'blur(56px)' }} />
     <Eyebrow>Match of the Night</Eyebrow>
-    <Headline>{slide.headline}</Headline>
-    <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-6">
-      <div className="flex flex-col items-center gap-2.5">
+    <Headline compact={compact}>{slide.headline}</Headline>
+    <div className={cn('relative flex min-h-0 flex-1 flex-col items-center justify-center', compact ? 'gap-3.5' : 'gap-6')}>
+      <div className={cn('flex flex-col items-center', compact ? 'gap-1.5' : 'gap-2.5')}>
         <div className="flex">
           {slide.teamAPlayers.map((player, index) => (
-            <Fragment key={player.id}><Avatar player={player} size={46} className={cn('border-2 border-[#111111]', index > 0 && '-ml-3')} /></Fragment>
+            <Fragment key={player.id}><Avatar player={player} size={compact ? 40 : 46} className={cn('border-2 border-[#111111]', index > 0 && '-ml-3')} /></Fragment>
           ))}
         </div>
-        <p className="text-[16px] font-extrabold text-white">{slide.teamAName}</p>
+        <p className={cn('font-extrabold text-white', compact ? 'text-[14px]' : 'text-[16px]')}>{slide.teamAName}</p>
       </div>
       <div className="flex items-center gap-5">
-        <span className="text-[74px] font-extrabold leading-none tracking-[-0.04em] tabular-nums text-[#E65E14]">{slide.scoreA}</span>
-        <span className="text-[28px] font-extrabold text-white/30">–</span>
-        <span className="text-[74px] font-extrabold leading-none tracking-[-0.04em] tabular-nums text-white">{slide.scoreB}</span>
+        <span className={cn('font-extrabold leading-none tracking-[-0.04em] tabular-nums text-[#E65E14]', compact ? 'text-[56px]' : 'text-[74px]')}>{slide.scoreA}</span>
+        <span className={cn('font-extrabold text-white/30', compact ? 'text-[22px]' : 'text-[28px]')}>–</span>
+        <span className={cn('font-extrabold leading-none tracking-[-0.04em] tabular-nums text-white', compact ? 'text-[56px]' : 'text-[74px]')}>{slide.scoreB}</span>
       </div>
-      <div className="flex flex-col items-center gap-2.5">
-        <p className="text-[16px] font-extrabold text-white">{slide.teamBName}</p>
+      <div className={cn('flex flex-col items-center', compact ? 'gap-1.5' : 'gap-2.5')}>
+        <p className={cn('font-extrabold text-white', compact ? 'text-[14px]' : 'text-[16px]')}>{slide.teamBName}</p>
         <div className="flex">
           {slide.teamBPlayers.map((player, index) => (
-            <Fragment key={player.id}><Avatar player={player} size={46} className={cn('border-2 border-[#111111] bg-[#8E8E93]', index > 0 && '-ml-3')} /></Fragment>
+            <Fragment key={player.id}><Avatar player={player} size={compact ? 40 : 46} className={cn('border-2 border-[#111111] bg-[#8E8E93]', index > 0 && '-ml-3')} /></Fragment>
           ))}
         </div>
       </div>
       {slide.kicker && (
-        <span className="rounded-full border border-white/12 bg-white/[0.07] px-5 py-2 text-[11.5px] font-bold text-white/70">
+        <span className={cn('rounded-full border border-white/12 bg-white/[0.07] px-5 text-[11.5px] font-bold text-white/70', compact ? 'py-1.5' : 'py-2')}>
           {slide.kicker}
         </span>
       )}
@@ -355,11 +382,11 @@ const MatchOfTheNightSlide = ({ slide }: { slide: Extract<RewindSlide, { type: '
   </div>
 );
 
-const PhotosSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'photos' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
+const PhotosSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'photos' }>; compact?: boolean }) => (
+  <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[#111111]', compact ? 'p-6' : 'p-7')}>
     <Eyebrow>The Scenes</Eyebrow>
-    <Headline>{slide.headline}</Headline>
-    <div className="my-4 grid min-h-0 flex-1 grid-cols-2 gap-2.5" style={{ gridTemplateRows: '1.5fr 1fr' }}>
+    <Headline compact={compact}>{slide.headline}</Headline>
+    <div className={cn('grid min-h-0 flex-1 grid-cols-2 gap-2.5', compact ? 'my-3' : 'my-4')} style={{ gridTemplateRows: '1.5fr 1fr' }}>
       <div className="relative col-span-2 min-h-0 overflow-hidden rounded-[18px]">
         <img src={slide.photoUrls[0]} alt="" className="block h-full w-full object-cover" />
         {slide.sticker && (
@@ -377,9 +404,11 @@ const PhotosSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'photos' }
   </div>
 );
 
-const CupuSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cupu' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[linear-gradient(180deg,#16110a_0%,#111111_55%)] p-7">
-    <OrbAndConfetti gold />
+const CupuSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'cupu' }>; compact?: boolean }) => {
+  const winnerName = slide.players.map((player) => player.name).join(' & ');
+  return (
+  <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[linear-gradient(180deg,#16110a_0%,#111111_55%)]', compact ? 'p-6' : 'p-7')}>
+    <OrbAndConfetti gold compact={compact} />
     <div className="relative flex items-center justify-between">
       <p className="text-[12px] font-black uppercase leading-none tracking-[0.26em] text-[#E8C45A]">The Cupu D&apos;Or {new Date().getFullYear()}</p>
       <span className="rounded-full border border-[#E8C45A]/35 bg-[#E8C45A]/10 px-3 py-1.5 text-[9.5px] font-black tracking-[0.12em] text-[#E8C45A]">
@@ -390,17 +419,23 @@ const CupuSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cupu' }> })
       <div className="relative flex">
         {slide.players.map((player, index) => (
           <div key={player.id} className={cn('relative', index > 0 && '-ml-7')}>
-            <Avatar player={player} size={slide.players.length > 1 ? 104 : 130} gold className="border-[3px] border-[#E8C45A]/45" />
-            {index === 0 && <span className="absolute -top-6 -right-2 rotate-[20deg] text-[38px]">👑</span>}
+            <Avatar player={player} size={compact ? (slide.players.length > 1 ? 76 : 90) : (slide.players.length > 1 ? 104 : 130)} gold className="border-[3px] border-[#E8C45A]/45" />
+            {index === 0 && <span className={cn('absolute -top-6 -right-2 rotate-[20deg]', compact ? 'text-[30px]' : 'text-[38px]')}>👑</span>}
           </div>
         ))}
       </div>
-      <p className="mt-4 max-w-full px-2 font-serif text-[36px] font-bold italic leading-[1.1] tracking-[-0.01em] text-[#F3E3B5] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
-        {slide.players.map((player) => player.name).join(' & ')}
+      {/* Compact: nama panjang (2 baris) sempat terpotong & ketimpa subtitle —
+          font mengecil dinamis dan elemen dilarang menyusut (shrink-0). */}
+      <p
+        className={cn('max-w-full shrink-0 px-2 font-serif font-bold italic leading-[1.1] tracking-[-0.01em] text-[#F3E3B5] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden', compact ? 'mt-2.5' : 'mt-4 text-[36px]')}
+        style={compact ? { fontSize: winnerName.length > 16 ? 22 : 28 } : undefined}
+      >
+        {winnerName}
       </p>
-      <p className="mt-2.5 text-[11px] font-black uppercase tracking-[0.16em] text-[#E8C45A]/65">{slide.title}</p>
+      <p className={cn('text-[11px] font-black uppercase tracking-[0.16em] text-[#E8C45A]/65', compact ? 'mt-2' : 'mt-2.5')}>{slide.title}</p>
       <StatStrip
         gold
+        compact={compact}
         items={[
           { label: 'Record', value: slide.record },
           { label: 'Diff', value: formatDiff(slide.diff), className: diffColorDark(slide.diff) },
@@ -408,35 +443,36 @@ const CupuSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cupu' }> })
         ]}
       />
       {slide.quote && (
-        <p className="mt-4 max-w-[290px] text-[13.5px] italic leading-[1.5] text-[#F3E3B5]/75">“{slide.quote}”</p>
+        <p className={cn('max-w-[290px] text-[13.5px] italic leading-[1.5] text-[#F3E3B5]/75', compact ? 'mt-3' : 'mt-4')}>“{slide.quote}”</p>
       )}
-      <p className="mt-3 text-[9px] text-white/35">All roasts are about this match only. Jangan baper, ya.</p>
+      <p className={cn('text-[9px] text-white/35', compact ? 'mt-2' : 'mt-3')}>All roasts are about this match only. Jangan baper, ya.</p>
     </div>
   </div>
-);
+  );
+};
 
-const AwardsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'awards' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
+const AwardsSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'awards' }>; compact?: boolean }) => (
+  <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[#111111]', compact ? 'p-6' : 'p-7')}>
     <div className="pointer-events-none absolute -right-12 -top-9 h-[204px] w-[204px] rounded-full bg-[rgba(183,134,31,0.2)]" style={{ filter: 'blur(52px)' }} />
     <Eyebrow gold>Toxic Awards</Eyebrow>
-    <Headline>{slide.headline}</Headline>
-    <div className="relative flex min-h-0 flex-1 flex-col justify-center gap-3">
+    <Headline compact={compact}>{slide.headline}</Headline>
+    <div className={cn('relative flex min-h-0 flex-1 flex-col justify-center', compact ? 'gap-2' : 'gap-3')}>
       {slide.awards.map((award) => (
-        <div key={award.id} className="rounded-[18px] border border-[#E8C45A]/18 bg-[#E8C45A]/[0.07] px-4 py-3.5">
+        <div key={award.id} className={cn('rounded-[18px] border border-[#E8C45A]/18 bg-[#E8C45A]/[0.07] px-4', compact ? 'py-2.5' : 'py-3.5')}>
           <p className="text-[9.5px] font-black uppercase leading-none tracking-[0.16em] text-[#E8C45A]">
             {award.label}{award.emoji ? ` ${award.emoji}` : ''}{award.players.length > 1 ? ' · PAIR' : ''}
           </p>
-          <div className="mt-1.5 flex items-center gap-2.5">
+          <div className={cn('flex items-center gap-2.5', compact ? 'mt-1' : 'mt-1.5')}>
             {award.players.length > 1 && (
               <div className="flex">
                 {award.players.map((player, index) => (
-                  <Fragment key={player.id}><Avatar player={player} size={26} gold={index > 0} className={cn('border-2 border-[#111111]', index > 0 && '-ml-2', index === 0 && 'bg-[#8E8E93]')} /></Fragment>
+                  <Fragment key={player.id}><Avatar player={player} size={compact ? 22 : 26} gold={index > 0} className={cn('border-2 border-[#111111]', index > 0 && '-ml-2', index === 0 && 'bg-[#8E8E93]')} /></Fragment>
                 ))}
               </div>
             )}
-            <p className="truncate text-[17px] font-extrabold text-white">{award.playerNames}</p>
+            <p className={cn('truncate font-extrabold text-white', compact ? 'text-[15px]' : 'text-[17px]')}>{award.playerNames}</p>
           </div>
-          {award.note && <p className="mt-1 text-[11.5px] italic leading-snug text-white/55">{award.note}</p>}
+          {award.note && <p className={cn('italic leading-snug text-white/55', compact ? 'mt-0.5 text-[10.5px]' : 'mt-1 text-[11.5px]')}>{award.note}</p>}
         </div>
       ))}
     </div>
@@ -446,60 +482,64 @@ const AwardsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'awards' }
 
 // Sertifikat Cupu — adaptasi 9:16 dari kartu sertifikat krem/emas Klasemen.
 // Punya branding sendiri (logo + ornamen), jadi tanpa brand footer standar.
-const CertificateSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'certificate' }> }) => (
+const CertificateSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'certificate' }>; compact?: boolean }) => (
   <div className="relative h-full w-full overflow-hidden bg-[#FBF7EC] p-[16px] text-[#101010]">
     <div className="absolute inset-0 bg-[radial-gradient(120%_70%_at_50%_-8%,rgba(201,161,74,0.24),rgba(251,247,236,0)_54%),linear-gradient(135deg,rgba(255,255,255,0.56),rgba(245,226,175,0.28))]" />
     <div className="absolute inset-[12px] rounded-lg border-2 border-[#C9A14A]" />
     <div className="absolute inset-[17px] rounded-[5px] border border-[#C9A14A]/45" />
     <div className="absolute inset-0 opacity-[0.035] bg-[url('/assets/fom-logomark-app.png')] bg-[length:44px_44px] rotate-[-10deg] scale-125" />
 
-    <div className="relative flex h-full flex-col items-center px-7 pb-9 pt-10 text-center">
-      <img src={LOGO_ON_LIGHT} alt="FOM Play" className="h-[24px] w-auto object-contain" />
+    <div className={cn('relative flex h-full flex-col items-center px-7 text-center', compact ? 'pb-5 pt-6' : 'pb-9 pt-10')}>
+      {/* shrink-0 di logo + baris bawah: saat konten tengah mepet, keduanya
+          tidak boleh menyusut/tertimpa (sempat "SERTIFIKAT" menimpa logo). */}
+      <img src={LOGO_ON_LIGHT} alt="FOM Play" className={cn('w-auto shrink-0 object-contain', compact ? 'h-[20px]' : 'h-[24px]')} />
 
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
-        <p className="text-[10px] font-black uppercase leading-none tracking-[0.30em] text-[#B7861F]">Sertifikat</p>
-        <h2 className="font-ceremony mt-2 text-[36px] font-normal leading-[1.04] text-[#101010]">{slide.title}</h2>
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden">
+        <p className={cn('text-[10px] font-black uppercase leading-none tracking-[0.30em] text-[#B7861F]', compact && 'mt-1')}>Sertifikat</p>
+        <h2 className={cn('font-ceremony mt-2 font-normal leading-[1.04] text-[#101010]', compact ? 'text-[24px]' : 'text-[36px]')}>{slide.title}</h2>
 
-        <p className="mt-5 max-w-[262px] text-[12px] font-medium leading-[1.55] text-[#6E6E73]">
+        <p className={cn('font-medium leading-[1.5] text-[#6E6E73]', compact ? 'mt-2 max-w-[276px] text-[10.5px]' : 'mt-5 max-w-[262px] text-[12px]')}>
           Dengan ini menyatakan secara sah dan tidak bisa diganggu gugat bahwa
         </p>
 
         <p
-          className="font-ceremony mt-3 max-w-[288px] border-b border-[#C9A14A]/55 px-4 pb-2 font-normal italic leading-[1.1] text-[#8A6A1F]"
-          style={{ fontSize: slide.recipientName.length > 36 ? 26 : slide.recipientName.length > 25 ? 30 : 35 }}
+          className={cn('font-ceremony max-w-[288px] border-b border-[#C9A14A]/55 px-4 font-normal italic leading-[1.1] text-[#8A6A1F]', compact ? 'mt-1.5 pb-1.5' : 'mt-3 pb-2')}
+          style={{
+            fontSize: (slide.recipientName.length > 36 ? 26 : slide.recipientName.length > 25 ? 30 : 35) - (compact ? 8 : 0),
+          }}
         >
           {slide.recipientName}
         </p>
 
-        <p className="mt-4 max-w-[276px] text-[12px] font-medium leading-[1.55] text-[#6E6E73]">
+        <p className={cn('font-medium leading-[1.5] text-[#6E6E73]', compact ? 'mt-2 max-w-[290px] text-[10.5px]' : 'mt-4 max-w-[276px] text-[12px]')}>
           {slide.bodyCopy}
         </p>
 
         {slide.note && (
-          <div className="mt-5 w-full rounded-2xl border border-[#C9A14A]/35 bg-white/52 px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.70)]">
+          <div className={cn('w-full rounded-2xl border border-[#C9A14A]/35 bg-white/52 px-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.70)]', compact ? 'mt-2.5 py-2' : 'mt-5 py-3')}>
             <p className="text-[8px] font-black uppercase leading-none tracking-[0.15em] text-[#B7861F]">Reason</p>
-            <p className="mt-2 text-[11px] font-bold italic leading-snug text-[#6B5A38]">{slide.note}</p>
+            <p className={cn('font-bold italic leading-snug text-[#6B5A38]', compact ? 'mt-1 text-[10px]' : 'mt-2 text-[11px]')}>{slide.note}</p>
           </div>
         )}
       </div>
 
-      <div className="grid w-full grid-cols-[92px_minmax(0,1fr)_68px] items-end gap-3">
+      <div className={cn('grid w-full shrink-0 items-end gap-3', compact ? 'mt-2 grid-cols-[84px_minmax(0,1fr)_54px]' : 'grid-cols-[92px_minmax(0,1fr)_68px]')}>
         <div className="min-w-0 text-left">
-          <p className="font-ceremony text-[19px] font-normal italic leading-none text-[#101010]">Panitia Mabar</p>
-          <p className="mt-1.5 w-[90px] border-t border-black/30 pt-1.5 text-[8px] font-black uppercase leading-none tracking-[0.12em] text-[#9A9AA0]">
+          <p className={cn('font-ceremony font-normal italic leading-none text-[#101010]', compact ? 'text-[16px]' : 'text-[19px]')}>Panitia Mabar</p>
+          <p className={cn('mt-1.5 border-t border-black/30 pt-1.5 text-[8px] font-black uppercase leading-none tracking-[0.12em] text-[#9A9AA0]', compact ? 'w-[80px]' : 'w-[90px]')}>
             {slide.witnessCount} saksi mata
           </p>
         </div>
 
-        <div className="justify-self-center rounded-2xl border border-[#C9A14A]/60 bg-[#101010] px-4 py-3.5 text-center rotate-[-1.5deg]">
-          <p className="max-w-[116px] text-[13px] font-black uppercase leading-tight text-[#E8C45A]">{slide.title} {slide.emoji || '👑'}</p>
-          <p className="mt-1.5 text-[7px] font-black uppercase leading-none tracking-[0.14em] text-[#E8C45A]/55">Penobatan Sah</p>
+        <div className={cn('justify-self-center rounded-2xl border border-[#C9A14A]/60 bg-[#101010] px-4 text-center rotate-[-1.5deg]', compact ? 'py-2.5' : 'py-3.5')}>
+          <p className={cn('max-w-[116px] font-black uppercase leading-tight text-[#E8C45A]', compact ? 'text-[11px]' : 'text-[13px]')}>{slide.title} {slide.emoji || '👑'}</p>
+          <p className={cn('font-black uppercase leading-none tracking-[0.14em] text-[#E8C45A]/55', compact ? 'mt-1 text-[6.5px]' : 'mt-1.5 text-[7px]')}>Penobatan Sah</p>
         </div>
 
-        <div className="relative h-[68px] w-[68px] shrink-0 justify-self-end">
+        <div className={cn('relative shrink-0 justify-self-end', compact ? 'h-[54px] w-[54px]' : 'h-[68px] w-[68px]')}>
           <div className="absolute inset-0 rotate-[-14deg] rounded-full border-2 border-[#B7861F]/65" />
-          <div className="absolute inset-[8px] rotate-[-14deg] rounded-full border border-[#B7861F]/50" />
-          <div className="absolute inset-[8px] flex rotate-[-14deg] items-center justify-center text-center text-[6.5px] font-black uppercase leading-[1.5] tracking-[0.10em] text-[#8A6A1F]">
+          <div className={cn('absolute rotate-[-14deg] rounded-full border border-[#B7861F]/50', compact ? 'inset-[6px]' : 'inset-[8px]')} />
+          <div className={cn('absolute flex rotate-[-14deg] items-center justify-center text-center font-black uppercase tracking-[0.10em] text-[#8A6A1F]', compact ? 'inset-[6px] text-[5.5px] leading-[1.4]' : 'inset-[8px] text-[6.5px] leading-[1.5]')}>
             Certified<br />Cupu<br />{new Date().getFullYear()}
           </div>
         </div>
@@ -510,15 +550,15 @@ const CertificateSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'cert
 
 // My Card — slide personal pemain yang login. Cover photo (kalau ada) jadi
 // background full-bleed; tanpa foto pakai orb + confetti standar Rewind.
-const MyCardSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'my-card' }> }) => (
-  <div className="relative flex h-full w-full flex-col overflow-hidden bg-[#111111] p-7">
+const MyCardSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'my-card' }>; compact?: boolean }) => (
+  <div className={cn('relative flex h-full w-full flex-col overflow-hidden bg-[#111111]', compact ? 'p-6' : 'p-7')}>
     {slide.photoUrl ? (
       <>
         <img src={slide.photoUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.52)_0%,rgba(0,0,0,0.28)_38%,rgba(0,0,0,0.88)_100%)]" />
       </>
     ) : (
-      <OrbAndConfetti />
+      <OrbAndConfetti compact={compact} />
     )}
     <div className="relative flex items-center justify-between">
       <Eyebrow>My Card</Eyebrow>
@@ -529,14 +569,20 @@ const MyCardSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'my-card' 
       )}
     </div>
     <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center text-center">
-      <Avatar player={slide.player} size={116} className="border-[3px] border-white/30" />
-      <p className="mt-4 max-w-full px-2 text-[32px] font-extrabold leading-[1.08] tracking-[-0.02em] text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden">
+      <Avatar player={slide.player} size={compact ? 78 : 116} className="border-[3px] border-white/30" />
+      {/* Compact: nama panjang (2 baris) sempat ketimpa baris nama match —
+          font mengecil dinamis dan elemen dilarang menyusut (shrink-0). */}
+      <p
+        className={cn('max-w-full shrink-0 px-2 font-extrabold leading-[1.08] tracking-[-0.02em] text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] overflow-hidden', compact ? 'mt-2.5' : 'mt-4 text-[32px]')}
+        style={compact ? { fontSize: slide.player.name.length > 16 ? 21 : 26 } : undefined}
+      >
         {slide.player.name}
       </p>
-      <p className="mt-1.5 max-w-[280px] truncate text-[11px] font-black uppercase tracking-[0.14em] text-white/55">
+      <p className="mt-1.5 max-w-[280px] shrink-0 truncate text-[11px] font-black uppercase tracking-[0.14em] text-white/55">
         {slide.matchName}{slide.dateLabel ? ` · ${slide.dateLabel}` : ''}
       </p>
       <StatStrip
+        compact={compact}
         items={[
           { label: 'Record', value: slide.record },
           { label: 'Diff', value: formatDiff(slide.diff), className: diffColorDark(slide.diff) },
@@ -544,7 +590,7 @@ const MyCardSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'my-card' 
         ]}
       />
       {typeof slide.toxicRank === 'number' && (
-        <div className="mt-5 w-full rounded-[18px] border border-[#E8C45A]/25 bg-[#E8C45A]/[0.08] px-4 py-3.5 text-left backdrop-blur-[2px]">
+        <div className={cn('w-full rounded-[18px] border border-[#E8C45A]/25 bg-[#E8C45A]/[0.08] px-4 text-left backdrop-blur-[2px]', compact ? 'mt-3.5 py-2.5' : 'mt-5 py-3.5')}>
           <div className="flex items-center justify-between gap-2">
             <p className="text-[9.5px] font-black uppercase leading-none tracking-[0.16em] text-[#E8C45A]">
               Hall of Shame · #{slide.toxicRank}
@@ -583,18 +629,24 @@ const FullStandingsSlide = ({
   gold,
   eyebrow,
   headerTint,
+  compact,
 }: {
   slide: Extract<RewindSlide, { type: 'standings' | 'standings-toxic' }>;
   gold?: boolean;
   eyebrow: string;
   headerTint: string;
+  compact?: boolean;
 }) => {
   // Density mengikuti jumlah baris di halaman ini: sedikit baris → baris lebih
   // tinggi + tipografi lebih besar dengan pembatas halus (bukan direnggangkan
   // justify-between yang bikin 4-6 baris terlihat kosong); banyak baris →
-  // padat seperti semula. Di atas 12 baris data layer memecah jadi 2 halaman.
+  // padat seperti semula. Di atas 12 baris (story) / 9 baris (feed) data layer
+  // memecah jadi beberapa halaman; ambang density feed ikut turun karena
+  // tinggi kanvasnya berkurang.
   const rowCount = slide.rows.length;
-  const density = rowCount <= 6 ? 'roomy' : rowCount <= 9 ? 'medium' : 'dense';
+  const density = compact
+    ? (rowCount <= 5 ? 'roomy' : rowCount <= 7 ? 'medium' : 'dense')
+    : (rowCount <= 6 ? 'roomy' : rowCount <= 9 ? 'medium' : 'dense');
   const nameSize = density === 'roomy' ? 'text-[13.5px]' : density === 'medium' ? 'text-[12px]' : 'text-[10.5px]';
   const subLabelSize = density === 'roomy' ? 'text-[7.5px]' : 'text-[6.5px]';
   const rankSize = density === 'roomy' ? 'text-[14px]' : 'text-[12px]';
@@ -611,8 +663,8 @@ const FullStandingsSlide = ({
       {gold && (
         <>
           <div className="pointer-events-none absolute -right-10 -top-8 h-[170px] w-[170px] rounded-full bg-[rgba(183,134,31,0.22)]" style={{ filter: 'blur(44px)' }} />
-          <div className="pointer-events-none absolute left-[12%] top-[9%] h-[9px] w-[5px] rotate-[24deg] rounded-[2px] bg-[#E8C45A]" />
-          <div className="pointer-events-none absolute right-[20%] top-[6%] h-[8px] w-[4px] -rotate-[30deg] rounded-[2px] bg-[#B7861F]" />
+          <div className={cn('pointer-events-none absolute h-[9px] w-[5px] rotate-[24deg] rounded-[2px] bg-[#E8C45A]', compact ? 'left-[8px] top-[12%]' : 'left-[12%] top-[9%]')} />
+          <div className={cn('pointer-events-none absolute h-[8px] w-[4px] -rotate-[30deg] rounded-[2px] bg-[#B7861F]', compact ? 'right-[8px] top-[18%]' : 'right-[20%] top-[6%]')} />
         </>
       )}
       <div className="relative flex items-center justify-between">
@@ -686,12 +738,12 @@ const FullStandingsSlide = ({
   );
 };
 
-const StandingsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'standings' }> }) => (
-  <FullStandingsSlide slide={slide} eyebrow="Full Standings" headerTint="text-[#E65E14]" />
+const StandingsSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'standings' }>; compact?: boolean }) => (
+  <FullStandingsSlide slide={slide} compact={compact} eyebrow="Full Standings" headerTint="text-[#E65E14]" />
 );
 
-const ToxicStandingsSlide = ({ slide }: { slide: Extract<RewindSlide, { type: 'standings-toxic' }> }) => (
-  <FullStandingsSlide slide={slide} gold eyebrow="Hall of Shame · Full List" headerTint="text-[#E8C45A]" />
+const ToxicStandingsSlide = ({ slide, compact }: { slide: Extract<RewindSlide, { type: 'standings-toxic' }>; compact?: boolean }) => (
+  <FullStandingsSlide slide={slide} compact={compact} gold eyebrow="Hall of Shame · Full List" headerTint="text-[#E8C45A]" />
 );
 
 const OutroSlide = ({ slide, shortLink, qrDataUrl }: { slide: Extract<RewindSlide, { type: 'outro' }>; shortLink: string; qrDataUrl?: string }) => (
@@ -734,23 +786,27 @@ const OutroSlide = ({ slide, shortLink, qrDataUrl }: { slide: Extract<RewindSlid
 
 // ---------------------------------------------------------------------------
 
-export const RewindSlideView = ({ slide, shortLink, qrDataUrl }: { slide: RewindSlide; shortLink: string; qrDataUrl?: string }) => {
+export const RewindSlideView = ({ slide, shortLink, qrDataUrl, ratio = 'story' }: { slide: RewindSlide; shortLink: string; qrDataUrl?: string; ratio?: RewindRatio }) => {
+  // 'feed' (3:4) kehilangan 160pt tinggi vs 'story' — slide dengan konten
+  // vertikal padat merender varian compact. Cover & Outro absolut-positioned
+  // dari tepi, jadi otomatis menyesuaikan tanpa varian.
+  const compact = ratio === 'feed';
   const body = (() => {
     switch (slide.type) {
       case 'cover': return <CoverSlide slide={slide} />;
-      case 'numbers': return <NumbersSlide slide={slide} />;
-      case 'podium': return <PodiumSlide slide={slide} />;
-      case 'podium-cupu': return <PodiumSlide slide={slide} gold />;
-      case 'champion': return <ChampionSlide slide={slide} />;
-      case 'dream-team': return <DreamTeamSlide slide={slide} />;
-      case 'match-of-the-night': return <MatchOfTheNightSlide slide={slide} />;
-      case 'photos': return <PhotosSlide slide={slide} />;
-      case 'cupu': return <CupuSlide slide={slide} />;
-      case 'awards': return <AwardsSlide slide={slide} />;
-      case 'certificate': return <CertificateSlide slide={slide} />;
-      case 'standings': return <StandingsSlide slide={slide} />;
-      case 'standings-toxic': return <ToxicStandingsSlide slide={slide} />;
-      case 'my-card': return <MyCardSlide slide={slide} />;
+      case 'numbers': return <NumbersSlide slide={slide} compact={compact} />;
+      case 'podium': return <PodiumSlide slide={slide} compact={compact} />;
+      case 'podium-cupu': return <PodiumSlide slide={slide} gold compact={compact} />;
+      case 'champion': return <ChampionSlide slide={slide} compact={compact} />;
+      case 'dream-team': return <DreamTeamSlide slide={slide} compact={compact} />;
+      case 'match-of-the-night': return <MatchOfTheNightSlide slide={slide} compact={compact} />;
+      case 'photos': return <PhotosSlide slide={slide} compact={compact} />;
+      case 'cupu': return <CupuSlide slide={slide} compact={compact} />;
+      case 'awards': return <AwardsSlide slide={slide} compact={compact} />;
+      case 'certificate': return <CertificateSlide slide={slide} compact={compact} />;
+      case 'standings': return <StandingsSlide slide={slide} compact={compact} />;
+      case 'standings-toxic': return <ToxicStandingsSlide slide={slide} compact={compact} />;
+      case 'my-card': return <MyCardSlide slide={slide} compact={compact} />;
       case 'outro': return <OutroSlide slide={slide} shortLink={shortLink} qrDataUrl={qrDataUrl} />;
       default: return null;
     }

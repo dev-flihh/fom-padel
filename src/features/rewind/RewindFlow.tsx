@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent, type TouchEvent } from 'react';
 import { toSvg as htmlToImageSvg } from 'html-to-image';
 import QRCode from 'qrcode';
-import { Download, MoreHorizontal, RefreshCw, Share2, X } from 'lucide-react';
+import { Download, MoreHorizontal, Proportions, RefreshCw, Share2, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Tournament, TournamentHistory } from '../../types';
 import type { StandingsPlayer } from '../matches/standingsUtils';
@@ -11,7 +11,7 @@ import { persistRewindResult } from './rewindPersistence';
 import { processLocalCardPhoto } from '../matches/localPhotoProcessing';
 import { fetchRewindCopyBank } from '../../services/rewindCopyRemoteConfig';
 import type { RewindCopyLine } from './rewindCopyBank';
-import { buildRewindData, REWIND_SLIDE_LABELS, type RewindPhoto, type RewindSlide } from './rewindData';
+import { buildRewindData, REWIND_SLIDE_LABELS, type RewindPhoto, type RewindRatio, type RewindSlide } from './rewindData';
 import { RewindSlideView } from './RewindSlideTemplates';
 
 // FOM Rewind flow (PRD_FOM_REWIND.md): upload → generating → viewer.
@@ -30,11 +30,49 @@ export type GeneratedRewindSlide = {
 
 export type RewindResult = {
   generatedAt: number;
+  // Rasio slide pada result ini — undefined untuk data lama = 'story' (9:16).
+  ratio?: RewindRatio;
   slides: GeneratedRewindSlide[];
 };
 
 const MAX_PHOTOS = 10;
-const EXPORT_VIEW = { width: 360, height: 640 };
+
+// Dua format export (pilihan user di layar upload):
+// - story: IG Story 9:16 — 1080×1920, format lama/default.
+// - feed : IG Feed portrait 3:4 — 1080×1440, buat di-post di grid feed.
+// DOM view selalu lebar 360 dengan scale 3× ke kanvas; template merender
+// varian compact untuk 'feed' (tinggi konten berkurang 160pt).
+export const REWIND_RATIO_CONFIG: Record<RewindRatio, {
+  label: string;
+  aspectLabel: string;
+  hint: string;
+  view: { width: number; height: number };
+  canvas: { width: number; height: number };
+}> = {
+  story: {
+    label: 'Story',
+    aspectLabel: '9:16',
+    hint: 'IG Story & Status',
+    view: { width: 360, height: 640 },
+    canvas: { width: 1080, height: 1920 },
+  },
+  feed: {
+    label: 'Feed',
+    aspectLabel: '3:4',
+    hint: 'Post di feed IG',
+    view: { width: 360, height: 480 },
+    canvas: { width: 1080, height: 1440 },
+  },
+};
+
+const RATIO_STORAGE_KEY = 'fom_rewind_ratio';
+const readStoredRatio = (): RewindRatio => {
+  try {
+    return localStorage.getItem(RATIO_STORAGE_KEY) === 'feed' ? 'feed' : 'story';
+  } catch {
+    return 'story';
+  }
+};
 
 // Slide di-export JPEG q0.9, bukan PNG. Slide selalu berlatar solid #111111
 // (tak butuh alpha) dan slide berfoto sebagai PNG ~3,3MB — 8× lebih besar dari
@@ -73,21 +111,21 @@ const isWebkit = (() => {
 //   - ONE SVG + <img> per slide — the WebKit decode bug only needs the
 //     *drawImage* repeated, not the whole SVG rebuild;
 //   - the SVG image is released (src='') right after use.
-// 1080×1920 di semua platform (kualitas IG Story). Aman untuk budget canvas iOS
-// karena hanya ada SATU canvas + SATU SVG image hidup pada satu waktu — crash
-// lama datang dari akumulasi ~50 alokasi, bukan dari ukuran per-canvas.
-const EXPORT_CANVAS = { width: 1080, height: 1920 };
+// Kanvas full-res per rasio (lihat REWIND_RATIO_CONFIG). Aman untuk budget
+// canvas iOS karena hanya ada SATU canvas + SATU SVG image hidup pada satu
+// waktu — crash lama datang dari akumulasi ~50 alokasi, bukan ukuran per-canvas.
 const DRAW_PASSES = isWebkit ? 3 : 1;
 
 // html-to-image's toSvg returns an SVG whose intrinsic size equals the DOM node
-// (360×640). Browsers rasterize an SVG <img> at its *intrinsic* size before
+// (360-wide view). Browsers rasterize an SVG <img> at its *intrinsic* size before
 // drawImage scales the bitmap up to the canvas — every slide (photos included)
 // came out 3×-upscaled and blurry. Fix: request the SVG at canvas size and blow
 // the cloned node up via CSS transform scale. (Rewriting the root viewBox does
 // NOT work — WebKit ignores viewBox scaling for foreignObject content, which
 // left the slide unscaled in the top-left corner of the canvas.)
+// 1080/360 = 3× untuk kedua rasio.
 const EXPORT_SCALE_STYLE = {
-  transform: `scale(${EXPORT_CANVAS.width / EXPORT_VIEW.width})`,
+  transform: 'scale(3)',
   transformOrigin: 'top left',
 };
 
@@ -177,6 +215,7 @@ export const RewindFlow = ({
     if (!remote || !Array.isArray(remote.slides) || remote.slides.length === 0) return null;
     return {
       generatedAt: Number(remote.generatedAt || 0),
+      ratio: remote.ratio === 'feed' ? 'feed' : 'story',
       slides: [...remote.slides]
         .sort((a, b) => a.order - b.order)
         .map((slide) => ({
@@ -200,6 +239,16 @@ export const RewindFlow = ({
   });
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [shareFeedback, setShareFeedback] = useState('');
+  // Rasio export pilihan user — diingat lintas sesi. Counter pendingGenerate
+  // menunda handleGenerate satu render supaya rewindData (paginasi standings)
+  // sudah menghitung dengan rasio baru saat switch dari viewer.
+  const [ratio, setRatio] = useState<RewindRatio>(readStoredRatio);
+  const [pendingGenerate, setPendingGenerate] = useState(0);
+  useEffect(() => {
+    try {
+      localStorage.setItem(RATIO_STORAGE_KEY, ratio);
+    } catch { /* private mode — abaikan */ }
+  }, [ratio]);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const exportRef = useRef<HTMLDivElement | null>(null);
   const touchStartXRef = useRef<number | null>(null);
@@ -225,7 +274,8 @@ export const RewindFlow = ({
     copyBank,
     currentUserPlayerId,
     currentUserStanding,
-  }), [tournament, sortedPlayers, toxicStandings, photos, shareId, copyBank, currentUserPlayerId, currentUserStanding]);
+    ratio,
+  }), [tournament, sortedPlayers, toxicStandings, photos, shareId, copyBank, currentUserPlayerId, currentUserStanding, ratio]);
 
   // Real scannable QR for the outro slide, rendered as a data URL so the
   // html-to-image exporter can inline it like any other image.
@@ -317,10 +367,12 @@ export const RewindFlow = ({
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     const slidePayloads = rewindData.slides;
+    const ratioConfig = REWIND_RATIO_CONFIG[ratio];
     const generateStartedAt = performance.now();
     trackRewindEvent('rewind_generate_started', {
       photo_count: photos.length,
       toxic_on: Boolean(tournament.toxicModeEnabled),
+      ratio,
     });
     setProgress({ current: 0, total: slidePayloads.length });
     setStep('generating');
@@ -328,8 +380,8 @@ export const RewindFlow = ({
     // One shared canvas for the whole run — the only full-res canvas that ever
     // exists, so total canvas memory stays flat across all slides.
     const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = EXPORT_CANVAS.width;
-    exportCanvas.height = EXPORT_CANVAS.height;
+    exportCanvas.width = ratioConfig.canvas.width;
+    exportCanvas.height = ratioConfig.canvas.height;
 
     const generated: GeneratedRewindSlide[] = [];
     for (let index = 0; index < slidePayloads.length; index += 1) {
@@ -354,8 +406,8 @@ export const RewindFlow = ({
           }
         }));
         const blob = await exportNodeToBlob(node, exportCanvas, {
-          width: EXPORT_CANVAS.width,
-          height: EXPORT_CANVAS.height,
+          width: ratioConfig.canvas.width,
+          height: ratioConfig.canvas.height,
           style: EXPORT_SCALE_STYLE,
           cacheBust: true,
           backgroundColor: '#111111',
@@ -394,8 +446,9 @@ export const RewindFlow = ({
     trackRewindEvent('rewind_generate_completed', {
       slide_count: generated.length,
       duration_ms: Math.round(performance.now() - generateStartedAt),
+      ratio,
     });
-    const nextResult: RewindResult = { generatedAt: Date.now(), slides: generated };
+    const nextResult: RewindResult = { generatedAt: Date.now(), ratio, slides: generated };
     setResult(nextResult);
     onGenerated(nextResult);
     setSlideIndex(0);
@@ -408,11 +461,33 @@ export const RewindFlow = ({
         tournamentId: String(tournament.id),
         currentUid: currentUserUid,
         shareId,
+        ratio,
         // My Card itu personal milik yang generate — jangan ikut dipersist
         // ke shared viewer / History replay.
         slides: generated.filter((slide) => slide.type !== 'my-card'),
       });
     }
+  };
+
+  // Ganti rasio dari viewer: generate ditunda satu render (counter state) agar
+  // rewindData & node export sudah memakai rasio baru saat handleGenerate jalan.
+  useEffect(() => {
+    if (pendingGenerate === 0) return;
+    void handleGenerate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingGenerate]);
+
+  const resultRatio: RewindRatio = result?.ratio || 'story';
+  const switchTargetRatio: RewindRatio = resultRatio === 'story' ? 'feed' : 'story';
+
+  const handleSwitchRatio = () => {
+    setIsMenuOpen(false);
+    trackRewindEvent('rewind_regenerated', { reason: 'ratio_switch', ratio: switchTargetRatio });
+    setRatio(switchTargetRatio);
+    // Slide hasil replay (tanpa blob) berarti foto lokal sudah tidak ada di
+    // state — lewat layar upload dulu supaya user bisa pilih foto lagi.
+    if (slides.some((slide) => slide.blob)) setPendingGenerate((count) => count + 1);
+    else setStep('upload');
   };
 
   // -------------------------------------------------------------------------
@@ -446,8 +521,10 @@ export const RewindFlow = ({
     else goTo(safeIndex - 1);
   };
 
+  // Versi feed diberi sufiks -3x4 supaya tidak bentrok/menimpa file versi
+  // story saat user download kedua rasio; nama file story tetap seperti lama.
   const buildFileName = (slide: GeneratedRewindSlide, index: number) => (
-    `${fileSafe(tournament.name || 'fom-play')}-rewind-${index + 1}-${slide.type}.${REWIND_EXPORT_EXT}`
+    `${fileSafe(tournament.name || 'fom-play')}-rewind-${index + 1}-${slide.type}${resultRatio === 'feed' ? '-3x4' : ''}.${REWIND_EXPORT_EXT}`
   );
 
   const getSlideBlob = async (slide: GeneratedRewindSlide): Promise<Blob> => {
@@ -526,14 +603,14 @@ export const RewindFlow = ({
 
   return (
     <div className="fixed inset-0 z-[320] flex flex-col bg-black" role="dialog" aria-modal="true" aria-label="FOM Rewind">
-      {/* Hidden export node — 360×640, exported at 1080×1920 */}
+      {/* Hidden export node — 360-wide view, exported 3× (1080×1920 story / 1080×1440 feed) */}
       <div
         aria-hidden="true"
         className="pointer-events-none fixed left-0 top-0 z-0 opacity-0"
-        style={{ width: EXPORT_VIEW.width, height: EXPORT_VIEW.height }}
+        style={{ width: REWIND_RATIO_CONFIG[ratio].view.width, height: REWIND_RATIO_CONFIG[ratio].view.height }}
       >
-        <div ref={exportRef} className="relative overflow-hidden" style={{ width: EXPORT_VIEW.width, height: EXPORT_VIEW.height }}>
-          {renderSlide && <RewindSlideView slide={renderSlide} shortLink={rewindData.shortLink} qrDataUrl={qrDataUrl} />}
+        <div ref={exportRef} className="relative overflow-hidden" style={{ width: REWIND_RATIO_CONFIG[ratio].view.width, height: REWIND_RATIO_CONFIG[ratio].view.height }}>
+          {renderSlide && <RewindSlideView slide={renderSlide} shortLink={rewindData.shortLink} qrDataUrl={qrDataUrl} ratio={ratio} />}
         </div>
       </div>
 
@@ -605,14 +682,51 @@ export const RewindFlow = ({
             {photos.length} of {MAX_PHOTOS} photos{photos.length > 0 && coverIndex >= 0 ? ' · tap foto untuk set cover' : ''}
           </p>
           <div className="flex-1" />
-          <div className="px-5 pb-[calc(var(--app-safe-bottom,0px)+18px)] pt-4">
+          <div className="px-5 pt-5">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-ios-gray">Format slide</p>
+            <div className="mt-2 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Format slide Rewind">
+              {(['story', 'feed'] as const).map((option) => {
+                const config = REWIND_RATIO_CONFIG[option];
+                const isActive = ratio === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    role="radio"
+                    aria-checked={isActive}
+                    onClick={() => setRatio(option)}
+                    className={cn(
+                      'tap-target flex items-center gap-3 rounded-[16px] border-2 px-3.5 py-3 text-left transition-colors',
+                      isActive ? 'border-primary bg-primary/[0.06]' : 'border-black/10 bg-white',
+                    )}
+                  >
+                    {/* Miniatur proporsi rasio — story lebih jangkung dari feed */}
+                    <span
+                      className={cn(
+                        'shrink-0 rounded-[4px] border-2',
+                        option === 'story' ? 'h-8 w-[18px]' : 'h-8 w-6',
+                        isActive ? 'border-primary bg-primary/15' : 'border-[#C5C5CA] bg-black/[0.04]',
+                      )}
+                    />
+                    <span className="min-w-0">
+                      <span className={cn('block text-[13.5px] font-extrabold leading-tight', isActive ? 'text-primary' : 'text-on-surface')}>
+                        {config.label} · {config.aspectLabel}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10.5px] font-semibold text-ios-gray">{config.hint}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="px-5 pb-[calc(var(--app-safe-bottom,0px)+18px)] pt-3">
             <button
               type="button"
               onClick={() => void handleGenerate()}
               disabled={isProcessingPhotos}
               className="tap-target w-full rounded-full bg-primary px-6 py-4 text-[15px] font-bold text-white shadow-[0_10px_26px_rgba(230,94,20,0.28)] disabled:opacity-60"
             >
-              Generate Rewind
+              Generate Rewind {REWIND_RATIO_CONFIG[ratio].label} ({REWIND_RATIO_CONFIG[ratio].aspectLabel})
             </button>
           </div>
           <input ref={photoInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handlePhotosChange} />
@@ -623,7 +737,9 @@ export const RewindFlow = ({
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-10 text-center">
           <img src="/assets/fom-play-logo-dark-cropped.png" alt="FOM Play" className="mb-9 h-[26px] w-auto object-contain" />
           <div className="mb-7 h-16 w-16 animate-spin rounded-full border-[3px] border-white/12 border-t-primary motion-reduce:animate-none" />
-          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-primary">FOM Rewind</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-primary">
+            FOM Rewind · {REWIND_RATIO_CONFIG[ratio].label} {REWIND_RATIO_CONFIG[ratio].aspectLabel}
+          </p>
           <p className="mt-2.5 text-[20px] font-extrabold tracking-[-0.02em] text-white" aria-live="polite">
             Menyiapkan slide {progress.current} dari {progress.total}…
           </p>
@@ -665,6 +781,7 @@ export const RewindFlow = ({
           <div className="flex items-center justify-between px-4 pt-3">
             <p className="text-[11px] font-bold text-white/60">
               {safeIndex + 1} / {slides.length} · {REWIND_SLIDE_LABELS[currentSlide?.type || 'cover']}
+              {resultRatio === 'feed' && <span className="ml-1.5 rounded-full border border-white/20 px-1.5 py-0.5 text-[9px] font-black tracking-[0.08em] text-white/55">3:4</span>}
             </p>
             <div className="relative flex gap-2.5">
               <button
@@ -690,9 +807,20 @@ export const RewindFlow = ({
                     <Download size={15} /> Download semua
                   </button>
                   {!isReadOnly && (
-                    <button type="button" onClick={handleRegenerate} className="tap-target flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-semibold text-white active:bg-white/[0.06]">
-                      <RefreshCw size={15} /> Regenerate
-                    </button>
+                    <>
+                      <button type="button" onClick={handleSwitchRatio} className="tap-target flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-semibold text-white active:bg-white/[0.06]">
+                        <Proportions size={15} className="shrink-0" />
+                        <span className="min-w-0">
+                          Buat versi {REWIND_RATIO_CONFIG[switchTargetRatio].label} ({REWIND_RATIO_CONFIG[switchTargetRatio].aspectLabel})
+                          <span className="mt-0.5 block text-[10.5px] font-medium text-white/45">
+                            {REWIND_RATIO_CONFIG[switchTargetRatio].hint}
+                          </span>
+                        </span>
+                      </button>
+                      <button type="button" onClick={handleRegenerate} className="tap-target flex w-full items-center gap-2.5 px-4 py-3 text-left text-[13px] font-semibold text-white active:bg-white/[0.06]">
+                        <RefreshCw size={15} /> Regenerate
+                      </button>
+                    </>
                   )}
                 </div>
               )}

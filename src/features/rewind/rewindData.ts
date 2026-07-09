@@ -21,6 +21,11 @@ import {
 // (PRD FR-6.7). The small scans here (pair wins, per-player evidence) mirror
 // toxicStandings' countable-match rules over the same rounds.
 
+// Rasio export Rewind: 'story' = IG Story 9:16 (1080×1920), 'feed' = IG Feed
+// portrait 3:4 (1080×1440). Mempengaruhi ukuran kanvas export, layout compact
+// template, dan kuota baris standings per halaman.
+export type RewindRatio = 'story' | 'feed';
+
 export type RewindPhoto = {
   dataUrl: string;
   isCover?: boolean;
@@ -141,12 +146,14 @@ const toPlayerRef = (player: TeamExpandable): RewindPlayerRef => ({
 });
 
 // Slide standings dibagi beberapa halaman bila baris terlalu banyak untuk
-// satu kanvas 9:16; pembagiannya dirata supaya tidak ada halaman sisa berisi
-// 1-2 baris (13 baris → 7+6, bukan 12+1).
-const STANDINGS_MAX_ROWS_PER_PAGE = 12;
-const paginateStandingRows = (rows: FullStandingRow[]): FullStandingRow[][] => {
-  if (rows.length <= STANDINGS_MAX_ROWS_PER_PAGE) return [rows];
-  const pageCount = Math.ceil(rows.length / STANDINGS_MAX_ROWS_PER_PAGE);
+// satu kanvas; pembagiannya dirata supaya tidak ada halaman sisa berisi
+// 1-2 baris (13 baris → 7+6, bukan 12+1). Kanvas 'feed' 3:4 lebih pendek
+// (~25% area konten hilang vs 9:16), jadi kuota baris per halaman ikut turun.
+const STANDINGS_MAX_ROWS_PER_PAGE: Record<RewindRatio, number> = { story: 12, feed: 9 };
+const paginateStandingRows = (rows: FullStandingRow[], ratio: RewindRatio): FullStandingRow[][] => {
+  const maxRows = STANDINGS_MAX_ROWS_PER_PAGE[ratio];
+  if (rows.length <= maxRows) return [rows];
+  const pageCount = Math.ceil(rows.length / maxRows);
   const perPage = Math.ceil(rows.length / pageCount);
   const pages: FullStandingRow[][] = [];
   for (let index = 0; index < rows.length; index += perPage) {
@@ -326,6 +333,7 @@ export const buildRewindData = ({
   copyBank,
   currentUserPlayerId,
   currentUserStanding,
+  ratio = 'story',
 }: {
   tournament: Tournament | TournamentHistory;
   sortedPlayers: StandingsPlayer[];
@@ -335,6 +343,7 @@ export const buildRewindData = ({
   copyBank?: RewindCopyLine[] | null;
   currentUserPlayerId?: string;
   currentUserStanding?: StandingsPlayer;
+  ratio?: RewindRatio;
 }): RewindData => {
   const seed = String(tournament.id || tournament.startedAt || tournament.name || 'fom-rewind');
   const intensity = normalizeToxicIntensity(tournament.toxicIntensity);
@@ -681,7 +690,9 @@ export const buildRewindData = ({
       slides.push({
         type: 'awards',
         headline: 'Penghargaan yang nggak ada yang mau menang.',
-        awards: awardEntries.slice(0, 4),
+        // Kanvas feed 3:4 lebih pendek — 4 kartu overflow (headline & disclaimer
+        // ketimpa kartu), jadi maksimal 3; story tetap 4.
+        awards: awardEntries.slice(0, ratio === 'feed' ? 3 : 4),
       });
     }
   }
@@ -721,7 +732,7 @@ export const buildRewindData = ({
     isChampion: index === 0,
     highlight: index === 0,
   }));
-  paginateStandingRows(officialStandingRows).forEach((pageRows, pageIndex, pages) => {
+  paginateStandingRows(officialStandingRows, ratio).forEach((pageRows, pageIndex, pages) => {
     slides.push({
       type: 'standings',
       headline: copy.pick('standings', 'headline', {
@@ -763,7 +774,7 @@ export const buildRewindData = ({
             : undefined,
       };
     });
-    paginateStandingRows(toxicStandingRows).forEach((pageRows, pageIndex, pages) => {
+    paginateStandingRows(toxicStandingRows, ratio).forEach((pageRows, pageIndex, pages) => {
       slides.push({
         type: 'standings-toxic',
         headline: copy.pick('standings-toxic', 'headline'),

@@ -64,9 +64,9 @@ Referensi visual hidup: https://fomplay.asia (website baru — section Toxic Mod
 
 ---
 
-## 2. CAROUSEL (7 post)
+## 2. CAROUSEL (8 post)
 
-Urutan posting disarankan: C1 → C2 → C6 → C3 → C7 → C4 → C5 (selang-seling awareness/USP/tutorial, 2–3 post per minggu).
+Urutan posting disarankan: C1 → C2 → C8 → C6 → C3 → C7 → C4 → C5 (selang-seling awareness/USP/tutorial, 2–3 post per minggu). C8 dipost cepat karena jadi rujukan evergreen — **pin di profil** bersama C1.
 
 ---
 
@@ -201,6 +201,55 @@ Urutan posting disarankan: C1 → C2 → C6 → C3 → C7 → C4 → C5 (selang-
 | 9 | CTA master | **Court udah dibooking? Sisanya FOM. → fomplay.asia** |
 
 **Caption:** "Tutorial lengkap bikin match di FOM — termasuk dua langkah yang bikin mabar kamu beda: Toxic Mode & Rewind. Simpan & share ke host di grupmu 📌 → fomplay.asia"
+
+---
+
+### C8 — Tutorial: "Cara install FOM di HP kamu" (10 slide)
+**Goal:** hilangkan blocker terbesar adopsi PWA — "kok nggak ada di Play Store/App Store?". Satu post untuk dua OS, gampang di-save & dishare ke grup.
+**Posting:** langsung setelah C6, dan **pin sebagai post kedua** di profil (post pertama = C1). Ini konten evergreen yang bakal terus di-link dari mana-mana.
+**Art direction:** terang, satu keluarga visual dengan C6/C7 (nomor step jumbo oranye). Dua "bab" dipisah divider jelas: badge hijau Android, badge abu iOS. Screenshot HP asli di frame bezel.
+
+> **PENTING — alur install BEDA per OS (sesuai app asli, jangan ditukar):**
+> - **Android (Chrome):** ada tombol **"Install App"** di dalam FOM → muncul prompt install native. Fallback: menu ⋮ Chrome → "Install app / Tambahkan ke Layar utama".
+> - **iOS (Safari):** TIDAK ada prompt otomatis (batasan iOS, bukan salah kita). Wajib manual: Safari → tombol **Share** → **"Add to Home Screen / Tambahkan ke Layar Utama"**. Harus Safari, bukan Chrome.
+
+| # | Visual | Copy (persis) |
+|---|---|---|
+| 1 (cover) | Ikon app FOM (logomark di rounded square oranye) besar tengah, home screen HP blur di belakang | **FOM nggak ada di App Store. Sengaja.** — sub: "Install langsung dari browser. 30 detik, tanpa download gede." |
+| 2 | 3 ikon + teks singkat: ⚡ ringan (tanpa download ratusan MB) · 🔄 selalu versi terbaru otomatis · 📱 fullscreen kayak app biasa | **Kenapa nggak lewat store? Karena nggak perlu.** — sub: "Teknologinya namanya PWA. Rasanya? App biasa." |
+| 3 (divider) | Background hijau Android lembut, logo Android + teks jumbo | **ANDROID** — sub: "3 langkah. Yang iPhone, geser 4 slide lagi ✋" |
+| 4 | "01" jumbo + screenshot `[PLACEHOLDER: pwa-and-01-dashboard-install.png]` — dashboard FOM dengan tombol Install App di-highlight lingkaran oranye | **Buka fomplay.asia di Chrome → tap "Install App".** — sub: "Tombolnya ada di halaman depan." |
+| 5 | "02" jumbo + screenshot `[PLACEHOLDER: pwa-and-02-prompt.png]` — prompt native Chrome "Install app?" | **Tap Install pas ditanya.** — sub: "Udah. Itu doang." |
+| 6 | "03" jumbo + screenshot `[PLACEHOLDER: pwa-and-03-homescreen.png]` — ikon FOM di home screen, dilingkari | **Ikon FOM muncul di home screen. Selesai.** — footnote kecil: "Tombolnya nggak muncul? Menu ⋮ Chrome → 'Tambahkan ke Layar utama'." |
+| 7 (divider) | Background abu-gelap lembut, logo Apple + teks jumbo | **iPHONE / iPAD** — sub: "3 langkah juga, tapi jalannya beda. Wajib pakai Safari." |
+| 8 | "01" jumbo + screenshot `[PLACEHOLDER: pwa-ios-01-safari-share.png]` — fomplay.asia di Safari, tombol Share (kotak+panah) dilingkari oranye | **Buka fomplay.asia di Safari → tap tombol Share.** — sub: "Yang kotak dengan panah ke atas, di bawah tengah." |
+| 9 | "02" jumbo + screenshot `[PLACEHOLDER: pwa-ios-02-share-sheet.png]` — share sheet dengan "Add to Home Screen" di-highlight | **Scroll dikit → "Tambahkan ke Layar Utama" → Add.** — sub: "iPhone emang nggak kasih popup otomatis. Jalannya lewat sini." |
+| 10 (CTA) | Dua HP berdampingan (Android + iPhone) sama-sama nampilin ikon FOM di home screen `[PLACEHOLDER: pwa-both-homescreen.png]` + tombol pill oranye | **Sekarang FOM sejajar sama app lain di HP kamu.** — tombol: "Main gratis di fomplay.asia" — footnote: "Simpan post ini buat temanmu yang pasti nanya." |
+
+**Caption:** "'Kok nggak ada di Play Store?' — nggak perlu 😌 FOM itu PWA: install langsung dari browser, 30 detik, tanpa download gede, dan selalu otomatis versi terbaru. Android lewat tombol Install App, iPhone lewat Safari → Add to Home Screen. Semua langkahnya di slide — simpan & share ke grup mabar kamu 📌 → fomplay.asia"
+**Hashtag:** set standar + #pwa
+
+**Placeholder screenshot yang perlu diprovide** (nama file persis ini biar gampang di-match ke slide):
+| File | Isi | Perangkat |
+|---|---|---|
+| `pwa-and-01-dashboard-install.png` | Dashboard FOM, tombol "Install App" terlihat | Android/Chrome |
+| `pwa-and-02-prompt.png` | Prompt install native Chrome ("Install app? FOM Play") | Android/Chrome |
+| `pwa-and-03-homescreen.png` | Home screen Android dengan ikon FOM | Android |
+| `pwa-and-04-chrome-menu.png` | (cadangan/footnote) Menu ⋮ Chrome dengan opsi "Tambahkan ke Layar utama" | Android/Chrome |
+| `pwa-ios-01-safari-share.png` | fomplay.asia di Safari, tombol Share terlihat | iPhone/Safari |
+| `pwa-ios-02-share-sheet.png` | Share sheet, opsi "Add to Home Screen" terlihat | iPhone/Safari |
+| `pwa-ios-03-add-confirm.png` | (cadangan) Layar konfirmasi nama + tombol Add | iPhone/Safari |
+| `pwa-both-homescreen.png` | Ikon FOM di home screen Android & iPhone (bisa 2 foto digabung design) | Keduanya |
+
+Catatan pengambilan: status bar dirapikan (baterai penuh, tanpa notif), bahasa perangkat Indonesia lebih baik (UI "Tambahkan ke Layar Utama"), sembunyikan app pribadi lain di home screen. Sebelum screenshot final ada, tim design boleh layout pakai kotak abu berlabel nama file placeholder.
+
+### Story S4 — pendamping C8: "Install FOM" (4 frame, posting bareng C8, masuk Highlight "Tutorial")
+| Frame | Visual | Copy + interaksi |
+|---|---|---|
+| 1 | Ikon app FOM besar | "FOM bisa diinstall kayak app biasa. Tanpa app store." + **poll: HP kamu apa? Android / iPhone** |
+| 2 | Versi ringkas Android: 3 screenshot kecil berjejer (01→02→03) | "Android: buka fomplay.asia → Install App → done. 30 detik." |
+| 3 | Versi ringkas iOS: 2 screenshot berjejer | "iPhone: Safari → Share → Tambahkan ke Layar Utama. (Wajib Safari ya)" |
+| 4 (CTA) | Link sticker → fomplay.asia | "Install sekarang → fomplay.asia" + teks kecil: "Detail lengkap di post feed 👇" |
 
 ---
 
