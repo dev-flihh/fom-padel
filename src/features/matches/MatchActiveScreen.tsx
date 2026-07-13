@@ -17,7 +17,7 @@ import { NoActiveMatchScreen } from './NoActiveMatchScreen';
 import { SwapPlayerModal } from './SwapPlayerModal';
 import { getReadyScoreCountForRound, getStatsSyncBadge } from './activeMatchDerived';
 import { getRoundTotalPoints } from './roundPoints';
-import { describeMatchPlayMode, getMatchPlayConfig } from './tennisScoring';
+import { describeMatchPlayMode, getMatchPlayConfig, getMatchPlayScoreline, readTennisState } from './tennisScoring';
 import { useModalBottomOffset, useNowMs } from './useActiveMatchUiState';
 import { isFomRegisteredPlayer } from '../players/playerUtils';
 import { getMatchThemeColor } from '../tournaments/matchTheme';
@@ -34,7 +34,9 @@ type MatchActiveScreenProps = {
   tournament: Tournament;
   currentUser?: any;
   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void;
-  onTennisPoint: (matchId: string, team: 'A' | 'B', direction: 1 | -1) => void;
+  onTennisPoint: (matchId: string, team: 'A' | 'B') => void;
+  onTennisPointUndo: (matchId: string) => void;
+  canUndoTennisPoint: (matchId: string) => boolean;
   onCompleteMatchPlayMatch: (matchId: string) => void;
   onReopenMatchPlayMatch: (matchId: string) => void;
   onNextRound: () => void | Promise<void>;
@@ -203,6 +205,8 @@ export const MatchActiveScreen = ({
   currentUser,
   onUpdateScore,
   onTennisPoint,
+  onTennisPointUndo,
+  canUndoTennisPoint,
   onCompleteMatchPlayMatch,
   onReopenMatchPlayMatch,
   onNextRound,
@@ -927,6 +931,22 @@ export const MatchActiveScreen = ({
       ? 'Finish Match'
       : 'Next Round';
   const actionPanelPrimaryDisabled = !isTournamentEnded && !isActiveRoundScoreFullyFilled;
+  // Match Play: selama court masih bermain, panel aksi diganti baris status
+  // pasif — tidak ada tombol disabled yang menyaru jadi aksi. Tombol Next
+  // Round/Finish Match baru dirender saat benar-benar bisa ditekan.
+  const isMatchPlayWaiting = tournament.format === 'Match Play' && actionPanelPrimaryDisabled;
+  const matchPlayWaitingText = useMemo(() => {
+    if (tournament.format !== 'Match Play' || !activeRound || !matchPlayConfig) return '';
+    const incompleteMatches = activeRound.matches.filter((match) => match.status !== 'completed');
+    if (incompleteMatches.length === 0) return '';
+    if (incompleteMatches.length === 1) {
+      const match = incompleteMatches[0];
+      const state = readTennisState(match);
+      return `Court ${match.court || '-'} masih bermain — skor ${getMatchPlayScoreline(state, matchPlayConfig)}, poin ${state.pointsA}:${state.pointsB}`;
+    }
+    const courtList = incompleteMatches.map((match) => `Court ${match.court || '-'}`).join(', ');
+    return `${incompleteMatches.length} court masih bermain — ${courtList}`;
+  }, [tournament.format, activeRound, matchPlayConfig]);
   const handleActionPanelPrimary = () => {
     if (isTournamentEnded) {
       onOpenStandings();
@@ -1047,10 +1067,15 @@ export const MatchActiveScreen = ({
                 onCompleteRound={handleCompleteAmericanoRoundRequest}
                 onAdjustScore={handleAdjustMatchScore}
                 onSetScore={handleSetMatchScore}
-                onTennisPoint={(match, team, direction) => {
+                onTennisPoint={(match, team) => {
                   if (isReadOnly) return;
-                  onTennisPoint(match.id, team, direction);
+                  onTennisPoint(match.id, team);
                 }}
+                onTennisPointUndo={(match) => {
+                  if (isReadOnly) return;
+                  onTennisPointUndo(match.id);
+                }}
+                canUndoTennisPoint={canUndoTennisPoint}
                 onCompleteMatchPlay={(match) => {
                   if (isReadOnly) return;
                   onCompleteMatchPlayMatch(match.id);
@@ -1117,7 +1142,16 @@ export const MatchActiveScreen = ({
           </button>
         )}
 
-        {showActionPanel && (
+        {showActionPanel && isMatchPlayWaiting && (
+          <section className="mt-2.5 flex items-center gap-2.5 rounded-[18px] border border-dashed border-black/[0.14] bg-black/[0.015] px-4 py-3.5">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-[#D59B2C]" aria-hidden="true" />
+            <p className="min-w-0 text-[12.5px] font-semibold leading-snug text-on-surface/62 tabular-nums">
+              {matchPlayWaitingText || 'Court masih bermain — selesaikan semua match untuk lanjut.'}
+            </p>
+          </section>
+        )}
+
+        {showActionPanel && !isMatchPlayWaiting && (
           <section className={cn(
             'mt-2.5 rounded-[18px] border border-black/10 bg-white shadow-[0_6px_18px_rgba(17,19,23,0.035)]',
             actionPanelPrimaryDisabled ? 'px-4 py-3.5' : 'px-4.5 py-4'

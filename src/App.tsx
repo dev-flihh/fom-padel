@@ -1157,6 +1157,8 @@ export default function App() {
     handleUpdateToxicSettings,
     handleUpdateScore,
     handleTennisPoint,
+    handleTennisPointUndo,
+    canUndoTennisPoint,
     handleCompleteMatchPlayMatch,
     handleReopenMatchPlayMatch,
     handleUpdateActivePlayers,
@@ -2770,6 +2772,8 @@ export default function App() {
         currentUser={null}
         onUpdateScore={() => { }}
         onTennisPoint={() => { }}
+        onTennisPointUndo={() => { }}
+        canUndoTennisPoint={() => false}
         onCompleteMatchPlayMatch={() => { }}
         onReopenMatchPlayMatch={() => { }}
         onNextRound={() => { }}
@@ -2999,6 +3003,8 @@ export default function App() {
             currentUser={user}
             onUpdateScore={handleUpdateScore}
             onTennisPoint={handleTennisPoint}
+            onTennisPointUndo={handleTennisPointUndo}
+            canUndoTennisPoint={canUndoTennisPoint}
             onCompleteMatchPlayMatch={handleCompleteMatchPlayMatch}
             onReopenMatchPlayMatch={handleReopenMatchPlayMatch}
             onNextRound={handleNextRound}

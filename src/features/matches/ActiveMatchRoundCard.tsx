@@ -1,9 +1,10 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Flag, Minus, Play, Plus, Zap } from 'lucide-react';
+import { Check, Flag, Minus, MoreHorizontal, Play, Plus, Undo2, Zap } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { type Match, type MatchFormat, type Player, type Round } from '../../types';
 import {
+  applyTennisPointWon,
   getMatchPlayScoreline,
   getSetsWon,
   readTennisState,
@@ -33,6 +34,8 @@ export const ActiveMatchRoundCard = ({
   onAdjustScore,
   onSetScore,
   onTennisPoint,
+  onTennisPointUndo,
+  canUndoTennisPoint,
   onCompleteMatchPlay,
   onReopenMatchPlay,
   onOpenSwapPlayer
@@ -58,7 +61,9 @@ export const ActiveMatchRoundCard = ({
   onCompleteRound: (roundId: number) => void;
   onAdjustScore: (match: Match, team: 'A' | 'B', delta: number) => void;
   onSetScore: (match: Match, team: 'A' | 'B', score: number) => void;
-  onTennisPoint?: (match: Match, team: 'A' | 'B', direction: 1 | -1) => void;
+  onTennisPoint?: (match: Match, team: 'A' | 'B') => void;
+  onTennisPointUndo?: (match: Match) => void;
+  canUndoTennisPoint?: (matchId: string) => boolean;
   onCompleteMatchPlay?: (match: Match) => void;
   onReopenMatchPlay?: (match: Match) => void;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
@@ -116,6 +121,8 @@ export const ActiveMatchRoundCard = ({
                   onAdjustScore={onAdjustScore}
                   onSetScore={onSetScore}
                   onTennisPoint={onTennisPoint}
+                  onTennisPointUndo={onTennisPointUndo}
+                  canUndoTennisPoint={canUndoTennisPoint}
                   onCompleteMatchPlay={onCompleteMatchPlay}
                   onReopenMatchPlay={onReopenMatchPlay}
                   onOpenSwapPlayer={onOpenSwapPlayer}
@@ -231,6 +238,8 @@ const RoundMatchRow = ({
   onAdjustScore,
   onSetScore,
   onTennisPoint,
+  onTennisPointUndo,
+  canUndoTennisPoint,
   onCompleteMatchPlay,
   onReopenMatchPlay,
   onOpenSwapPlayer
@@ -244,7 +253,9 @@ const RoundMatchRow = ({
   scoreToneClass: string;
   onAdjustScore: (match: Match, team: 'A' | 'B', delta: number) => void;
   onSetScore: (match: Match, team: 'A' | 'B', score: number) => void;
-  onTennisPoint?: (match: Match, team: 'A' | 'B', direction: 1 | -1) => void;
+  onTennisPoint?: (match: Match, team: 'A' | 'B') => void;
+  onTennisPointUndo?: (match: Match) => void;
+  canUndoTennisPoint?: (matchId: string) => boolean;
   onCompleteMatchPlay?: (match: Match) => void;
   onReopenMatchPlay?: (match: Match) => void;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
@@ -289,50 +300,64 @@ const RoundMatchRow = ({
         <span className="text-[10px] font-extrabold uppercase leading-none tracking-[0.18em] text-ios-gray/72">
           Court {match.court}
         </span>
-        <span className={cn(
-          "shrink-0 rounded-full px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.10em] leading-none",
-          match.status === 'completed'
-            ? "bg-[#E7F4EA] text-[#1E7A38]"
-            : match.status === 'active'
-              ? isScoreReady
-                ? "bg-[#E7F4EA] text-[#1E7A38]"
-                : "bg-[#FDEFE6] text-[#C44D0B]"
-              : "bg-[#F2F2F4] text-[#9A9AA0]"
-        )}>
-          {activeStatusLabel}
+        <span className="flex shrink-0 items-center gap-2">
+          <span className={cn(
+            "shrink-0 rounded-full px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.10em] leading-none",
+            match.status === 'completed'
+              ? "bg-[#E7F4EA] text-[#1E7A38]"
+              : match.status === 'active'
+                ? isScoreReady
+                  ? "bg-[#E7F4EA] text-[#1E7A38]"
+                  : "bg-[#FDEFE6] text-[#C44D0B]"
+                : "bg-[#F2F2F4] text-[#9A9AA0]"
+          )}>
+            {activeStatusLabel}
+          </span>
+          {isMatchPlay && !isReadOnly && isActiveRound && (isReviewMode ? Boolean(onReopenMatchPlay) : true) && (
+            <MatchPlayCardMenu
+              match={match}
+              isCompleted={isReviewMode}
+              onComplete={!isReviewMode ? onCompleteMatchPlay : undefined}
+              onReopen={isReviewMode ? onReopenMatchPlay : undefined}
+              onOpenSwapPlayer={!isReviewMode ? onOpenSwapPlayer : undefined}
+            />
+          )}
         </span>
       </div>
 
-      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_30px_minmax(0,1fr)] items-center gap-3">
-        <TeamName
-          team="A"
-          match={match}
-          isActiveRound={isActiveRound}
-          isReadOnly={isReadOnly}
-          onOpenSwapPlayer={onOpenSwapPlayer}
-        />
-        <div className="text-center text-[12px] font-extrabold uppercase tracking-[0.08em] text-ios-gray/24">
-          VS
+      {/* Match Play aktif: nama tim sudah hidup di dalam zona tap — grid nama
+          terpisah hanya untuk format lain & tampilan match selesai. */}
+      {(!isMatchPlay || isReviewMode) && (
+        <div className="mt-4 grid grid-cols-[minmax(0,1fr)_30px_minmax(0,1fr)] items-center gap-3">
+          <TeamName
+            team="A"
+            match={match}
+            isActiveRound={isActiveRound}
+            isReadOnly={isReadOnly}
+            onOpenSwapPlayer={onOpenSwapPlayer}
+          />
+          <div className="text-center text-[12px] font-extrabold uppercase tracking-[0.08em] text-ios-gray/24">
+            VS
+          </div>
+          <TeamName
+            team="B"
+            match={match}
+            isActiveRound={isActiveRound}
+            isReadOnly={isReadOnly}
+            onOpenSwapPlayer={onOpenSwapPlayer}
+          />
         </div>
-        <TeamName
-          team="B"
-          match={match}
-          isActiveRound={isActiveRound}
-          isReadOnly={isReadOnly}
-          onOpenSwapPlayer={onOpenSwapPlayer}
-        />
-      </div>
+      )}
 
       {isMatchPlay ? (
         <TennisScorePanel
           match={match}
           config={matchPlayConfig || null}
           canScore={canEditScore && !isReviewMode}
-          canReopen={!isReadOnly && isActiveRound}
           scoreToneClass={scoreToneClass}
           onTennisPoint={onTennisPoint}
-          onCompleteMatchPlay={onCompleteMatchPlay}
-          onReopenMatchPlay={onReopenMatchPlay}
+          onTennisPointUndo={onTennisPointUndo}
+          canUndo={Boolean(canUndoTennisPoint?.(match.id))}
         />
       ) : (
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] items-center gap-2">
@@ -363,34 +388,31 @@ const RoundMatchRow = ({
   );
 };
 
-// Panel skor tenis Match Play: game per tim (set berjalan), poin game
-// 0/15/30/40/Ad dengan tap +1 poin per sisi, ringkasan set (mode best-of),
-// dan tombol tutup match lebih awal.
+// Panel skor tenis Match Play (Usulan A): dua zona tap raksasa — separuh
+// panel per tim, tap = poin. Poin game jadi elemen terbesar; game & set
+// turun jadi meta. Koreksi lewat satu tombol "Batalkan poin terakhir".
+// Aksi jarang (selesaikan match / ganti pemain / buka lagi skor) hidup di
+// menu ⋯ pada header kartu, bukan di panel ini.
 const TennisScorePanel = ({
   match,
   config,
   canScore,
-  canReopen,
   scoreToneClass,
   onTennisPoint,
-  onCompleteMatchPlay,
-  onReopenMatchPlay
+  onTennisPointUndo,
+  canUndo
 }: {
   match: Match;
   config: MatchPlayConfig | null;
   canScore: boolean;
-  canReopen: boolean;
   scoreToneClass: string;
-  onTennisPoint?: (match: Match, team: 'A' | 'B', direction: 1 | -1) => void;
-  onCompleteMatchPlay?: (match: Match) => void;
-  onReopenMatchPlay?: (match: Match) => void;
+  onTennisPoint?: (match: Match, team: 'A' | 'B') => void;
+  onTennisPointUndo?: (match: Match) => void;
+  canUndo: boolean;
 }) => {
-  const [isConfirmingFinish, setIsConfirmingFinish] = useState(false);
   const state = readTennisState(match);
   const isBestOf = config?.mode === 'bestOf';
   const isCompleted = match.status === 'completed';
-  const gamesA = isBestOf ? (state.gamesA[state.currentSet] || 0) : sumGames(state.gamesA);
-  const gamesB = isBestOf ? (state.gamesB[state.currentSet] || 0) : sumGames(state.gamesB);
   const totalGamesA = sumGames(state.gamesA);
   const totalGamesB = sumGames(state.gamesB);
   const setsWon = getSetsWon(state);
@@ -402,10 +424,6 @@ const TennisScorePanel = ({
     : isBestOf
       ? (setsWon.A > setsWon.B ? 'A' : setsWon.B > setsWon.A ? 'B' : null)
       : (totalGamesA > totalGamesB ? 'A' : totalGamesB > totalGamesA ? 'B' : null);
-
-  useEffect(() => {
-    if (!canScore) setIsConfirmingFinish(false);
-  }, [canScore]);
 
   const scoreline = config ? getMatchPlayScoreline(state, config) : `${totalGamesA}-${totalGamesB}`;
 
@@ -423,18 +441,14 @@ const TennisScorePanel = ({
             Winner: {(winnerSide === 'A' ? match.teamA : match.teamB).players.map((player) => player.name.split(' ')[0]).join(' & ')}
           </p>
         )}
-        {canReopen && onReopenMatchPlay && (
-          <button
-            type="button"
-            onClick={() => onReopenMatchPlay(match)}
-            className="tap-target mx-auto mt-2.5 inline-flex h-8 items-center justify-center rounded-full border border-black/[0.07] bg-white px-3.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ios-gray/78"
-          >
-            Reopen scoring
-          </button>
-        )}
       </div>
     );
   }
+
+  // Match point: kalau sisi ini memenangkan poin berikutnya, match selesai.
+  const isMatchPointFor = (side: 'A' | 'B') => (
+    Boolean(config) && applyTennisPointWon(state, side, config as MatchPlayConfig).matchWon === side
+  );
 
   return (
     <div className="mt-3">
@@ -456,122 +470,219 @@ const TennisScorePanel = ({
         </div>
       )}
 
-      <div className="grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] items-center gap-2">
-        {(['A', 'B'] as const).map((team, index) => (
-          <Fragment key={team}>
-            {index === 1 && (
-              <div className="text-center text-[23px] font-semibold leading-none text-ios-gray/24">-</div>
-            )}
-            <div className="flex flex-col items-center gap-1">
-              <p
-                className={cn('font-display text-[44px] font-bold leading-none tracking-[-0.035em] tabular-nums', scoreToneClass)}
-                aria-label={`Games for ${getTeamScoreLabel((team === 'A' ? match.teamA : match.teamB).players)} on court ${match.court}`}
-              >
-                {team === 'A' ? gamesA : gamesB}
-              </p>
-              <p className="text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/52">
-                {isBestOf ? `Games · Set ${state.currentSet + 1}` : `Games${config ? ` / ${config.gamesTarget}` : ''}`}
-              </p>
-            </div>
-          </Fragment>
-        ))}
+      <div className="grid grid-cols-2 overflow-hidden rounded-[18px] border border-black/[0.06] bg-white">
+        {(['A', 'B'] as const).map((team) => {
+          const teamData = team === 'A' ? match.teamA : match.teamB;
+          const pointLabel = team === 'A' ? state.pointsA : state.pointsB;
+          const currentSetGames = team === 'A'
+            ? (state.gamesA[state.currentSet] || 0)
+            : (state.gamesB[state.currentSet] || 0);
+          const totalGames = team === 'A' ? totalGamesA : totalGamesB;
+          const namesLabel = teamData.players.map((player) => player.name.split(' ')[0]).join(' & ');
+          const showMatchPoint = isMatchPointFor(team);
+          return (
+            <button
+              key={team}
+              type="button"
+              disabled={!canScorePoints}
+              onClick={() => onTennisPoint?.(match, team)}
+              className={cn(
+                'relative flex min-h-[168px] flex-col items-center justify-start gap-0.5 bg-white px-2 pb-4 pt-7 transition-colors',
+                canScorePoints && 'cursor-pointer active:bg-primary/[0.06]',
+                team === 'A' && 'border-r border-black/[0.06]'
+              )}
+              aria-label={`Poin untuk ${getTeamScoreLabel(teamData.players)} di court ${match.court}`}
+            >
+              {showMatchPoint && (
+                <span className="absolute left-1/2 top-2 -translate-x-1/2 whitespace-nowrap rounded-full bg-[#1A140E] px-2 py-[3px] text-[8px] font-black leading-none tracking-[0.1em] text-[#FFD9A8]">
+                  MATCH POINT
+                </span>
+              )}
+              <span className="flex min-h-[2.3em] items-center text-center text-[14px] font-display font-bold leading-[1.15] tracking-[-0.015em] text-on-surface">
+                {namesLabel}
+              </span>
+              <span className={cn('font-display text-[56px] font-bold leading-none tracking-[-0.04em] tabular-nums', scoreToneClass)}>
+                {pointLabel}
+              </span>
+              <span className="mt-1.5 text-[11px] font-semibold leading-none text-ios-gray/62 tabular-nums">
+                {isBestOf
+                  ? <><b className="text-[12px] font-extrabold text-on-surface">{currentSetGames}</b> games · set {state.currentSet + 1}</>
+                  : <><b className="text-[12px] font-extrabold text-on-surface">{totalGames}</b>{config ? ` / ${config.gamesTarget}` : ''} games</>}
+              </span>
+              {canScorePoints && (
+                <span className="mt-2 text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/34">
+                  Tap = poin
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
-      <div className="mt-3 rounded-[16px] border border-black/[0.055] bg-[#FAFAFB] px-3 py-3">
-        <p className="text-center text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/52">
-          Current game point
-        </p>
-        <div
-          className="mt-2 grid grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)] items-center gap-1.5"
-          aria-live="polite"
-          aria-atomic="true"
-          aria-label={`Game points: ${state.pointsA} to ${state.pointsB}, games ${gamesA} to ${gamesB}`}
-        >
-          {(['A', 'B'] as const).map((team, index) => {
-            const pointLabel = team === 'A' ? state.pointsA : state.pointsB;
-            const teamLabel = getTeamScoreLabel((team === 'A' ? match.teamA : match.teamB).players);
-            return (
-              <Fragment key={team}>
-                {index === 1 && (
-                  <div className="text-center text-[15px] font-bold leading-none text-ios-gray/30">:</div>
-                )}
-                <div className="flex items-center justify-center gap-1.5">
-                  {canScorePoints && (
-                    <button
-                      type="button"
-                      onClick={() => onTennisPoint?.(match, team, -1)}
-                      disabled={pointLabel === '0'}
-                      className={cn(
-                        'tap-target flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-[0.97]',
-                        pointLabel === '0'
-                          ? 'pointer-events-none border-transparent text-ios-gray/0 opacity-0'
-                          : 'border-black/[0.08] bg-white text-ios-gray/58'
-                      )}
-                      aria-label={`Undo point for ${teamLabel}`}
-                    >
-                      <Minus size={14} strokeWidth={2.4} />
-                    </button>
-                  )}
-                  <span
-                    className="min-w-[40px] text-center font-display text-[24px] font-bold leading-none tracking-[-0.02em] text-on-surface tabular-nums"
-                    aria-label={`Game points for ${teamLabel}`}
-                  >
-                    {pointLabel}
-                  </span>
-                  {canScorePoints && (
-                    <button
-                      type="button"
-                      onClick={() => onTennisPoint?.(match, team, 1)}
-                      className="tap-target flex h-9 w-9 items-center justify-center rounded-full border border-primary/16 bg-primary/[0.07] text-primary transition-all hover:bg-primary/[0.1] active:scale-[0.97]"
-                      aria-label={`Add point for ${teamLabel}`}
-                    >
-                      <Plus size={16} strokeWidth={2.5} />
-                    </button>
-                  )}
-                </div>
-              </Fragment>
-            );
-          })}
+      {canScorePoints && onTennisPointUndo && (
+        <div className="mt-2.5 flex justify-center">
+          <button
+            type="button"
+            disabled={!canUndo}
+            onClick={() => onTennisPointUndo(match)}
+            className="tap-target inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-black/[0.07] bg-white px-3.5 text-[11px] font-bold tracking-[0.02em] text-ios-gray/78 disabled:opacity-35"
+          >
+            <Undo2 size={12} strokeWidth={2.4} />
+            Batalkan poin terakhir
+          </button>
         </div>
-      </div>
+      )}
 
-      {canScore && onCompleteMatchPlay && (
-        <div className="mt-2.5 flex items-center justify-center gap-2">
-          {isConfirmingFinish ? (
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {`Poin ${state.pointsA} lawan ${state.pointsB}. Skor ${scoreline}.`}
+      </span>
+    </div>
+  );
+};
+
+// Menu ⋯ kartu Match Play: rumah untuk aksi yang jarang dipakai supaya tidak
+// bersaing dengan zona tap — selesaikan match lebih awal, ganti pemain, dan
+// buka lagi skor match yang sudah selesai.
+const MatchPlayCardMenu = ({
+  match,
+  isCompleted,
+  onComplete,
+  onReopen,
+  onOpenSwapPlayer
+}: {
+  match: Match;
+  isCompleted: boolean;
+  onComplete?: (match: Match) => void;
+  onReopen?: (match: Match) => void;
+  onOpenSwapPlayer?: (request: ActiveMatchSwapRequest) => void;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [view, setView] = useState<'root' | 'swap'>('root');
+  const wrapRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+        setView('root');
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        setView('root');
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const close = () => {
+    setIsOpen(false);
+    setView('root');
+  };
+
+  const swapEntries: Array<{ team: 'A' | 'B'; playerIndex: number; player: Player }> = [
+    ...match.teamA.players.map((player, playerIndex) => ({ team: 'A' as const, playerIndex, player })),
+    ...match.teamB.players.map((player, playerIndex) => ({ team: 'B' as const, playerIndex, player })),
+  ];
+
+  return (
+    <span ref={wrapRef} className="relative inline-flex">
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        aria-label={`Menu match court ${match.court}`}
+        className="tap-target flex h-7 w-7 items-center justify-center rounded-full border border-black/[0.08] bg-white text-ios-gray/62"
+      >
+        <MoreHorizontal size={15} strokeWidth={2.4} />
+      </button>
+      {isOpen && (
+        <div
+          role="menu"
+          className="absolute right-0 top-9 z-30 min-w-[224px] rounded-[14px] border border-black/10 bg-white p-1.5 text-left shadow-[0_14px_34px_rgba(17,24,39,0.16)]"
+        >
+          {view === 'root' ? (
+            <>
+              {isCompleted && onReopen && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { close(); onReopen(match); }}
+                  className="flex w-full items-center gap-2 rounded-[9px] px-3 py-2.5 text-left text-[13px] font-semibold text-on-surface hover:bg-ios-gray/[0.05]"
+                >
+                  <Undo2 size={13} strokeWidth={2.4} className="shrink-0 text-ios-gray/62" />
+                  Buka lagi skor
+                </button>
+              )}
+              {!isCompleted && onComplete && (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { close(); onComplete(match); }}
+                    className="flex w-full items-center gap-2 rounded-[9px] px-3 py-2.5 text-left text-[13px] font-semibold text-[#C0353C] hover:bg-[#FDECEC]/60"
+                  >
+                    <Flag size={13} strokeWidth={2.4} className="shrink-0" />
+                    Selesaikan match sekarang
+                  </button>
+                  <p className="px-3 pb-1.5 pt-0.5 text-[10.5px] font-medium leading-snug text-ios-gray/62">
+                    Skor saat ini dipakai sebagai hasil akhir.
+                  </p>
+                </>
+              )}
+              {!isCompleted && onOpenSwapPlayer && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => setView('swap')}
+                  className="flex w-full items-center justify-between gap-2 rounded-[9px] px-3 py-2.5 text-left text-[13px] font-semibold text-on-surface hover:bg-ios-gray/[0.05]"
+                >
+                  Ganti pemain
+                  <span aria-hidden="true" className="text-ios-gray/45">›</span>
+                </button>
+              )}
+            </>
+          ) : (
             <>
               <button
                 type="button"
-                autoFocus
-                onClick={() => {
-                  setIsConfirmingFinish(false);
-                  onCompleteMatchPlay(match);
-                }}
-                className="tap-target inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[#E65E14] px-3.5 text-[11px] font-extrabold uppercase tracking-[0.08em] text-white"
+                onClick={() => setView('root')}
+                className="flex w-full items-center gap-1.5 rounded-[9px] px-3 py-2 text-left text-[11px] font-bold uppercase tracking-[0.08em] text-ios-gray/62 hover:bg-ios-gray/[0.05]"
               >
-                <Flag size={12} strokeWidth={2.6} />
-                Confirm finish
+                ‹ Kembali
               </button>
-              <button
-                type="button"
-                onClick={() => setIsConfirmingFinish(false)}
-                className="tap-target inline-flex h-8 items-center justify-center rounded-full bg-ios-gray/[0.07] px-3.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ios-gray"
-              >
-                Cancel
-              </button>
+              {swapEntries.map(({ team, playerIndex, player }) => (
+                <button
+                  key={`${team}-${playerIndex}-${player.id}`}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    close();
+                    onOpenSwapPlayer?.({ matchId: match.id, team, playerIndex, currentPlayer: player });
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-[9px] px-3 py-2.5 text-left text-[13px] font-semibold text-on-surface hover:bg-ios-gray/[0.05]"
+                >
+                  <span className="min-w-0 truncate">{player.name}</span>
+                  <span className="shrink-0 rounded-full bg-ios-gray/[0.07] px-1.5 py-0.5 text-[9px] font-black uppercase tracking-[0.06em] text-ios-gray/62">
+                    Tim {team}
+                  </span>
+                </button>
+              ))}
             </>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsConfirmingFinish(true)}
-              className="tap-target inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-black/[0.07] bg-white px-3.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ios-gray/78"
-            >
-              <Flag size={12} strokeWidth={2.4} />
-              End match now
-            </button>
           )}
         </div>
       )}
-    </div>
+    </span>
   );
 };
 

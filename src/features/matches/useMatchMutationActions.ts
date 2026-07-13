@@ -7,12 +7,12 @@ import { getPartnerMode, swapFixedTeamMembers } from './partnerMode';
 import { rebuildFixedTeamFutureRounds } from './fixedTeamScheduler';
 import { getRoundTotalPoints } from './roundPoints';
 import {
-  applyTennisPointUndo,
   applyTennisPointWon,
   applyTennisStateToMatch,
   getMatchPlayConfig,
   getMatchPlayWinner,
   readTennisState,
+  type TennisScoreState,
 } from './tennisScoring';
 
 type AddNotification = (
@@ -329,11 +329,28 @@ export const useMatchMutationActions = ({
     }, 1500);
   };
 
-  // Match Play: satu poin tenis untuk `team` (direction 1) atau koreksi mundur
-  // satu tingkat poin di game berjalan (direction -1). Game/set/match selesai
-  // dihitung engine; match yang mencapai target langsung berstatus completed
-  // sehingga tombol Next Round bisa aktif.
-  const handleTennisPoint = (matchId: string, team: 'A' | 'B', direction: 1 | -1) => {
+  // Riwayat undo poin per match — in-memory saja: koreksi salah tap adalah
+  // aksi sesaat, tidak perlu awet melewati refresh, jadi tidak menambah field
+  // di Match/Firestore. Stack dibersihkan saat match selesai/dibuka lagi
+  // supaya undo tidak pernah melompati batas penyelesaian match.
+  const tennisUndoStacksRef = useRef<Map<string, TennisScoreState[]>>(new Map());
+  const pushTennisUndo = (matchId: string, state: TennisScoreState) => {
+    const stack = tennisUndoStacksRef.current.get(matchId) || [];
+    stack.push(state);
+    if (stack.length > 30) stack.shift();
+    tennisUndoStacksRef.current.set(matchId, stack);
+  };
+  const clearTennisUndo = (matchId: string) => {
+    tennisUndoStacksRef.current.delete(matchId);
+  };
+  const canUndoTennisPoint = (matchId: string) => (
+    (tennisUndoStacksRef.current.get(matchId)?.length || 0) > 0
+  );
+
+  // Match Play: satu poin tenis untuk `team`. Game/set/match selesai dihitung
+  // engine; match yang mencapai target langsung berstatus completed sehingga
+  // tombol Next Round bisa aktif.
+  const handleTennisPoint = (matchId: string, team: 'A' | 'B') => {
     // Basis dari ref, bukan closure: dua tap dalam satu batch render React
     // harus ter-chain (tap kedua membaca hasil tap pertama), kalau tidak poin
     // bisa hilang saat host mengetuk cepat.
@@ -343,6 +360,7 @@ export const useMatchMutationActions = ({
     let matchJustCompleted = false;
     let scoreChanged = false;
     let gameBoundaryCrossed = false;
+    let undoSnapshot: TennisScoreState | null = null;
     const config = getMatchPlayConfig(baseTournament);
     const now = Date.now();
 
@@ -373,16 +391,10 @@ export const useMatchMutationActions = ({
             return completeMatch(applyTennisStateToMatch(match, { ...state, pointsA: '0', pointsB: '0' }, config));
           }
 
-          if (direction === -1) {
-            const reverted = applyTennisPointUndo(state, team);
-            if (reverted === state) return match;
-            scoreChanged = true;
-            return applyTennisStateToMatch(match, reverted, config);
-          }
-
           const outcome = applyTennisPointWon(state, team, config);
           if (outcome.state === state) return match;
           scoreChanged = true;
+          undoSnapshot = state;
           gameBoundaryCrossed = Boolean(outcome.gameWon || outcome.setWon);
           const nextMatch = applyTennisStateToMatch(match, outcome.state, config);
           if (outcome.matchWon) {
@@ -400,16 +412,48 @@ export const useMatchMutationActions = ({
 
     if (matchJustCompleted) {
       // Milestone: match selesai harus langsung awet (refresh-safe) dan
-      // kelihatan di share link tanpa menunggu debounce.
+      // kelihatan di share link tanpa menunggu debounce. Koreksi setelah
+      // titik ini lewat "Buka lagi skor", bukan undo poin.
+      clearTennisUndo(matchId);
       cancelTennisScorePersist();
       void persistActiveTournamentSnapshot(nextTournament);
       void syncSharedMatchesSnapshot(nextTournament);
       return;
     }
+    if (undoSnapshot) pushTennisUndo(matchId, undoSnapshot);
     // Persist di batas game/set saja — poin di dalam game berjalan tidak
     // di-write (refresh paling banyak kehilangan poin satu game, dan malam
     // 3 lapangan tidak menghasilkan ratusan write per jam).
     if (gameBoundaryCrossed) scheduleTennisScorePersist();
+  };
+
+  // Batalkan tap poin terakhir (satu langkah, bisa melintasi batas game/set
+  // karena snapshot penuh). Hanya untuk match yang masih berjalan.
+  const handleTennisPointUndo = (matchId: string) => {
+    const baseTournament = latestTournamentRef.current;
+    if (baseTournament.format !== 'Match Play') return;
+    const stack = tennisUndoStacksRef.current.get(matchId);
+    if (!stack || stack.length === 0) return;
+    const config = getMatchPlayConfig(baseTournament);
+    let changed = false;
+
+    const nextTournament: Tournament = {
+      ...baseTournament,
+      rounds: baseTournament.rounds.map((round) => ({
+        ...round,
+        matches: round.matches.map((match) => {
+          if (match.id !== matchId || match.status !== 'active') return match;
+          changed = true;
+          return applyTennisStateToMatch(match, stack[stack.length - 1], config);
+        }),
+      })),
+    };
+
+    if (!changed) return;
+    stack.pop();
+    latestTournamentRef.current = nextTournament;
+    setTournament(nextTournament);
+    scheduleTennisScorePersist();
   };
 
   // Match Play: host menutup match sebelum target tercapai (mis. waktu court
@@ -444,6 +488,7 @@ export const useMatchMutationActions = ({
     };
 
     if (!changed) return;
+    clearTennisUndo(matchId);
     cancelTennisScorePersist();
     latestTournamentRef.current = nextTournament;
     setTournament(nextTournament);
@@ -497,6 +542,7 @@ export const useMatchMutationActions = ({
     };
 
     if (!changed) return;
+    clearTennisUndo(matchId);
     cancelTennisScorePersist();
     latestTournamentRef.current = nextTournament;
     setTournament(nextTournament);
@@ -902,6 +948,8 @@ export const useMatchMutationActions = ({
     handleUpdateToxicSettings,
     handleUpdateScore,
     handleTennisPoint,
+    handleTennisPointUndo,
+    canUndoTennisPoint,
     handleCompleteMatchPlayMatch,
     handleReopenMatchPlayMatch,
     handleUpdateActivePlayers,
