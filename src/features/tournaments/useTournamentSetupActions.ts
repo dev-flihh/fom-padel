@@ -89,12 +89,22 @@ export const useTournamentSetupActions = ({
     );
 
     setTournament(persistedTournament);
+    void persistActiveTournamentSnapshot(persistedTournament);
+
+    // Americano rotating tanpa ronde pending tersisa: rebuild tidak bisa
+    // menjadwalkan pemain baru, jadi jangan janjikan "ikut ronde berikutnya".
+    const hasUpcomingRound = persistedTournament.rounds.some((round) => (
+      (round.matches || []).some((match) => match.status === 'pending')
+    ));
+    const rotatingAmericanoMessage = tournament.format === 'Americano' && !hasUpcomingRound
+      ? `${newPlayer.name} masuk daftar, tapi semua ronde sudah berjalan. Tambah ronde lewat Manage Match → Edit rounds supaya dia kebagian main.`
+      : `${newPlayer.name} akan ikut mulai ronde berikutnya.`;
 
     addNotification(
       'New Player Added',
       isFixedPartner
         ? `${newPlayer.name} masuk daftar tanpa tim. Pakai ganti pemain untuk memasangkannya ke tim.`
-        : `${newPlayer.name} akan ikut mulai ronde berikutnya.`,
+        : rotatingAmericanoMessage,
       'system'
     );
   };

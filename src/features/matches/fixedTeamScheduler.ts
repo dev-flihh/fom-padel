@@ -240,9 +240,15 @@ export const rebuildFixedTeamFutureRounds = (
   const currentRoundIndex = tournament.rounds.findIndex((round) => (
     (round.matches || []).some((match) => match.status === 'active')
   ));
-  const lockedRoundCount = currentRoundIndex === -1
-    ? Math.min(tournament.rounds.length, safeTarget)
-    : Math.min(currentRoundIndex + 1, safeTarget);
+  // Di jeda antar-ronde (tidak ada match aktif) kunci hanya sampai ronde
+  // terakhir yang sudah tersentuh — ronde pending sesudahnya tetap boleh
+  // di-regenerate, mis. roster berubah sebelum ronde berikutnya di-start.
+  const lastTouchedRoundIndex = tournament.rounds.reduce((latest, round, idx) => (
+    (round.matches || []).some((match) => match.status !== 'pending') ? idx : latest
+  ), -1);
+  const lockedRoundCount = currentRoundIndex !== -1
+    ? Math.min(currentRoundIndex + 1, safeTarget)
+    : Math.min(lastTouchedRoundIndex + 1, safeTarget);
 
   const nextRounds: Round[] = tournament.rounds.slice(0, lockedRoundCount).map((round) => ({
     ...round,

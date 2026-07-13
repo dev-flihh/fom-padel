@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { type Player, type UserProfile } from '../../types';
+import { type Friend, type Player, type UserProfile } from '../../types';
 import { searchFriendUsers } from '../../services/friendsRepository';
 
 // R2.2: pencarian FOM player global memakai cloud function `searchUsers` yang
@@ -25,6 +25,19 @@ export const mapProfileToPlayer = (profile: UserProfile): Player & { username?: 
   avatar: profile.photoURL || '',
   initials: buildInitialsFromName(profile.displayName || profile.username || 'P'),
   username: profile.username || '',
+  stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 },
+});
+
+// R2.1: teman FOM bisa dipilih langsung dari daftar (tanpa harus pernah main
+// bareng). Dipetakan ke Player yang sama seperti hasil search global.
+export const mapFriendToPlayer = (friend: Friend): Player & { username?: string } => ({
+  id: friend.uid,
+  name: friend.displayName || friend.username || 'Player',
+  rating: Number.isFinite(Number(friend.mmr)) ? Number(friend.mmr) : 0,
+  source: 'fom',
+  avatar: friend.photoURL || '',
+  initials: buildInitialsFromName(friend.displayName || friend.username || 'P'),
+  username: friend.username || '',
   stats: { matches: 0, won: 0, lost: 0, draw: 0, diff: 0 },
 });
 
