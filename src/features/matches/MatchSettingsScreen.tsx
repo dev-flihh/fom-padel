@@ -25,6 +25,7 @@ import { useMatchSettingsWizard } from './useMatchSettingsWizard';
 import { dedupePlayersById, sortPlayersByName } from './matchSetupUtils';
 import { CRITERIA_IMPACT_COPY, FORMAT_IMPACT_COPY, MATCH_SETTINGS_WIZARD_STEPS, PARTNER_MODE_IMPACT_COPY, PARTNER_MODE_LABELS, SCORING_IMPACT_COPY } from './matchSettingsCopy';
 import { getMatchSettingsSummary } from './matchSettingsSummary';
+import { describeMatchPlayMode, getMatchPlayConfig } from './tennisScoring';
 import { MATCH_SETTINGS_WIZARD_CLASSNAMES } from './matchSettingsStyles';
 
 export const MatchSettingsScreen = ({
@@ -206,6 +207,9 @@ export const MatchSettingsScreen = ({
     toxicIntensity,
     criteria,
     scoringType,
+    matchPlayMode,
+    matchPlayGamesTarget,
+    matchPlayBestOfSets,
     courts,
     points,
     numRounds,
@@ -217,6 +221,9 @@ export const MatchSettingsScreen = ({
     setToxicModeEnabled,
     setToxicIntensity,
     setScoringType,
+    setMatchPlayMode,
+    setMatchPlayGamesTarget,
+    setMatchPlayBestOfSets,
     setCourts,
     setPoints,
     setNumRounds,
@@ -267,7 +274,10 @@ export const MatchSettingsScreen = ({
     numRounds,
     durationMinutes,
     points,
-    selectedPlayerCount: effectiveSelectedPlayers.length
+    selectedPlayerCount: effectiveSelectedPlayers.length,
+    matchPlayModeLabel: format === 'Match Play'
+      ? `${describeMatchPlayMode(getMatchPlayConfig({ matchPlayMode, matchPlayGamesTarget, matchPlayBestOfSets, scoringType }))} · ${scoringType}`
+      : undefined
   });
   const wizardSteps = MATCH_SETTINGS_WIZARD_STEPS;
   const {
@@ -345,6 +355,9 @@ export const MatchSettingsScreen = ({
           partnerModeLabels={PARTNER_MODE_LABELS}
           criteria={criteria}
           scoringType={scoringType}
+          matchPlayMode={matchPlayMode}
+          matchPlayGamesTarget={matchPlayGamesTarget}
+          matchPlayBestOfSets={matchPlayBestOfSets}
           courts={courts}
           numRounds={numRounds}
           durationMinutes={durationMinutes}
@@ -360,6 +373,9 @@ export const MatchSettingsScreen = ({
           onPartnerModeChange={applyPartnerModeChoice}
           onCriteriaChange={setCriteria}
           onScoringTypeChange={setScoringType}
+          onMatchPlayModeChange={setMatchPlayMode}
+          onMatchPlayGamesTargetChange={setMatchPlayGamesTarget}
+          onMatchPlayBestOfSetsChange={setMatchPlayBestOfSets}
           onCourtsChange={setCourts}
           onNumRoundsChange={setNumRounds}
           onDurationMinutesChange={setDurationMinutes}

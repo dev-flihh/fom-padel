@@ -1156,9 +1156,13 @@ export default function App() {
     handleDeleteRoundsFrom,
     handleUpdateToxicSettings,
     handleUpdateScore,
+    handleTennisPoint,
+    handleCompleteMatchPlayMatch,
+    handleReopenMatchPlayMatch,
     handleUpdateActivePlayers,
     handleUpdateRounds,
     handleUpdateCourts,
+    handleUpdateTotalPoints,
     handleSwapPlayer,
     handleSwapTeam,
     handleReplaceManualPlayer,
@@ -2765,12 +2769,16 @@ export default function App() {
         tournament={mockupV3Tournament}
         currentUser={null}
         onUpdateScore={() => { }}
+        onTennisPoint={() => { }}
+        onCompleteMatchPlayMatch={() => { }}
+        onReopenMatchPlayMatch={() => { }}
         onNextRound={() => { }}
         onStartAmericanoRound={() => { }}
         onCompleteAmericanoRound={() => { }}
         onFinalizeCompletedMatch={() => { }}
         onUpdateRounds={() => false}
         onUpdateCourts={() => false}
+        onUpdatePoints={() => false}
         onUpdateToxicSettings={() => { }}
         onAddManualPlayer={() => { }}
         onSaveRosterChanges={() => { }}
@@ -2990,12 +2998,16 @@ export default function App() {
             tournament={activeScreenTournament || tournament}
             currentUser={user}
             onUpdateScore={handleUpdateScore}
+            onTennisPoint={handleTennisPoint}
+            onCompleteMatchPlayMatch={handleCompleteMatchPlayMatch}
+            onReopenMatchPlayMatch={handleReopenMatchPlayMatch}
             onNextRound={handleNextRound}
             onStartAmericanoRound={handleStartAmericanoRound}
             onCompleteAmericanoRound={handleCompleteAmericanoRound}
             onFinalizeCompletedMatch={handleFinalizeCompletedMatch}
             onUpdateRounds={handleUpdateRounds}
             onUpdateCourts={handleUpdateCourts}
+            onUpdatePoints={handleUpdateTotalPoints}
             onUpdateToxicSettings={handleUpdateToxicSettings}
             onAddManualPlayer={handleAddPlayerDuringActiveMatch}
             onSaveRosterChanges={handleSaveRosterChanges}

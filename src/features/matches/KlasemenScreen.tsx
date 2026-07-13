@@ -2611,11 +2611,20 @@ const buildOfficialRoundHistory = (rounds: Round[], playerId: string, omitTeamma
       resultLabel = scoreFor > scoreAgainst ? 'W' : scoreFor < scoreAgainst ? 'L' : 'D';
     }
 
+    // Match Play menyimpan game per set — tampilkan rincian setnya ("6-4,
+    // 6-2"), bukan angka score mentah (utk bestOf score = set dimenangkan).
+    const playerSets = Array.isArray(playerTeam.sets) ? playerTeam.sets : [];
+    const opponentSets = Array.isArray(opponentTeam.sets) ? opponentTeam.sets : [];
+    const hasGamesInSets = [...playerSets, ...opponentSets].some((games) => Number(games) > 0);
+    const setScoreline = hasGamesInSets
+      ? playerSets.map((games, index) => `${games || 0}-${opponentSets[index] || 0}`).join(', ')
+      : '';
+
     history.push({
       roundId: round.id,
       courtLabel: `C${match.court || '-'}`,
       detail: detail || `Court ${match.court || '-'}`,
-      scoreLabel: hasScore ? `${scoreFor}-${scoreAgainst}` : '—',
+      scoreLabel: hasScore ? (setScoreline || `${scoreFor}-${scoreAgainst}`) : '—',
       resultLabel,
     });
   });

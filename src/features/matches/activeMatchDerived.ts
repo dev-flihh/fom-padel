@@ -12,7 +12,14 @@ export const getEnteredScoreCountForRound = ({
   if (format === 'Match Play') {
     return round.matches.filter((match) => {
       const hasPointsProgress = (match.pointsA || '0') !== '0' || (match.pointsB || '0') !== '0';
-      const hasGamesProgress = (match.teamA.score || 0) > 0 || (match.teamB.score || 0) > 0;
+      const hasGamesProgress = (
+        (match.teamA.score || 0) > 0 ||
+        (match.teamB.score || 0) > 0 ||
+        // Mode bestOf: score = set yang dimenangkan, jadi game set berjalan
+        // hanya kelihatan lewat sets[].
+        (match.teamA.sets || []).some((games) => (games || 0) > 0) ||
+        (match.teamB.sets || []).some((games) => (games || 0) > 0)
+      );
       return match.status === 'completed' || hasPointsProgress || hasGamesProgress;
     }).length;
   }

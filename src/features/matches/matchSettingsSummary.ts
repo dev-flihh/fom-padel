@@ -7,7 +7,8 @@ export const getMatchSettingsSummary = ({
   numRounds,
   durationMinutes,
   points,
-  selectedPlayerCount
+  selectedPlayerCount,
+  matchPlayModeLabel
 }: {
   format: MatchFormat;
   partnerMode?: PartnerMode;
@@ -16,6 +17,9 @@ export const getMatchSettingsSummary = ({
   durationMinutes?: number;
   points: number;
   selectedPlayerCount: number;
+  // Label mode Match Play (mis. "Race to 6 games") — ikut di label review
+  // structure menggantikan chip poin.
+  matchPlayModeLabel?: string;
 }) => {
   const minPlayersNeeded = courts * 4;
   // Fix partner butuh jumlah pemain genap supaya semua kebagian pasangan.
@@ -33,7 +37,7 @@ export const getMatchSettingsSummary = ({
     ? `${courts}C • ${numRounds}R${durationLabel ? ` • ${durationLabel}` : ''}`
     : `${courts}C • ${numRounds}R${durationLabel ? ` • ${durationLabel}` : ''} • ${points}P`;
   const reviewStructureLabel = format === 'Match Play'
-    ? [courtCountLabel, roundCountLabel, durationLabel].filter(Boolean).join(' · ')
+    ? [courtCountLabel, roundCountLabel, durationLabel, matchPlayModeLabel].filter(Boolean).join(' · ')
     : [courtCountLabel, roundCountLabel, durationLabel, pointCountLabel].filter(Boolean).join(' · ');
 
   return {

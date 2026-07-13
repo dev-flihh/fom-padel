@@ -4,6 +4,7 @@ import { normalizeCourtChanges } from '../history/historyPersistence';
 import { formatDurationFromMs } from './matchTimeUtils';
 import { getPartnerMode } from './partnerMode';
 import { buildNextFixedMexicanoRound, buildNextFixedTeamRound, getActiveFixedTeams } from './fixedTeamScheduler';
+import { getRoundTotalPoints } from './roundPoints';
 import { stripLargeInlineImages, stripTournamentPlayerAvatars, toFirestoreSafe } from '../../services/firestoreSerialization';
 import { reportError } from '../../lib/reportError';
 import type { Match, Player, Round, Tournament, TournamentHistory } from '../../types';
@@ -131,6 +132,9 @@ export const useRoundProgressionActions = ({
         toxicIntensity: tournament.toxicIntensity || 'savage',
         criteria: tournament.criteria,
         scoringType: tournament.scoringType,
+        matchPlayMode: tournament.matchPlayMode,
+        matchPlayGamesTarget: tournament.matchPlayGamesTarget,
+        matchPlayBestOfSets: tournament.matchPlayBestOfSets,
         date: new Date(),
         startedAt: tournament.startedAt,
         endedAt: now,
@@ -159,6 +163,9 @@ export const useRoundProgressionActions = ({
           ...(historyItem.toxicModeEnabled ? { toxicIntensity: historyItem.toxicIntensity || 'savage' } : {}),
           ...(historyItem.criteria ? { criteria: historyItem.criteria } : {}),
           ...(historyItem.scoringType ? { scoringType: historyItem.scoringType } : {}),
+          ...(historyItem.matchPlayMode ? { matchPlayMode: historyItem.matchPlayMode } : {}),
+          ...(typeof historyItem.matchPlayGamesTarget === 'number' ? { matchPlayGamesTarget: historyItem.matchPlayGamesTarget } : {}),
+          ...(typeof historyItem.matchPlayBestOfSets === 'number' ? { matchPlayBestOfSets: historyItem.matchPlayBestOfSets } : {}),
           ...(typeof historyItem.startedAt === 'number' ? { startedAt: historyItem.startedAt } : {}),
           ...(typeof historyItem.endedAt === 'number' ? { endedAt: historyItem.endedAt } : {}),
           ...(Number.isFinite(Number(historyItem.courts)) ? { courts: Number(historyItem.courts) } : {}),
@@ -294,8 +301,9 @@ export const useRoundProgressionActions = ({
     const targetRound = tournament.rounds.find((round) => round.id === safeRoundId);
     if (!targetRound) return;
 
+    const roundTotalPoints = getRoundTotalPoints(targetRound, tournament);
     const incompleteMatches = targetRound.matches.filter((match) => (
-      (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
+      (match.teamA.score || 0) + (match.teamB.score || 0) !== roundTotalPoints
     ));
     if (incompleteMatches.length > 0) {
       if (!options.allowIncomplete) {
@@ -358,8 +366,9 @@ export const useRoundProgressionActions = ({
 
     const activeRound = tournament.rounds[currentRoundIndex];
     if (tournament.format !== 'Match Play' && activeRound) {
+      const activeRoundTotalPoints = getRoundTotalPoints(activeRound, tournament);
       const incompleteMatches = activeRound.matches.filter((match) => (
-        (match.teamA.score || 0) + (match.teamB.score || 0) !== tournament.totalPoints
+        (match.teamA.score || 0) + (match.teamB.score || 0) !== activeRoundTotalPoints
       ));
       if (incompleteMatches.length > 0) {
         addNotification(

@@ -2,6 +2,9 @@ export type MatchFormat = 'Match Play' | 'Americano' | 'Mexicano';
 export type PartnerMode = 'rotating' | 'fixed';
 export type RankingCriteria = 'Matches Won' | 'Points Won';
 export type ScoringType = 'Golden Point' | 'Advantage';
+// Struktur kemenangan Match Play: 'race' = duluan merebut X game menang;
+// 'bestOf' = set penuh (6 game per set), menang mayoritas dari N set.
+export type MatchPlayMode = 'race' | 'bestOf';
 export type ToxicIntensity = 'mild' | 'medium' | 'savage';
 
 export interface Player {
@@ -53,6 +56,10 @@ export interface Round {
   id: number;
   matches: Match[];
   playersBye: Player[];
+  // Target poin (Race to X) khusus ronde ini. Absen = pakai
+  // tournament.totalPoints (perilaku lama). Host bisa mengubah target mulai
+  // ronde tertentu; ronde yang sudah berjalan mempertahankan target lamanya.
+  totalPoints?: number;
 }
 
 export interface CourtChange {
@@ -91,6 +98,12 @@ export interface Tournament {
   toxicIntensity?: ToxicIntensity;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
+  // Khusus Match Play. Absen = 'race' (data lama). Target game race
+  // (matchPlayGamesTarget, default 6) atau jumlah set best-of
+  // (matchPlayBestOfSets, 1/3/5, default 3).
+  matchPlayMode?: MatchPlayMode;
+  matchPlayGamesTarget?: number;
+  matchPlayBestOfSets?: number;
   startedAt?: number;
   endedAt?: number;
   courts: number;
@@ -119,6 +132,9 @@ export interface TournamentHistory {
   toxicIntensity?: ToxicIntensity;
   criteria?: RankingCriteria;
   scoringType?: ScoringType;
+  matchPlayMode?: MatchPlayMode;
+  matchPlayGamesTarget?: number;
+  matchPlayBestOfSets?: number;
   date: Date;
   startedAt?: number;
   endedAt?: number;

@@ -1,7 +1,8 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { INITIAL_TOURNAMENT } from '../../constants';
-import { type FixedTeam, type MatchFormat, type PartnerMode, type Player, type RankingCriteria, type ScoringType, type ToxicIntensity, type Tournament } from '../../types';
+import { type FixedTeam, type MatchFormat, type MatchPlayMode, type PartnerMode, type Player, type RankingCriteria, type ScoringType, type ToxicIntensity, type Tournament } from '../../types';
 import { getDefaultMatchThemeColorId } from '../tournaments/matchTheme';
+import { normalizeMatchPlayBestOfSets, normalizeMatchPlayGamesTarget } from './tennisScoring';
 import { normalizeToxicIntensity } from './toxicSettings';
 import { areFixedTeamsEqual, reconcileFixedTeams, sanitizeFixedTeams, swapFixedTeamMembers } from './partnerMode';
 
@@ -28,6 +29,9 @@ export const useMatchSettingsDraft = ({
   const [toxicIntensity, setToxicIntensity] = useState<ToxicIntensity>(() => normalizeToxicIntensity(tournament.toxicIntensity));
   const [criteria, setCriteria] = useState<RankingCriteria>(tournament.criteria);
   const [scoringType, setScoringType] = useState<ScoringType>(tournament.scoringType || 'Golden Point');
+  const [matchPlayMode, setMatchPlayMode] = useState<MatchPlayMode>(tournament.matchPlayMode === 'bestOf' ? 'bestOf' : 'race');
+  const [matchPlayGamesTarget, setMatchPlayGamesTarget] = useState(() => normalizeMatchPlayGamesTarget(tournament.matchPlayGamesTarget));
+  const [matchPlayBestOfSets, setMatchPlayBestOfSets] = useState(() => normalizeMatchPlayBestOfSets(tournament.matchPlayBestOfSets));
   const [courts, setCourts] = useState(tournament.courts);
   const [points, setPoints] = useState(tournament.totalPoints);
   const [numRounds, setNumRounds] = useState(tournament.numRounds || 5);
@@ -58,6 +62,9 @@ export const useMatchSettingsDraft = ({
         normalizeToxicIntensity(prev.toxicIntensity) === normalizedToxicIntensity &&
         prev.criteria === criteria &&
         prevScoringType === scoringType &&
+        (prev.matchPlayMode === 'bestOf' ? 'bestOf' : 'race') === matchPlayMode &&
+        normalizeMatchPlayGamesTarget(prev.matchPlayGamesTarget) === matchPlayGamesTarget &&
+        normalizeMatchPlayBestOfSets(prev.matchPlayBestOfSets) === matchPlayBestOfSets &&
         prev.courts === courts &&
         prev.totalPoints === points &&
         prev.numRounds === numRounds &&
@@ -79,6 +86,9 @@ export const useMatchSettingsDraft = ({
         toxicIntensity: normalizedToxicIntensity,
         criteria,
         scoringType,
+        matchPlayMode,
+        matchPlayGamesTarget,
+        matchPlayBestOfSets,
         courts,
         totalPoints: points,
         numRounds,
@@ -87,7 +97,7 @@ export const useMatchSettingsDraft = ({
         location: normalizedLocation
       };
     });
-  }, [gameName, venueName, location, format, partnerMode, fixedTeams, selectedThemeColorId, toxicModeEnabled, toxicIntensity, criteria, scoringType, courts, points, numRounds, durationMinutes, setTournament]);
+  }, [gameName, venueName, location, format, partnerMode, fixedTeams, selectedThemeColorId, toxicModeEnabled, toxicIntensity, criteria, scoringType, matchPlayMode, matchPlayGamesTarget, matchPlayBestOfSets, courts, points, numRounds, durationMinutes, setTournament]);
 
   // Mode fixed: jaga fixedTeams tetap sinkron dengan daftar pemain terpilih —
   // tim yang sudah dibentuk dipertahankan, pemain baru di-auto-pair.
@@ -136,6 +146,9 @@ export const useMatchSettingsDraft = ({
       toxicIntensity: normalizeToxicIntensity(toxicIntensity),
       criteria,
       scoringType,
+      matchPlayMode,
+      matchPlayGamesTarget,
+      matchPlayBestOfSets,
       courts,
       totalPoints: points,
       players: selectedPlayers,
@@ -158,6 +171,9 @@ export const useMatchSettingsDraft = ({
     toxicIntensity,
     criteria,
     scoringType,
+    matchPlayMode,
+    matchPlayGamesTarget,
+    matchPlayBestOfSets,
     courts,
     points,
     numRounds,
@@ -169,6 +185,9 @@ export const useMatchSettingsDraft = ({
     setToxicModeEnabled,
     setToxicIntensity,
     setScoringType,
+    setMatchPlayMode,
+    setMatchPlayGamesTarget,
+    setMatchPlayBestOfSets,
     setCourts,
     setPoints,
     setNumRounds,

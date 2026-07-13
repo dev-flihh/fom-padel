@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { ArrowLeft, Building2, ChevronRight, Flame, Hash, Link2, Minus, Plus, RefreshCw, Share2, Trash2, UserCheck, UserMinus, UserRound, Users, X } from 'lucide-react';
+import { ArrowLeft, Building2, ChevronRight, Flame, Hash, Link2, Minus, Plus, RefreshCw, Share2, Target, Trash2, UserCheck, UserMinus, UserRound, Users, X } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { cn } from '../../lib/utils';
 import type { Friend, MatchFormat, Player, ScoringType, ToxicIntensity } from '../../types';
@@ -7,7 +7,7 @@ import { MANUAL_PLAYER_ID_PREFIX } from '../players/playerUtils';
 import { formatDisplayMmr } from '../ranking/rankUtils';
 import { TOXIC_INTENSITY_OPTIONS, getToxicIntensityLabel } from './toxicSettings';
 
-type ManageMatchView = 'main' | 'rounds' | 'courts' | 'regenerate' | 'players' | 'add-player' | 'link-fom' | 'shame' | 'delete-match';
+type ManageMatchView = 'main' | 'rounds' | 'courts' | 'points' | 'regenerate' | 'players' | 'add-player' | 'link-fom' | 'shame' | 'delete-match';
 
 export const ActiveMatchActionMenu = ({
   isOpen,
@@ -17,6 +17,7 @@ export const ActiveMatchActionMenu = ({
   courts,
   totalPoints,
   scoringType,
+  matchPlayModeLabel,
   numRounds,
   players,
   activePlayerCount,
@@ -41,6 +42,7 @@ export const ActiveMatchActionMenu = ({
   onReplaceManualPlayer,
   onUpdateRounds,
   onUpdateCourts,
+  onUpdatePoints,
   onDeleteRoundsFrom,
   onToxicModeChange,
   onToxicIntensityChange,
@@ -54,6 +56,8 @@ export const ActiveMatchActionMenu = ({
   courts: number;
   totalPoints: number;
   scoringType?: ScoringType;
+  // Label mode Match Play (mis. "Race to 6 games") untuk chip ringkasan.
+  matchPlayModeLabel?: string;
   numRounds: number;
   players: Player[];
   activePlayerCount: number;
@@ -78,6 +82,7 @@ export const ActiveMatchActionMenu = ({
   onReplaceManualPlayer: (manualPlayer: Player, friend: Friend) => void;
   onUpdateRounds: (numRounds: number) => boolean;
   onUpdateCourts: (numCourts: number) => boolean;
+  onUpdatePoints: (totalPoints: number) => boolean;
   onDeleteRoundsFrom: (roundId: number) => void;
   onToxicModeChange: (enabled: boolean) => void;
   onToxicIntensityChange: (value: ToxicIntensity) => void;
@@ -87,6 +92,7 @@ export const ActiveMatchActionMenu = ({
   const [view, setView] = useState<ManageMatchView>('main');
   const [roundValue, setRoundValue] = useState(String(numRounds || 1));
   const [courtValue, setCourtValue] = useState(String(courts || 1));
+  const [pointsValue, setPointsValue] = useState(String(totalPoints || 1));
   const [newPlayerName, setNewPlayerName] = useState('');
   const [manualPlayerToLink, setManualPlayerToLink] = useState<Player | null>(null);
   const [formError, setFormError] = useState('');
@@ -94,7 +100,11 @@ export const ActiveMatchActionMenu = ({
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
-  const scoringLabel = totalPoints > 0 ? `Race ${totalPoints}` : (scoringType || 'Score');
+  // Match Play tidak memakai target poin — tampilkan mode + metode deuce,
+  // bukan "Race {totalPoints}" warisan format race-to-points.
+  const scoringLabel = format === 'Match Play'
+    ? [matchPlayModeLabel, scoringType].filter(Boolean).join(' · ') || 'Tennis scoring'
+    : totalPoints > 0 ? `Race ${totalPoints}` : (scoringType || 'Score');
   const compactMatchDateLabel = compactDateLabel(matchDateLabel);
   const isMainView = view === 'main';
   const isTallView = isMainView || view === 'players' || view === 'link-fom' || view === 'regenerate';
@@ -118,7 +128,8 @@ export const ActiveMatchActionMenu = ({
     }
     setRoundValue(String(numRounds || 1));
     setCourtValue(String(courts || 1));
-  }, [courts, isOpen, numRounds]);
+    setPointsValue(String(totalPoints || 1));
+  }, [courts, isOpen, numRounds, totalPoints]);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -181,6 +192,7 @@ export const ActiveMatchActionMenu = ({
     setFormError('');
     if (nextView === 'rounds') setRoundValue(String(numRounds || 1));
     if (nextView === 'courts') setCourtValue(String(courts || 1));
+    if (nextView === 'points') setPointsValue(String(totalPoints || 1));
     if (nextView === 'add-player') setNewPlayerName('');
     if (nextView !== 'link-fom') setManualPlayerToLink(null);
     setView(nextView);
@@ -217,6 +229,20 @@ export const ActiveMatchActionMenu = ({
     const ok = onUpdateCourts(parsed);
     if (!ok) {
       setFormError('Court count is invalid for the current match setup.');
+      return;
+    }
+    setView('main');
+  };
+
+  const handleSavePoints = () => {
+    const parsed = Number.parseInt(pointsValue, 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setFormError('Enter at least 1 point.');
+      return;
+    }
+    const ok = onUpdatePoints(parsed);
+    if (!ok) {
+      setFormError('Points value is invalid for the current match setup.');
       return;
     }
     setView('main');
@@ -262,6 +288,8 @@ export const ActiveMatchActionMenu = ({
     ? 'Edit rounds'
     : view === 'courts'
     ? 'Edit courts'
+    : view === 'points'
+    ? 'Edit points'
     : view === 'regenerate'
     ? 'Regenerate rounds'
     : view === 'players'
@@ -401,6 +429,14 @@ export const ActiveMatchActionMenu = ({
                       description={`${courts} court${courts > 1 ? 's' : ''}`}
                       onClick={() => goToView('courts')}
                     />
+                    {format !== 'Match Play' && (
+                      <ManageActionRow
+                        icon={<Target size={17} />}
+                        title="Edit points"
+                        description={scoringLabel}
+                        onClick={() => goToView('points')}
+                      />
+                    )}
                     <ManageActionRow
                       icon={<RefreshCw size={17} />}
                       title="Regenerate rounds"
@@ -449,6 +485,20 @@ export const ActiveMatchActionMenu = ({
                   }}
                   onCancel={() => setView('main')}
                   onSave={handleSaveCourts}
+                />
+              ) : view === 'points' ? (
+                <NumberSubview
+                  label="Points per match"
+                  value={pointsValue}
+                  currentValue={totalPoints || 1}
+                  helper="Race target applies to rounds that haven't started yet. Rounds already in play keep their points."
+                  error={formError}
+                  onValueChange={(value) => {
+                    setPointsValue(value);
+                    if (formError) setFormError('');
+                  }}
+                  onCancel={() => setView('main')}
+                  onSave={handleSavePoints}
                 />
               ) : view === 'regenerate' ? (
                 <RegenerateSubview

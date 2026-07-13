@@ -1,8 +1,15 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Minus, Play, Plus, Zap } from 'lucide-react';
+import { Check, Flag, Minus, Play, Plus, Zap } from 'lucide-react';
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { type Match, type MatchFormat, type Player, type Round } from '../../types';
+import {
+  getMatchPlayScoreline,
+  getSetsWon,
+  readTennisState,
+  sumGames,
+  type MatchPlayConfig,
+} from './tennisScoring';
 
 export type ActiveMatchSwapRequest = {
   matchId: string;
@@ -18,12 +25,16 @@ export const ActiveMatchRoundCard = ({
   isCollapsed,
   isReadOnly,
   totalPoints,
+  matchPlayConfig,
   accentTheme,
   scoreToneClass,
   onStartRound,
   onCompleteRound,
   onAdjustScore,
   onSetScore,
+  onTennisPoint,
+  onCompleteMatchPlay,
+  onReopenMatchPlay,
   onOpenSwapPlayer
 }: {
   round: Round;
@@ -32,6 +43,7 @@ export const ActiveMatchRoundCard = ({
   isCollapsed: boolean;
   isReadOnly: boolean;
   totalPoints: number;
+  matchPlayConfig?: MatchPlayConfig | null;
   accentTheme: {
     headingStrong: string;
     text: string;
@@ -46,6 +58,9 @@ export const ActiveMatchRoundCard = ({
   onCompleteRound: (roundId: number) => void;
   onAdjustScore: (match: Match, team: 'A' | 'B', delta: number) => void;
   onSetScore: (match: Match, team: 'A' | 'B', score: number) => void;
+  onTennisPoint?: (match: Match, team: 'A' | 'B', direction: 1 | -1) => void;
+  onCompleteMatchPlay?: (match: Match) => void;
+  onReopenMatchPlay?: (match: Match) => void;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
 }) => {
   const isAmericano = format === 'Americano';
@@ -96,9 +111,13 @@ export const ActiveMatchRoundCard = ({
                   isActiveRound={isActive}
                   isReadOnly={isReadOnly}
                   totalPoints={totalPoints}
+                  matchPlayConfig={matchPlayConfig}
                   scoreToneClass={scoreToneClass}
                   onAdjustScore={onAdjustScore}
                   onSetScore={onSetScore}
+                  onTennisPoint={onTennisPoint}
+                  onCompleteMatchPlay={onCompleteMatchPlay}
+                  onReopenMatchPlay={onReopenMatchPlay}
                   onOpenSwapPlayer={onOpenSwapPlayer}
                 />
               </div>
@@ -207,9 +226,13 @@ const RoundMatchRow = ({
   isActiveRound,
   isReadOnly,
   totalPoints,
+  matchPlayConfig,
   scoreToneClass,
   onAdjustScore,
   onSetScore,
+  onTennisPoint,
+  onCompleteMatchPlay,
+  onReopenMatchPlay,
   onOpenSwapPlayer
 }: {
   match: Match;
@@ -217,12 +240,17 @@ const RoundMatchRow = ({
   isActiveRound: boolean;
   isReadOnly: boolean;
   totalPoints: number;
+  matchPlayConfig?: MatchPlayConfig | null;
   scoreToneClass: string;
   onAdjustScore: (match: Match, team: 'A' | 'B', delta: number) => void;
   onSetScore: (match: Match, team: 'A' | 'B', score: number) => void;
+  onTennisPoint?: (match: Match, team: 'A' | 'B', direction: 1 | -1) => void;
+  onCompleteMatchPlay?: (match: Match) => void;
+  onReopenMatchPlay?: (match: Match) => void;
   onOpenSwapPlayer: (request: ActiveMatchSwapRequest) => void;
 }) => {
-  const canEditCompletedScore = !isReadOnly && match.status === 'completed' && format !== 'Match Play';
+  const isMatchPlay = format === 'Match Play';
+  const canEditCompletedScore = !isReadOnly && match.status === 'completed' && !isMatchPlay;
   const canEditAnyAmericanoScore = !isReadOnly && format === 'Americano';
   const canEditScore = !isReadOnly && (canEditAnyAmericanoScore || isActiveRound || canEditCompletedScore);
   const statusLabel = match.status === 'completed'
@@ -295,38 +323,253 @@ const RoundMatchRow = ({
         />
       </div>
 
-      <div className="mt-3 grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] items-center gap-2">
-        <ScoreControls
-          score={match.teamA.score}
-          scoreLabel={`${getTeamScoreLabel(match.teamA.players)} on court ${match.court}`}
-          canEditScore={canEditScore}
-          canDecrement={canDecrementA}
-          isReviewMode={isReviewMode}
+      {isMatchPlay ? (
+        <TennisScorePanel
+          match={match}
+          config={matchPlayConfig || null}
+          canScore={canEditScore && !isReviewMode}
+          canReopen={!isReadOnly && isActiveRound}
           scoreToneClass={scoreToneClass}
-          onAdjust={(delta) => onAdjustScore(match, 'A', delta)}
-          onSetScore={(score) => onSetScore(match, 'A', score)}
+          onTennisPoint={onTennisPoint}
+          onCompleteMatchPlay={onCompleteMatchPlay}
+          onReopenMatchPlay={onReopenMatchPlay}
         />
-        <div className="text-center text-[23px] font-semibold leading-none text-ios-gray/24">-</div>
-        <ScoreControls
-          score={match.teamB.score}
-          scoreLabel={`${getTeamScoreLabel(match.teamB.players)} on court ${match.court}`}
-          canEditScore={canEditScore}
-          canDecrement={canDecrementB}
-          isReviewMode={isReviewMode}
-          scoreToneClass={scoreToneClass}
-          onAdjust={(delta) => onAdjustScore(match, 'B', delta)}
-          onSetScore={(score) => onSetScore(match, 'B', score)}
-        />
+      ) : (
+        <div className="mt-3 grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] items-center gap-2">
+          <ScoreControls
+            score={match.teamA.score}
+            scoreLabel={`${getTeamScoreLabel(match.teamA.players)} on court ${match.court}`}
+            canEditScore={canEditScore}
+            canDecrement={canDecrementA}
+            isReviewMode={isReviewMode}
+            scoreToneClass={scoreToneClass}
+            onAdjust={(delta) => onAdjustScore(match, 'A', delta)}
+            onSetScore={(score) => onSetScore(match, 'A', score)}
+          />
+          <div className="text-center text-[23px] font-semibold leading-none text-ios-gray/24">-</div>
+          <ScoreControls
+            score={match.teamB.score}
+            scoreLabel={`${getTeamScoreLabel(match.teamB.players)} on court ${match.court}`}
+            canEditScore={canEditScore}
+            canDecrement={canDecrementB}
+            isReviewMode={isReviewMode}
+            scoreToneClass={scoreToneClass}
+            onAdjust={(delta) => onAdjustScore(match, 'B', delta)}
+            onSetScore={(score) => onSetScore(match, 'B', score)}
+          />
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Panel skor tenis Match Play: game per tim (set berjalan), poin game
+// 0/15/30/40/Ad dengan tap +1 poin per sisi, ringkasan set (mode best-of),
+// dan tombol tutup match lebih awal.
+const TennisScorePanel = ({
+  match,
+  config,
+  canScore,
+  canReopen,
+  scoreToneClass,
+  onTennisPoint,
+  onCompleteMatchPlay,
+  onReopenMatchPlay
+}: {
+  match: Match;
+  config: MatchPlayConfig | null;
+  canScore: boolean;
+  canReopen: boolean;
+  scoreToneClass: string;
+  onTennisPoint?: (match: Match, team: 'A' | 'B', direction: 1 | -1) => void;
+  onCompleteMatchPlay?: (match: Match) => void;
+  onReopenMatchPlay?: (match: Match) => void;
+}) => {
+  const [isConfirmingFinish, setIsConfirmingFinish] = useState(false);
+  const state = readTennisState(match);
+  const isBestOf = config?.mode === 'bestOf';
+  const isCompleted = match.status === 'completed';
+  const gamesA = isBestOf ? (state.gamesA[state.currentSet] || 0) : sumGames(state.gamesA);
+  const gamesB = isBestOf ? (state.gamesB[state.currentSet] || 0) : sumGames(state.gamesB);
+  const totalGamesA = sumGames(state.gamesA);
+  const totalGamesB = sumGames(state.gamesB);
+  const setsWon = getSetsWon(state);
+  const canScorePoints = canScore && Boolean(onTennisPoint);
+  // Pemenang mengikuti satuan mode: bestOf = set (2-1 set menang walau total
+  // game kalah), race = game.
+  const winnerSide = !isCompleted
+    ? null
+    : isBestOf
+      ? (setsWon.A > setsWon.B ? 'A' : setsWon.B > setsWon.A ? 'B' : null)
+      : (totalGamesA > totalGamesB ? 'A' : totalGamesB > totalGamesA ? 'B' : null);
+
+  useEffect(() => {
+    if (!canScore) setIsConfirmingFinish(false);
+  }, [canScore]);
+
+  const scoreline = config ? getMatchPlayScoreline(state, config) : `${totalGamesA}-${totalGamesB}`;
+
+  if (isCompleted) {
+    return (
+      <div className="mt-3 rounded-[16px] bg-ios-gray/[0.035] px-4 py-3.5 text-center">
+        <p className="text-[9px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/58">
+          {isBestOf ? `Final · Sets ${setsWon.A}-${setsWon.B}` : 'Final · Games'}
+        </p>
+        <p className={cn('mt-2 font-display text-[30px] font-bold leading-none tracking-[-0.03em] tabular-nums', scoreToneClass)}>
+          {scoreline}
+        </p>
+        {winnerSide && (
+          <p className="mt-2 text-[11.5px] font-bold leading-tight text-on-surface/72">
+            Winner: {(winnerSide === 'A' ? match.teamA : match.teamB).players.map((player) => player.name.split(' ')[0]).join(' & ')}
+          </p>
+        )}
+        {canReopen && onReopenMatchPlay && (
+          <button
+            type="button"
+            onClick={() => onReopenMatchPlay(match)}
+            className="tap-target mx-auto mt-2.5 inline-flex h-8 items-center justify-center rounded-full border border-black/[0.07] bg-white px-3.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ios-gray/78"
+          >
+            Reopen scoring
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      {isBestOf && (
+        <div className="mb-2 flex flex-wrap items-center justify-center gap-1.5">
+          {state.gamesA.map((setGamesA, index) => (
+            <span
+              key={index}
+              className={cn(
+                'rounded-full border px-2 py-[3px] text-[9.5px] font-black leading-none tabular-nums tracking-[0.04em]',
+                index === state.currentSet
+                  ? 'border-primary/24 bg-primary/[0.06] text-primary'
+                  : 'border-black/[0.06] bg-white text-ios-gray/72'
+              )}
+            >
+              Set {index + 1} · {setGamesA}-{state.gamesB[index] || 0}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="grid grid-cols-[minmax(0,1fr)_24px_minmax(0,1fr)] items-center gap-2">
+        {(['A', 'B'] as const).map((team, index) => (
+          <Fragment key={team}>
+            {index === 1 && (
+              <div className="text-center text-[23px] font-semibold leading-none text-ios-gray/24">-</div>
+            )}
+            <div className="flex flex-col items-center gap-1">
+              <p
+                className={cn('font-display text-[44px] font-bold leading-none tracking-[-0.035em] tabular-nums', scoreToneClass)}
+                aria-label={`Games for ${getTeamScoreLabel((team === 'A' ? match.teamA : match.teamB).players)} on court ${match.court}`}
+              >
+                {team === 'A' ? gamesA : gamesB}
+              </p>
+              <p className="text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/52">
+                {isBestOf ? `Games · Set ${state.currentSet + 1}` : `Games${config ? ` / ${config.gamesTarget}` : ''}`}
+              </p>
+            </div>
+          </Fragment>
+        ))}
       </div>
 
-      {format === 'Match Play' && (
-        <button
-          type="button"
-          disabled={!canEditScore}
-          className="mx-auto mt-3 block rounded-full border border-black/[0.06] bg-[#FAFAFB] px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-ios-gray/72"
+      <div className="mt-3 rounded-[16px] border border-black/[0.055] bg-[#FAFAFB] px-3 py-3">
+        <p className="text-center text-[8.5px] font-black uppercase leading-none tracking-[0.16em] text-ios-gray/52">
+          Current game point
+        </p>
+        <div
+          className="mt-2 grid grid-cols-[minmax(0,1fr)_20px_minmax(0,1fr)] items-center gap-1.5"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-label={`Game points: ${state.pointsA} to ${state.pointsB}, games ${gamesA} to ${gamesB}`}
         >
-          Points {match.pointsA || '0'}-{match.pointsB || '0'}
-        </button>
+          {(['A', 'B'] as const).map((team, index) => {
+            const pointLabel = team === 'A' ? state.pointsA : state.pointsB;
+            const teamLabel = getTeamScoreLabel((team === 'A' ? match.teamA : match.teamB).players);
+            return (
+              <Fragment key={team}>
+                {index === 1 && (
+                  <div className="text-center text-[15px] font-bold leading-none text-ios-gray/30">:</div>
+                )}
+                <div className="flex items-center justify-center gap-1.5">
+                  {canScorePoints && (
+                    <button
+                      type="button"
+                      onClick={() => onTennisPoint?.(match, team, -1)}
+                      disabled={pointLabel === '0'}
+                      className={cn(
+                        'tap-target flex h-8 w-8 items-center justify-center rounded-full border transition-all active:scale-[0.97]',
+                        pointLabel === '0'
+                          ? 'pointer-events-none border-transparent text-ios-gray/0 opacity-0'
+                          : 'border-black/[0.08] bg-white text-ios-gray/58'
+                      )}
+                      aria-label={`Undo point for ${teamLabel}`}
+                    >
+                      <Minus size={14} strokeWidth={2.4} />
+                    </button>
+                  )}
+                  <span
+                    className="min-w-[40px] text-center font-display text-[24px] font-bold leading-none tracking-[-0.02em] text-on-surface tabular-nums"
+                    aria-label={`Game points for ${teamLabel}`}
+                  >
+                    {pointLabel}
+                  </span>
+                  {canScorePoints && (
+                    <button
+                      type="button"
+                      onClick={() => onTennisPoint?.(match, team, 1)}
+                      className="tap-target flex h-9 w-9 items-center justify-center rounded-full border border-primary/16 bg-primary/[0.07] text-primary transition-all hover:bg-primary/[0.1] active:scale-[0.97]"
+                      aria-label={`Add point for ${teamLabel}`}
+                    >
+                      <Plus size={16} strokeWidth={2.5} />
+                    </button>
+                  )}
+                </div>
+              </Fragment>
+            );
+          })}
+        </div>
+      </div>
+
+      {canScore && onCompleteMatchPlay && (
+        <div className="mt-2.5 flex items-center justify-center gap-2">
+          {isConfirmingFinish ? (
+            <>
+              <button
+                type="button"
+                autoFocus
+                onClick={() => {
+                  setIsConfirmingFinish(false);
+                  onCompleteMatchPlay(match);
+                }}
+                className="tap-target inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-[#E65E14] px-3.5 text-[11px] font-extrabold uppercase tracking-[0.08em] text-white"
+              >
+                <Flag size={12} strokeWidth={2.6} />
+                Confirm finish
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsConfirmingFinish(false)}
+                className="tap-target inline-flex h-8 items-center justify-center rounded-full bg-ios-gray/[0.07] px-3.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ios-gray"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsConfirmingFinish(true)}
+              className="tap-target inline-flex h-8 items-center justify-center gap-1.5 rounded-full border border-black/[0.07] bg-white px-3.5 text-[11px] font-bold uppercase tracking-[0.08em] text-ios-gray/78"
+            >
+              <Flag size={12} strokeWidth={2.4} />
+              End match now
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -525,9 +768,12 @@ const getSittingPlayersSummary = (players: Player[]) => {
 
 const isMatchScoreReady = (match: Match, format: MatchFormat, totalPoints: number) => {
   if (match.status === 'completed') return true;
+  // Match Play: siap = match benar-benar selesai (target race/best-of tercapai
+  // atau ditutup host), bukan sekadar sudah ada game masuk.
+  if (format === 'Match Play') return false;
   const scoreA = match.teamA.score || 0;
   const scoreB = match.teamB.score || 0;
-  if (format !== 'Match Play' && totalPoints > 0) {
+  if (totalPoints > 0) {
     return scoreA + scoreB === totalPoints && (scoreA > 0 || scoreB > 0);
   }
   return scoreA > 0 || scoreB > 0;

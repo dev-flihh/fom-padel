@@ -1,4 +1,4 @@
-import type { FixedTeam, MatchFormat, PartnerMode, Player, RankingCriteria, ScoringType, ToxicIntensity, Tournament, TournamentHistory } from '../../types';
+import type { FixedTeam, MatchFormat, MatchPlayMode, PartnerMode, Player, RankingCriteria, ScoringType, ToxicIntensity, Tournament, TournamentHistory } from '../../types';
 import { sanitizeFixedTeams } from '../matches/partnerMode';
 import { createFreshTournamentDraft } from './tournamentDraft';
 
@@ -12,6 +12,9 @@ export interface MatchTemplate {
   partnerMode: PartnerMode;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
+  matchPlayMode?: MatchPlayMode;
+  matchPlayGamesTarget?: number;
+  matchPlayBestOfSets?: number;
   courts: number;
   totalPoints: number;
   numRounds: number;
@@ -47,6 +50,9 @@ const applyQuickStartSettings = (base: Tournament, source: {
   partnerMode?: PartnerMode;
   criteria?: RankingCriteria;
   scoringType?: ScoringType;
+  matchPlayMode?: MatchPlayMode;
+  matchPlayGamesTarget?: number;
+  matchPlayBestOfSets?: number;
   courts?: number;
   totalPoints?: number;
   numRounds?: number;
@@ -67,6 +73,9 @@ const applyQuickStartSettings = (base: Tournament, source: {
     fixedTeams: partnerMode === 'fixed' ? sanitizeFixedTeams(players, source.fixedTeams) : [],
     criteria: source.criteria || base.criteria,
     scoringType: source.scoringType || base.scoringType,
+    matchPlayMode: source.matchPlayMode || base.matchPlayMode,
+    matchPlayGamesTarget: source.matchPlayGamesTarget ?? base.matchPlayGamesTarget,
+    matchPlayBestOfSets: source.matchPlayBestOfSets ?? base.matchPlayBestOfSets,
     courts: Math.max(1, Number(source.courts) || base.courts),
     totalPoints: Math.max(1, Number(source.totalPoints) || base.totalPoints),
     numRounds: Math.max(1, Number(source.numRounds) || base.numRounds),
@@ -94,6 +103,9 @@ export const buildTemplateFromSettings = (settings: Tournament, name: string): M
   partnerMode: settings.partnerMode === 'fixed' ? 'fixed' : 'rotating',
   criteria: settings.criteria,
   scoringType: settings.scoringType,
+  matchPlayMode: settings.matchPlayMode,
+  matchPlayGamesTarget: settings.matchPlayGamesTarget,
+  matchPlayBestOfSets: settings.matchPlayBestOfSets,
   courts: settings.courts,
   totalPoints: settings.totalPoints,
   numRounds: settings.numRounds,

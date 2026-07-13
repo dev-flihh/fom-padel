@@ -16,6 +16,8 @@ import { ActiveMatchSummaryPanel } from './ActiveMatchSummaryPanel';
 import { NoActiveMatchScreen } from './NoActiveMatchScreen';
 import { SwapPlayerModal } from './SwapPlayerModal';
 import { getReadyScoreCountForRound, getStatsSyncBadge } from './activeMatchDerived';
+import { getRoundTotalPoints } from './roundPoints';
+import { describeMatchPlayMode, getMatchPlayConfig } from './tennisScoring';
 import { useModalBottomOffset, useNowMs } from './useActiveMatchUiState';
 import { isFomRegisteredPlayer } from '../players/playerUtils';
 import { getMatchThemeColor } from '../tournaments/matchTheme';
@@ -32,12 +34,16 @@ type MatchActiveScreenProps = {
   tournament: Tournament;
   currentUser?: any;
   onUpdateScore: (matchId: string, team: 'A' | 'B', score: number) => void;
+  onTennisPoint: (matchId: string, team: 'A' | 'B', direction: 1 | -1) => void;
+  onCompleteMatchPlayMatch: (matchId: string) => void;
+  onReopenMatchPlayMatch: (matchId: string) => void;
   onNextRound: () => void | Promise<void>;
   onStartAmericanoRound: (roundId: number) => void | Promise<void>;
   onCompleteAmericanoRound: (roundId: number, options?: { allowIncomplete?: boolean }) => void | Promise<void>;
   onFinalizeCompletedMatch: () => void | Promise<void>;
   onUpdateRounds: (numRounds: number) => boolean;
   onUpdateCourts: (numCourts: number) => boolean;
+  onUpdatePoints: (totalPoints: number) => boolean;
   onUpdateToxicSettings: (settings: { toxicModeEnabled: boolean; toxicIntensity: ToxicIntensity }) => void;
   onAddManualPlayer: (player: Player) => void;
   onSaveRosterChanges: (activePlayerIds: string[], replacements: Array<{ manualPlayerId: string; newPlayer: Player }>) => void;
@@ -196,12 +202,16 @@ export const MatchActiveScreen = ({
   tournament,
   currentUser,
   onUpdateScore,
+  onTennisPoint,
+  onCompleteMatchPlayMatch,
+  onReopenMatchPlayMatch,
   onNextRound,
   onStartAmericanoRound,
   onCompleteAmericanoRound,
   onFinalizeCompletedMatch,
   onUpdateRounds,
   onUpdateCourts,
+  onUpdatePoints,
   onUpdateToxicSettings,
   onAddManualPlayer,
   onSaveRosterChanges,
@@ -310,6 +320,10 @@ export const MatchActiveScreen = ({
   };
 
   const isFixedPartnerMode = isFixedPartnerTournament(tournament);
+  const matchPlayConfig = useMemo(
+    () => (tournament.format === 'Match Play' ? getMatchPlayConfig(tournament) : null),
+    [tournament]
+  );
   const fixedTeamOptions = useMemo(
     () => (isFixedPartnerMode ? getActiveFixedTeams(tournament) : []),
     [isFixedPartnerMode, tournament]
@@ -339,6 +353,10 @@ export const MatchActiveScreen = ({
         match.status === 'completed' ||
         (match.teamA.score || 0) > 0 ||
         (match.teamB.score || 0) > 0 ||
+        // Match Play bestOf: score baru terisi saat set selesai — game yang
+        // sudah berjalan tercatat di sets[].
+        (match.teamA.sets || []).some((games) => (games || 0) > 0) ||
+        (match.teamB.sets || []).some((games) => (games || 0) > 0) ||
         (match.pointsA || '0') !== '0' ||
         (match.pointsB || '0') !== '0'
       ));
@@ -438,7 +456,7 @@ export const MatchActiveScreen = ({
     getReadyScoreCountForRound({
       round: activeRound,
       format: tournament.format,
-      totalPoints: tournament.totalPoints
+      totalPoints: getRoundTotalPoints(activeRound, tournament)
     })
   ), [activeRound, tournament.format, tournament.totalPoints]);
   const isActiveRoundScoreFullyFilled = (
@@ -449,7 +467,7 @@ export const MatchActiveScreen = ({
     getRoundPointProgress({
       round: activeRound,
       format: tournament.format,
-      totalPoints: tournament.totalPoints,
+      totalPoints: getRoundTotalPoints(activeRound, tournament),
     })
   ), [activeRound, tournament.format, tournament.totalPoints]);
   const totalElapsed = formatDurationFromMs(
@@ -487,7 +505,12 @@ export const MatchActiveScreen = ({
   const locationDateLabel = placeLabel ? `${placeLabel} | ${gameDateLabel}` : gameDateLabel;
   const completedRounds = tournament.rounds.filter((round) => round.matches.every((match) => match.status === 'completed')).length;
   const totalRounds = Math.max(tournament.numRounds || 0, tournament.rounds.length);
-  const isTournamentEnded = totalRounds > 0 && completedRounds >= totalRounds;
+  // Match Play: match ronde terakhir menyelesaikan dirinya sendiri saat target
+  // tercapai, jadi "semua ronde completed" belum berarti match ditutup — tanpa
+  // gerbang endedAt, panel Finish Match hilang sebelum sempat menyimpan history.
+  const isTournamentEnded = totalRounds > 0 && completedRounds >= totalRounds && (
+    tournament.format !== 'Match Play' || Boolean((tournament as TournamentHistory).endedAt)
+  );
   const hasRemoteRewind = Boolean(tournament.rewind?.slides?.length);
   const showRewindEntry = isTournamentEnded && (!isSharedViewer || hasRemoteRewind);
   const statsSyncBadge = getStatsSyncBadge({
@@ -501,7 +524,7 @@ export const MatchActiveScreen = ({
       .filter((match) => !isRoundMatchScoreReady({
         match,
         format: tournament.format,
-        totalPoints: tournament.totalPoints,
+        totalPoints: getRoundTotalPoints(activeRound, tournament),
       }))
       .map((match) => `Court ${match.court || '-'}`);
   }, [activeRound, isTournamentEnded, tournament.format, tournament.totalPoints]);
@@ -627,15 +650,23 @@ export const MatchActiveScreen = ({
     focusRound(nextRound.id);
   };
 
+  const resolveMatchTotalPoints = (match: Match) => {
+    const round = tournament.rounds.find((item) => item.matches.some((entry) => entry.id === match.id));
+    return getRoundTotalPoints(round, tournament);
+  };
+
   const handleAdjustMatchScore = (match: Match, team: 'A' | 'B', delta: number) => {
     if (isReadOnly) return;
     const currentScore = team === 'A' ? match.teamA.score : match.teamB.score;
-    const pointTarget = Math.max(0, tournament.totalPoints || 0);
-    const nextScore = pointTarget > 0
+    const pointTarget = Math.max(0, resolveMatchTotalPoints(match) || 0);
+    // Target poin hanya bermakna untuk format race-to-points; game Match Play
+    // tidak boleh ikut ter-clamp ke target itu.
+    const shouldClampToTarget = tournament.format !== 'Match Play' && pointTarget > 0;
+    const nextScore = shouldClampToTarget
       ? Math.max(0, Math.min(pointTarget, currentScore + delta))
       : Math.max(0, currentScore + delta);
 
-    if (tournament.format !== 'Match Play' && pointTarget > 0) {
+    if (shouldClampToTarget) {
       const otherScore = Math.max(0, pointTarget - nextScore);
       if (team === 'A') {
         onUpdateScore(match.id, 'A', nextScore);
@@ -652,10 +683,11 @@ export const MatchActiveScreen = ({
 
   const handleSetMatchScore = (match: Match, team: 'A' | 'B', score: number) => {
     if (isReadOnly) return;
-    const pointTarget = Math.max(0, tournament.totalPoints || 0);
-    const safeScore = pointTarget > 0 ? Math.max(0, Math.min(pointTarget, score)) : Math.max(0, score);
+    const pointTarget = Math.max(0, resolveMatchTotalPoints(match) || 0);
+    const shouldClampToTarget = tournament.format !== 'Match Play' && pointTarget > 0;
+    const safeScore = shouldClampToTarget ? Math.max(0, Math.min(pointTarget, score)) : Math.max(0, score);
 
-    if (tournament.format !== 'Match Play' && pointTarget > 0) {
+    if (shouldClampToTarget) {
       const otherScore = Math.max(0, pointTarget - safeScore);
       if (team === 'A') {
         onUpdateScore(match.id, 'A', safeScore);
@@ -764,10 +796,11 @@ export const MatchActiveScreen = ({
     const targetRound = tournament.rounds.find((round) => round.id === roundId);
     if (!targetRound) return;
 
+    const roundTotalPoints = getRoundTotalPoints(targetRound, tournament);
     const incompleteMatches = targetRound.matches.filter((match) => !isRoundMatchScoreReady({
       match,
       format: tournament.format,
-      totalPoints: tournament.totalPoints,
+      totalPoints: roundTotalPoints,
     }));
 
     if (incompleteMatches.length === 0) {
@@ -785,7 +818,7 @@ export const MatchActiveScreen = ({
       pointProgress: getRoundPointProgress({
         round: targetRound,
         format: tournament.format,
-        totalPoints: tournament.totalPoints,
+        totalPoints: roundTotalPoints,
       }),
     });
   };
@@ -883,9 +916,13 @@ export const MatchActiveScreen = ({
   const actionPanelPrimaryLabel = isTournamentEnded
     ? 'View Standings'
     : !isLastRound && !isActiveRoundScoreFullyFilled
-      ? activeRoundPointProgress.entered > 0
-        ? 'Finish score first'
-        : 'Complete score first'
+      // Match Play tidak punya input skor manual — yang ditunggu adalah match
+      // di court selesai (capai target atau ditutup host).
+      ? tournament.format === 'Match Play'
+        ? 'Finish court matches first'
+        : activeRoundPointProgress.entered > 0
+          ? 'Finish score first'
+          : 'Complete score first'
     : isLastRound
       ? 'Finish Match'
       : 'Next Round';
@@ -1002,13 +1039,26 @@ export const MatchActiveScreen = ({
                 isActive={isActive}
                 isCollapsed={isCollapsed}
                 isReadOnly={isReadOnly}
-                totalPoints={tournament.totalPoints}
+                totalPoints={getRoundTotalPoints(round, tournament)}
+                matchPlayConfig={matchPlayConfig}
                 accentTheme={accentTheme}
                 scoreToneClass="text-[#E65E14]"
                 onStartRound={onStartAmericanoRound}
                 onCompleteRound={handleCompleteAmericanoRoundRequest}
                 onAdjustScore={handleAdjustMatchScore}
                 onSetScore={handleSetMatchScore}
+                onTennisPoint={(match, team, direction) => {
+                  if (isReadOnly) return;
+                  onTennisPoint(match.id, team, direction);
+                }}
+                onCompleteMatchPlay={(match) => {
+                  if (isReadOnly) return;
+                  onCompleteMatchPlayMatch(match.id);
+                }}
+                onReopenMatchPlay={isTournamentEnded ? undefined : (match) => {
+                  if (isReadOnly) return;
+                  onReopenMatchPlayMatch(match.id);
+                }}
                 onOpenSwapPlayer={setSwappingPlayer}
               />
             </div>
@@ -1224,6 +1274,7 @@ export const MatchActiveScreen = ({
         courts={tournament.courts}
         totalPoints={tournament.totalPoints}
         scoringType={tournament.scoringType}
+        matchPlayModeLabel={matchPlayConfig ? describeMatchPlayMode(matchPlayConfig) : undefined}
         numRounds={tournament.numRounds}
         players={draftPlayers}
         activePlayerCount={activePlayerCount}
@@ -1248,6 +1299,7 @@ export const MatchActiveScreen = ({
         onReplaceManualPlayer={handleReplaceManualPlayerFromFriend}
         onUpdateRounds={onUpdateRounds}
         onUpdateCourts={onUpdateCourts}
+        onUpdatePoints={onUpdatePoints}
         onDeleteRoundsFrom={onDeleteRoundsFrom}
         onToxicModeChange={handleToxicModeChange}
         onToxicIntensityChange={handleToxicIntensityChange}
@@ -1567,9 +1619,13 @@ const isRoundMatchScoreReady = ({
   totalPoints: number;
 }) => {
   if (match.status === 'completed') return true;
+  // Match Play: match dianggap siap hanya saat sudah completed (target
+  // race/best-of tercapai atau ditutup host) — selaras dengan
+  // getReadyScoreCountForRound yang menggerbang tombol Next Round.
+  if (format === 'Match Play') return false;
   const scoreA = Number(match.teamA.score || 0);
   const scoreB = Number(match.teamB.score || 0);
-  if (format !== 'Match Play' && totalPoints > 0) {
+  if (totalPoints > 0) {
     return scoreA + scoreB === totalPoints && (scoreA > 0 || scoreB > 0);
   }
   return scoreA > 0 || scoreB > 0;

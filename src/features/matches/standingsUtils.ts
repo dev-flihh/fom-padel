@@ -1,4 +1,4 @@
-import type { Friend, Match, Player, Tournament, TournamentHistory } from '../../types';
+import type { Friend, Match, Player, RankingCriteria, Tournament, TournamentHistory } from '../../types';
 
 export type StandingsPlayer = {
   id: string;
@@ -29,7 +29,10 @@ export const hasMatchScoreProgress = (match: Match) => {
   const scoreA = Number(match.teamA?.score || 0);
   const scoreB = Number(match.teamB?.score || 0);
   const hasPointScore = (match.pointsA || '0') !== '0' || (match.pointsB || '0') !== '0';
-  return match.status === 'completed' || scoreA > 0 || scoreB > 0 || hasPointScore;
+  // Match Play bestOf: score = set dimenangkan, game set berjalan ada di sets[].
+  const hasGamesInSets = [...(match.teamA?.sets || []), ...(match.teamB?.sets || [])]
+    .some((games) => Number(games) > 0);
+  return match.status === 'completed' || scoreA > 0 || scoreB > 0 || hasPointScore || hasGamesInSets;
 };
 
 const getInitials = (name = '') => (
@@ -134,6 +137,11 @@ export const buildOfficialStandings = ({
       const shouldCountStandingScore = match.status === 'completed' || hasLiveScore;
       if (!shouldCountStandingScore && match.status !== 'completed') return;
 
+      // Match completed tanpa skor sama sekali (mis. ronde ditutup paksa
+      // sebelum ada game/poin masuk) bukan hasil imbang — jangan dihitung
+      // sebagai draw untuk keempat pemainnya.
+      const isScorelessCompleted = match.status === 'completed' && scoreA === 0 && scoreB === 0;
+
       match.teamA.players.forEach((player) => {
         const stats = playerStatsMap[player.id];
         if (!stats) return;
@@ -141,7 +149,7 @@ export const buildOfficialStandings = ({
           stats.totalPoints += scoreA;
           stats.pointsDiff += scoreA - scoreB;
         }
-        if (match.status === 'completed') {
+        if (match.status === 'completed' && !isScorelessCompleted) {
           if (scoreA > scoreB) stats.w += 1;
           else if (scoreA < scoreB) stats.l += 1;
           else stats.d += 1;
@@ -155,7 +163,7 @@ export const buildOfficialStandings = ({
           stats.totalPoints += scoreB;
           stats.pointsDiff += scoreB - scoreA;
         }
-        if (match.status === 'completed') {
+        if (match.status === 'completed' && !isScorelessCompleted) {
           if (scoreB > scoreA) stats.w += 1;
           else if (scoreB < scoreA) stats.l += 1;
           else stats.d += 1;
@@ -183,14 +191,27 @@ export const buildOfficialStandings = ({
 
   return {
     hasCountableScore,
-    players: Object.values(playerStatsMap).sort(compareStandingsPlayers),
+    players: Object.values(playerStatsMap).sort((a, b) => compareStandingsPlayers(a, b, tournament.criteria)),
   };
 };
 
-export const compareStandingsPlayers = (a: StandingsPlayer, b: StandingsPlayer) => {
-  if (b.w !== a.w) return b.w - a.w;
-  if (b.pointsDiff !== a.pointsDiff) return b.pointsDiff - a.pointsDiff;
-  if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+// Urutan klasemen mengikuti criteria match: 'Points Won' menimbang total poin
+// dulu (sesuai copy wizard "Ranks players by total points"), selain itu
+// jumlah kemenangan dulu (perilaku lama, juga default data tanpa criteria).
+export const compareStandingsPlayers = (
+  a: StandingsPlayer,
+  b: StandingsPlayer,
+  criteria?: RankingCriteria
+) => {
+  if (criteria === 'Points Won') {
+    if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+    if (b.pointsDiff !== a.pointsDiff) return b.pointsDiff - a.pointsDiff;
+    if (b.w !== a.w) return b.w - a.w;
+  } else {
+    if (b.w !== a.w) return b.w - a.w;
+    if (b.pointsDiff !== a.pointsDiff) return b.pointsDiff - a.pointsDiff;
+    if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+  }
   return a.name.localeCompare(b.name, 'id-ID');
 };
 
@@ -350,7 +371,8 @@ export const buildOfficialTeamStandings = ({
           const aggregate = getTeamAggregate(teamIndex);
           aggregate.totalPoints += scoreFor;
           aggregate.pointsDiff += scoreFor - scoreAgainst;
-          if (match.status === 'completed') {
+          // Selaras dengan klasemen individu: completed 0-0 tidak dihitung draw.
+          if (match.status === 'completed' && (scoreFor > 0 || scoreAgainst > 0)) {
             if (scoreFor > scoreAgainst) aggregate.w += 1;
             else if (scoreFor < scoreAgainst) aggregate.l += 1;
             else aggregate.d += 1;
@@ -396,6 +418,6 @@ export const buildOfficialTeamStandings = ({
 
   return {
     hasCountableScore: officialStandings.hasCountableScore,
-    players: [...teamRows, ...leftoverPlayers].sort(compareStandingsPlayers),
+    players: [...teamRows, ...leftoverPlayers].sort((a, b) => compareStandingsPlayers(a, b, tournament.criteria)),
   };
 };

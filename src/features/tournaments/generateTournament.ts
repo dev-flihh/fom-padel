@@ -2,6 +2,7 @@ import { Match, Player, Round, Tournament } from '../../types';
 import { sanitizeInactivePlayerIds } from './tournamentDraft';
 import { getPartnerMode, sanitizeFixedTeams } from '../matches/partnerMode';
 import { buildFixedTeamRounds } from '../matches/fixedTeamScheduler';
+import { normalizeMatchPlayBestOfSets, normalizeMatchPlayGamesTarget } from '../matches/tennisScoring';
 
 export const generateTournamentFromSettings = (settings: Tournament, now = Date.now()): Tournament => {
   const players = [...settings.players].filter(p => !!p);
@@ -241,6 +242,7 @@ export const generateTournamentFromSettings = (settings: Tournament, now = Date.
   }
 
   const tournamentId = settings.id || `tm_${Math.random().toString(36).slice(2, 10)}`;
+  const isMatchPlay = settings.format === 'Match Play';
   return {
     ...settings,
     id: tournamentId,
@@ -248,6 +250,12 @@ export const generateTournamentFromSettings = (settings: Tournament, now = Date.
     partnerMode,
     fixedTeams: sanitizedFixedTeams,
     inactivePlayerIds: sanitizedInactivePlayerIds,
+    // Match Play tidak memakai target poin — nol-kan supaya konsisten di semua
+    // jalur creation (draft wizard bisa membawa sisa 21 dari format lain).
+    totalPoints: isMatchPlay ? 0 : settings.totalPoints,
+    matchPlayMode: isMatchPlay ? (settings.matchPlayMode === 'bestOf' ? 'bestOf' : 'race') : undefined,
+    matchPlayGamesTarget: isMatchPlay ? normalizeMatchPlayGamesTarget(settings.matchPlayGamesTarget) : undefined,
+    matchPlayBestOfSets: isMatchPlay ? normalizeMatchPlayBestOfSets(settings.matchPlayBestOfSets) : undefined,
     courtChanges: [],
     rounds,
     startedAt: now,

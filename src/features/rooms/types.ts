@@ -1,4 +1,4 @@
-import type { MatchFormat, PartnerMode, Player, RankingCriteria, ScoringType, ToxicIntensity, Tournament } from '../../types';
+import type { MatchFormat, MatchPlayMode, PartnerMode, Player, RankingCriteria, ScoringType, ToxicIntensity, Tournament } from '../../types';
 
 export type RoomStatus =
   | 'draft'
@@ -118,6 +118,9 @@ export interface RoomSettingsSnapshot {
   partnerMode?: PartnerMode;
   criteria: RankingCriteria;
   scoringType?: ScoringType;
+  matchPlayMode?: MatchPlayMode;
+  matchPlayGamesTarget?: number;
+  matchPlayBestOfSets?: number;
   backgroundId?: string;
   themeColorId?: string;
   toxicModeEnabled?: boolean;

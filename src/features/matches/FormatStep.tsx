@@ -1,7 +1,22 @@
 import { type ElementType } from 'react';
 import { Check, CircleHelp, Minus, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { type MatchFormat, type PartnerMode, type RankingCriteria, type ScoringType } from '../../types';
+import { type MatchFormat, type MatchPlayMode, type PartnerMode, type RankingCriteria, type ScoringType } from '../../types';
+import {
+  MATCH_PLAY_BEST_OF_OPTIONS,
+  MATCH_PLAY_GAMES_TARGET_MAX,
+  MATCH_PLAY_GAMES_TARGET_MIN
+} from './tennisScoring';
+
+const MATCH_PLAY_MODE_LABELS: Record<MatchPlayMode, string> = {
+  race: 'Race',
+  bestOf: 'Best of'
+};
+
+const MATCH_PLAY_MODE_IMPACT_COPY: Record<MatchPlayMode, string> = {
+  race: 'First pair to win the target number of games takes the match. Quick and predictable for time-boxed courts.',
+  bestOf: 'Full tennis sets (6 games, two clear; 6-6 plays a deciding game). The match ends when one pair wins the majority of sets.'
+};
 
 type FormatImpactCopy = Record<MatchFormat, {
   tagline: string;
@@ -23,6 +38,9 @@ export const FormatStep = ({
   partnerModeLabels,
   criteria,
   scoringType,
+  matchPlayMode,
+  matchPlayGamesTarget,
+  matchPlayBestOfSets,
   courts,
   numRounds,
   durationMinutes,
@@ -38,6 +56,9 @@ export const FormatStep = ({
   onPartnerModeChange,
   onCriteriaChange,
   onScoringTypeChange,
+  onMatchPlayModeChange,
+  onMatchPlayGamesTargetChange,
+  onMatchPlayBestOfSetsChange,
   onCourtsChange,
   onNumRoundsChange,
   onDurationMinutesChange,
@@ -49,6 +70,9 @@ export const FormatStep = ({
   partnerModeLabels: Record<PartnerMode, string>;
   criteria: RankingCriteria;
   scoringType: ScoringType;
+  matchPlayMode: MatchPlayMode;
+  matchPlayGamesTarget: number;
+  matchPlayBestOfSets: number;
   courts: number;
   numRounds: number;
   durationMinutes: number;
@@ -64,6 +88,9 @@ export const FormatStep = ({
   onPartnerModeChange: (value: PartnerMode) => void;
   onCriteriaChange: (value: RankingCriteria) => void;
   onScoringTypeChange: (value: ScoringType) => void;
+  onMatchPlayModeChange: (value: MatchPlayMode) => void;
+  onMatchPlayGamesTargetChange: (value: number) => void;
+  onMatchPlayBestOfSetsChange: (value: number) => void;
   onCourtsChange: (value: number) => void;
   onNumRoundsChange: (value: number) => void;
   onDurationMinutesChange: (value: number) => void;
@@ -167,7 +194,79 @@ export const FormatStep = ({
 
     {format === 'Match Play' && (
       <div className="rounded-[26px] bg-ios-gray/[0.03] p-4">
-        <p className="text-[13px] font-bold tracking-[-0.01em] text-on-surface">Deuce method</p>
+        <p className="text-[13px] font-bold tracking-[-0.01em] text-on-surface">Match mode</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 rounded-[20px] bg-white/70 p-1">
+          {(['race', 'bestOf'] as MatchPlayMode[]).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onMatchPlayModeChange(value)}
+              className={cn(
+                "h-11 rounded-[16px] text-[13px] font-semibold transition-all",
+                matchPlayMode === value ? "bg-primary text-white" : "text-on-surface"
+              )}
+            >
+              {MATCH_PLAY_MODE_LABELS[value]}
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 flex gap-2 rounded-[18px] bg-[#fff8f2] px-3 py-2.5 text-[12px] font-medium leading-[1.55] text-[#8a3b12]">
+          <CircleHelp size={14} className="mt-0.5 shrink-0" />
+          {MATCH_PLAY_MODE_IMPACT_COPY[matchPlayMode]}
+        </p>
+
+        {matchPlayMode === 'race' ? (
+          <div className="mt-3 rounded-[20px] bg-white px-4 py-3.5">
+            <div className="flex items-center gap-4">
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface">Games target</p>
+                <p className="mt-1 text-[12px] font-medium leading-[1.45] text-ios-gray">First pair to win this many games takes the match.</p>
+              </div>
+              <div className="flex shrink-0 items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onMatchPlayGamesTargetChange(Math.max(MATCH_PLAY_GAMES_TARGET_MIN, matchPlayGamesTarget - 1))}
+                  className="tap-target flex h-8 w-8 items-center justify-center rounded-full bg-[#fbfbfd] text-on-surface shadow-[0_1px_3px_rgba(17,24,39,0.08)]"
+                  aria-label="Decrease games target"
+                >
+                  <Minus size={14} />
+                </button>
+                <span className="min-w-10 text-center text-[20px] font-bold tracking-[-0.03em] text-on-surface tabular-nums">{matchPlayGamesTarget}</span>
+                <button
+                  type="button"
+                  onClick={() => onMatchPlayGamesTargetChange(Math.min(MATCH_PLAY_GAMES_TARGET_MAX, matchPlayGamesTarget + 1))}
+                  className="tap-target flex h-8 w-8 items-center justify-center rounded-full bg-[#fbfbfd] text-on-surface shadow-[0_1px_3px_rgba(17,24,39,0.08)]"
+                  aria-label="Increase games target"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 rounded-[20px] bg-white px-4 py-3.5">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface">Number of sets</p>
+            <div className="mt-2.5 grid grid-cols-3 gap-2">
+              {MATCH_PLAY_BEST_OF_OPTIONS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onMatchPlayBestOfSetsChange(value)}
+                  className={cn(
+                    "h-10 rounded-[14px] text-[13px] font-semibold transition-all",
+                    matchPlayBestOfSets === value
+                      ? "bg-primary text-white"
+                      : "bg-ios-gray/[0.05] text-on-surface"
+                  )}
+                >
+                  {value} set{value > 1 ? 's' : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <p className="mt-4 text-[13px] font-bold tracking-[-0.01em] text-on-surface">Deuce method</p>
         <div className="mt-3 grid grid-cols-2 gap-2 rounded-[20px] bg-white/70 p-1">
           {(['Golden Point', 'Advantage'] as ScoringType[]).map((value) => (
             <button

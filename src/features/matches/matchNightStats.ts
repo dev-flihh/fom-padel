@@ -1,4 +1,4 @@
-import type { Round, Tournament, TournamentHistory, ToxicIntensity } from '../../types';
+import type { RankingCriteria, Round, Tournament, TournamentHistory, ToxicIntensity } from '../../types';
 import { hasMatchScoreProgress, type StandingsPlayer } from './standingsUtils';
 import type { ToxicAwardCard } from './toxicStandings';
 import { resolveToxicCopyConfig, type ToxicCopyConfig } from './toxicCopyConfig';
@@ -107,17 +107,25 @@ type CumulativeStat = {
 };
 
 // Deterministic ranking that mirrors buildOfficialStandings' sort order:
-// wins desc, point diff desc, total points desc, name asc (id-ID).
+// criteria-aware (Points Won ranks total points first), lalu point diff,
+// lalu sisanya, name asc (id-ID) sebagai pemecah seri terakhir.
 const rankPlayerIds = (
   statsById: Map<string, CumulativeStat>,
   nameById: Map<string, string>,
+  criteria?: RankingCriteria,
 ): string[] => (
   [...statsById.keys()].sort((a, b) => {
     const statA = statsById.get(a)!;
     const statB = statsById.get(b)!;
-    if (statB.w !== statA.w) return statB.w - statA.w;
-    if (statB.pointsDiff !== statA.pointsDiff) return statB.pointsDiff - statA.pointsDiff;
-    if (statB.totalPoints !== statA.totalPoints) return statB.totalPoints - statA.totalPoints;
+    if (criteria === 'Points Won') {
+      if (statB.totalPoints !== statA.totalPoints) return statB.totalPoints - statA.totalPoints;
+      if (statB.pointsDiff !== statA.pointsDiff) return statB.pointsDiff - statA.pointsDiff;
+      if (statB.w !== statA.w) return statB.w - statA.w;
+    } else {
+      if (statB.w !== statA.w) return statB.w - statA.w;
+      if (statB.pointsDiff !== statA.pointsDiff) return statB.pointsDiff - statA.pointsDiff;
+      if (statB.totalPoints !== statA.totalPoints) return statB.totalPoints - statA.totalPoints;
+    }
     return (nameById.get(a) || '').localeCompare(nameById.get(b) || '', 'id-ID');
   })
 );
@@ -187,7 +195,9 @@ export const buildRankTimelines = (
             stat.totalPoints += scoreFor;
             stat.pointsDiff += scoreFor - scoreAgainst;
           }
-          if (match.status === 'completed') {
+          // Selaras klasemen resmi: match completed tanpa skor (ditutup paksa
+          // di 0-0) bukan hasil imbang — jangan dihitung draw/match.
+          if (match.status === 'completed' && (scoreFor > 0 || scoreAgainst > 0)) {
             if (scoreFor > scoreAgainst) stat.w += 1;
             else if (scoreFor < scoreAgainst) stat.l += 1;
             else stat.d += 1;
@@ -205,7 +215,7 @@ export const buildRankTimelines = (
     ));
     if (appeared.length === 0) return;
     const rankableIds = new Map(appeared);
-    const orderedIds = rankPlayerIds(rankableIds, nameById);
+    const orderedIds = rankPlayerIds(rankableIds, nameById, tournament.criteria);
     orderedIds.forEach((playerId, index) => {
       if (!trackedIds.has(playerId)) return;
       const timeline = timelines.get(playerId);

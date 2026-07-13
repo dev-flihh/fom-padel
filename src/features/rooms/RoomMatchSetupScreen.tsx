@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
-import { type MatchFormat, type PartnerMode, type RankingCriteria, type ScoringType } from '../../types';
+import { type MatchFormat, type MatchPlayMode, type PartnerMode, type RankingCriteria, type ScoringType } from '../../types';
 import { FormatStep } from '../matches/FormatStep';
+import { normalizeMatchPlayBestOfSets, normalizeMatchPlayGamesTarget } from '../matches/tennisScoring';
 import { CRITERIA_IMPACT_COPY, FORMAT_IMPACT_COPY, PARTNER_MODE_IMPACT_COPY, PARTNER_MODE_LABELS, SCORING_IMPACT_COPY } from '../matches/matchSettingsCopy';
 import { MATCH_SETTINGS_WIZARD_CLASSNAMES } from '../matches/matchSettingsStyles';
 import type { Room, RoomSettingsSnapshot } from './types';
@@ -39,6 +40,9 @@ export const RoomMatchSetupScreen = ({
   const [partnerMode, setPartnerMode] = useState<PartnerMode>(room.settings.partnerMode === 'fixed' ? 'fixed' : 'rotating');
   const [criteria, setCriteria] = useState<RankingCriteria>(room.settings.criteria || 'Matches Won');
   const [scoringType, setScoringType] = useState<ScoringType>(room.settings.scoringType || 'Golden Point');
+  const [matchPlayMode, setMatchPlayMode] = useState<MatchPlayMode>(room.settings.matchPlayMode === 'bestOf' ? 'bestOf' : 'race');
+  const [matchPlayGamesTarget, setMatchPlayGamesTarget] = useState(() => normalizeMatchPlayGamesTarget(room.settings.matchPlayGamesTarget));
+  const [matchPlayBestOfSets, setMatchPlayBestOfSets] = useState(() => normalizeMatchPlayBestOfSets(room.settings.matchPlayBestOfSets));
   const [courts, setCourts] = useState(Math.max(1, Number(room.settings.courts || 1)));
   const [points, setPoints] = useState(Math.max(1, Number(room.settings.totalPoints || 21)));
   const [numRounds, setNumRounds] = useState(Math.max(1, Number(room.settings.numRounds || 8)));
@@ -71,6 +75,9 @@ export const RoomMatchSetupScreen = ({
       partnerMode,
       criteria,
       scoringType: format === 'Match Play' ? scoringType : undefined,
+      matchPlayMode: format === 'Match Play' ? matchPlayMode : undefined,
+      matchPlayGamesTarget: format === 'Match Play' ? matchPlayGamesTarget : undefined,
+      matchPlayBestOfSets: format === 'Match Play' ? matchPlayBestOfSets : undefined,
       courts,
       totalPoints: format === 'Match Play' ? 0 : points,
       numRounds,
@@ -108,6 +115,9 @@ export const RoomMatchSetupScreen = ({
           partnerModeLabels={PARTNER_MODE_LABELS}
           criteria={criteria}
           scoringType={scoringType}
+          matchPlayMode={matchPlayMode}
+          matchPlayGamesTarget={matchPlayGamesTarget}
+          matchPlayBestOfSets={matchPlayBestOfSets}
           courts={courts}
           numRounds={numRounds}
           durationMinutes={durationMinutes}
@@ -123,6 +133,9 @@ export const RoomMatchSetupScreen = ({
           onPartnerModeChange={setPartnerMode}
           onCriteriaChange={setCriteria}
           onScoringTypeChange={setScoringType}
+          onMatchPlayModeChange={setMatchPlayMode}
+          onMatchPlayGamesTargetChange={setMatchPlayGamesTarget}
+          onMatchPlayBestOfSetsChange={setMatchPlayBestOfSets}
           onCourtsChange={setCourts}
           onNumRoundsChange={setNumRounds}
           onDurationMinutesChange={setDurationMinutes}
